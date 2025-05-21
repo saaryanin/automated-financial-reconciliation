@@ -32,20 +32,36 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Date": "date"
         })
 
+    elif processor == "safecharge":
+        # Filter by type and result
+        df = df[
+            (df["Transaction Type"].str.lower() == "sale") &
+            (df["Transaction Result"].str.lower() == "approved")
+        ]
+
+        df = df.rename(columns={
+            "Transaction ID": "transaction_id",
+            "Transaction Date": "date",
+            "Amount": "amount",
+            "Currency": "currency"
+        })
+
     else:
         raise ValueError(f"Processor not supported yet: {processor}")
 
     return df.reset_index(drop=True)
 
 
+
 def load_processor_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
     ext = Path(filepath).suffix.lower()
     dtype = {"Transaction ID": str}
+    skip = 11 if processor_name.lower() == "safecharge" else 0
 
     if ext == ".csv":
         df = pd.read_csv(filepath, dtype=dtype, encoding="utf-8-sig")
     elif ext == ".xlsx":
-        df = pd.read_excel(filepath, dtype=dtype, engine="openpyxl")
+        df = pd.read_excel(filepath, dtype=dtype, skiprows=skip, engine="openpyxl")
     else:
         raise ValueError("Unsupported file type")
 
@@ -63,21 +79,30 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
     return df_clean
 
 
+
 # ----------------------------
 # CRM Handling
 # ----------------------------
-def load_crm_file(filepath: str, save_clean=False) -> pd.DataFrame:
+def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
     df = pd.read_excel(filepath, engine="openpyxl")
 
-    def extract_txn_id(comment):
-        match = re.search(r"PSP TransactionId:([A-Z0-9]+)", str(comment))
-        return match.group(1) if match else None
+    def extract_crm_transaction_id(comment: str, processor: str):
+        if processor.lower() == "paypal":
+            match = re.search(r"PSP TransactionId:([A-Z0-9]+)", str(comment))
+            return match.group(1) if match else None
 
-    df["transaction_id"] = df["Internal Comment"].apply(extract_txn_id)
+        elif processor.lower() == "safecharge":
+            matches = re.findall(r"\b[12]\d{18}\b", str(comment))
+            return matches[0] if matches else None
+
+        else:
+            return None
+
+    df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
 
     df = df[
         (df["Name"].str.lower() == "deposit") &
-        (df["PSP name"].str.lower() == "paypal")
+        (df["PSP name"].str.lower() == processor_name.lower())
     ]
 
     df = df.reset_index(drop=True)
@@ -85,13 +110,16 @@ def load_crm_file(filepath: str, save_clean=False) -> pd.DataFrame:
     if save_clean:
         date_str = extract_date_from_filename(filepath)
         out_path = (
-            PROCESSED_CRM_DIR / "paypal" / date_str / f"paypal_deposits_{date_str}.xlsx"
+                PROCESSED_CRM_DIR / processor_name.lower() / date_str / f"{processor_name.lower()}_deposits.xlsx"
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_excel(out_path, index=False)
-        print(f"Saved cleaned CRM PayPal deposits to {out_path}")
+        print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
+    if processor_name is None:
+        raise ValueError("CRM loader requires a processor_name (e.g., 'paypal', 'safecharge')")
 
     return df
+
 
 
 # ----------------------------
@@ -118,7 +146,7 @@ def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, sav
         futures = []
         for path in file_paths:
             if is_crm:
-                futures.append(executor.submit(load_crm_file, str(path), save_clean))
+                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean))
             else:
                 futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean))
         results = [f.result() for f in futures]

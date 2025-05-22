@@ -73,6 +73,43 @@ def match_safecharge_deposits(date: str) -> pd.DataFrame:
     print(f"❌ Unmatched SafeCharge deposits saved to {out_path} (Processor: {len(unmatched_processor)}, CRM: {len(unmatched_crm)})")
 
     return unmatched_crm
+import pandas as pd
+from pathlib import Path
+from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, DATA_DIR
+
+
+def match_powercash_deposits(date: str) -> pd.DataFrame:
+    crm_path = PROCESSED_CRM_DIR / "powercash" / date / "powercash_deposits.xlsx"
+    psp_path = PROCESSED_PROCESSOR_DIR / "powercash" / date / "powercash_deposits.xlsx"
+
+    crm_df = pd.read_excel(crm_path, dtype=str)
+    psp_df = pd.read_excel(psp_path, dtype=str)
+
+    crm_ids = set(crm_df["transaction_id"].dropna())
+    psp_ids = set(psp_df["transaction_id"].dropna())
+
+    unmatched_processor = psp_df[~psp_df["transaction_id"].isin(crm_ids)].copy()
+    unmatched_crm = crm_df[~crm_df["transaction_id"].isin(psp_ids)].copy()
+
+    if unmatched_processor.empty and unmatched_crm.empty:
+        print(f"✅ All PowerCash deposits for {date} matched both directions.")
+        return pd.DataFrame()
+
+    # Save ONLY processor-side unmatched in PSP format
+    out_dir = DATA_DIR / "lists" / "unmatched_deposits" / "powercash" / date
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "powercash_unmatched.xlsx"
+
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        unmatched_processor.to_excel(writer, index=False, sheet_name="Unmatched")
+
+    print(
+        f"❌ Unmatched PowerCash deposits saved to {out_path} "
+        f"(Processor: {len(unmatched_processor)}, CRM: {len(unmatched_crm)})"
+    )
+
+    return unmatched_crm
+
 
 
 def save_global_crm_unmatched(date: str, unmatched_frames: list[pd.DataFrame]):

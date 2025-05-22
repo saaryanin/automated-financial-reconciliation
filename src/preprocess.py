@@ -45,17 +45,42 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Amount": "amount",
             "Currency": "currency"
         })
+    elif processor == "powercash":
+        # Filter relevant rows
+        df = df[
+            (df["Tx-Type"].str.lower().isin(["capture", "aft"])) &
+            (df["Status"].str.lower() == "successful") &
+            (df["Currency"].str.upper() != "CAD")
+            ]
 
+        # Select relevant columns
+        keep_cols = [
+            "Tx-Id", "Tx-Type", "Date", "Time", "Currency", "Amount", "Status",
+            "Firstname", "Lastname", "EMail", "Custom 3",
+            "Credit Card Brand", "Credit Card Number"
+        ]
+        df = df[keep_cols]
+
+        # Rename to standard format
+        df = df.rename(columns={
+            "Tx-Id": "transaction_id",
+            "Amount": "amount",
+            "Date": "date"
+        })
     else:
         raise ValueError(f"Processor not supported yet: {processor}")
+
+
 
     return df.reset_index(drop=True)
 
 
 
+
+
 def load_processor_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
     ext = Path(filepath).suffix.lower()
-    dtype = {"Transaction ID": str}
+    dtype = {"Transaction ID": str, "Tx-Id": str}
     skip = 11 if processor_name.lower() == "safecharge" else 0
 
     if ext == ".csv":
@@ -67,6 +92,9 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
 
     df_clean = standardize_processor_columns(df, processor_name)
 
+    if df_clean.empty:
+        print(f"⚠️ Warning: Cleaned data for {processor_name} from file {filepath} is empty.")
+
     if save_clean:
         date_str = extract_date_from_filename(filepath)
         out_path = (
@@ -74,9 +102,10 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df_clean.to_excel(out_path, index=False)
-        print(f"Saved cleaned {processor_name} deposits to {out_path}")
+        print(f"✅ Saved cleaned {processor_name} deposits to {out_path}")
 
     return df_clean
+
 
 
 
@@ -94,6 +123,10 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
         elif processor.lower() == "safecharge":
             matches = re.findall(r"\b[12]\d{18}\b", str(comment))
             return matches[0] if matches else None
+
+        elif processor.lower() == "powercash":
+            match = re.search(r"PSP TransactionId:([0-9]+)", str(comment))
+            return match.group(1) if match else None
 
         else:
             return None

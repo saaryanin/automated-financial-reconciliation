@@ -12,6 +12,9 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     processor = processor.lower()
 
+    # Trim all column names to remove leading/trailing whitespace
+    df.columns = df.columns.str.strip()
+
     if processor == "paypal":
         keep_cols = [
             "Date", "Time", "Time zone", "Name", "Type", "Status", "Currency",
@@ -82,6 +85,25 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Request ID (a1)": "transaction_id"
         })
 
+    elif processor == "skrill":
+        df = df[
+            (df["Type"].str.lower() == "receive money") &
+            (df["Status"].str.lower() == "processed")
+        ]
+
+        keep_cols = [
+            "Time (CET)", "Type", "Transaction Details", "[+]", "Status", "Reference",
+            "Amount Sent", "Currency Sent", "ID of the corresponding Skrill transaction"
+        ]
+        df = df[keep_cols]
+
+        df = df.rename(columns={
+            "Time (CET)": "date",
+            "ID of the corresponding Skrill transaction": "transaction_id",
+            "Amount Sent": "amount",
+            "Currency Sent": "currency"
+        })
+
     else:
         raise ValueError(f"Processor not supported yet: {processor}")
 
@@ -89,9 +111,13 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
 
 
 
+
 def load_processor_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
     ext = Path(filepath).suffix.lower()
-    dtype = {"Transaction ID": str, "Tx-Id": str, "Request ID (a1)": str}
+    dtype = {
+        "Transaction ID": str, "Tx-Id": str, "Request ID (a1)": str,
+        "ID of the corresponding Skrill transaction": str
+    }
     skip = 11 if processor_name.lower() == "safecharge" else 0
 
     if ext == ".csv":
@@ -101,7 +127,6 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
     else:
         raise ValueError("Unsupported file type")
 
-    df.columns = df.columns.str.strip()
     df_clean = standardize_processor_columns(df, processor_name)
 
     if save_clean:
@@ -114,6 +139,7 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
         print(f"✅ Saved cleaned {processor_name} deposits to {out_path}")
 
     return df_clean
+
 
 
 # ----------------------------
@@ -136,7 +162,11 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
             return match.group(1) if match else None
 
         elif processor.lower() == "shift4":
-            match = re.search(r"More Comment:[^$]*\$([a-f0-9]{32})", str(comment))
+            match = re.search(r"More Comment:[^$]*\$(\w+)", str(comment))
+            return match.group(1) if match else None
+
+        elif processor.lower() == "skrill":
+            match = re.search(r"More Comment:[^$]*\$(\d+)", str(comment))
             return match.group(1) if match else None
 
         else:
@@ -163,6 +193,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
         raise ValueError("CRM loader requires a processor_name (e.g., 'paypal', 'safecharge')")
 
     return df
+
 
 
 # ----------------------------

@@ -85,24 +85,46 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Request ID (a1)": "transaction_id"
         })
 
-    elif processor == "skrill":
-        df = df[
-            (df["Type"].str.lower() == "receive money") &
-            (df["Status"].str.lower() == "processed")
-        ]
 
-        keep_cols = [
-            "Time (CET)", "Type", "Transaction Details", "[+]", "Status", "Reference",
-            "Amount Sent", "Currency Sent", "ID of the corresponding Skrill transaction"
-        ]
-        df = df[keep_cols]
+
+
+    elif processor in ["skrill", "netteller"]:
+
+        df.columns = df.columns.str.strip()
+
+        # Rename first so we can filter reliably
 
         df = df.rename(columns={
+
             "Time (CET)": "date",
+
+            "Time (UTC)": "date",  # support both formats
+
             "ID of the corresponding Skrill transaction": "transaction_id",
-            "Amount Sent": "amount",
+
+            "ID of the corresponding Neteller transaction": "transaction_id",
+
+            "[+]": "amount",
+
             "Currency Sent": "currency"
+
         })
+
+        # Filter only valid rows
+
+        df = df[df["Type"].str.lower() == "receive money"]
+
+        df = df[df["Status"].str.lower() == "processed"]
+
+        df = df[df["amount"].notna()]
+
+        df = df[~df["Transaction Details"].str.contains("fee", case=False, na=False)]
+
+        keep_cols = ["date", "transaction_id", "amount", "currency", "Transaction Details", "Reference"]
+
+        df = df[keep_cols]
+
+
 
     else:
         raise ValueError(f"Processor not supported yet: {processor}")
@@ -112,11 +134,18 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
 
 
 
+
+# ----------------------------
+# CRM Handling
+# ----------------------------
 def load_processor_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
     ext = Path(filepath).suffix.lower()
     dtype = {
-        "Transaction ID": str, "Tx-Id": str, "Request ID (a1)": str,
-        "ID of the corresponding Skrill transaction": str
+        "Transaction ID": str,
+        "Tx-Id": str,
+        "Request ID (a1)": str,
+        "ID of the corresponding Skrill transaction": str,
+        "ID of the corresponding Neteller transaction": str
     }
     skip = 11 if processor_name.lower() == "safecharge" else 0
 
@@ -127,6 +156,7 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
     else:
         raise ValueError("Unsupported file type")
 
+    df.columns = df.columns.str.strip()
     df_clean = standardize_processor_columns(df, processor_name)
 
     if save_clean:
@@ -141,58 +171,6 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
     return df_clean
 
 
-
-# ----------------------------
-# CRM Handling
-# ----------------------------
-def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
-    df = pd.read_excel(filepath, engine="openpyxl")
-
-    def extract_crm_transaction_id(comment: str, processor: str):
-        if processor.lower() == "paypal":
-            match = re.search(r"PSP TransactionId:([A-Z0-9]+)", str(comment))
-            return match.group(1) if match else None
-
-        elif processor.lower() == "safecharge":
-            matches = re.findall(r"\b[12]\d{18}\b", str(comment))
-            return matches[0] if matches else None
-
-        elif processor.lower() == "powercash":
-            match = re.search(r"PSP TransactionId:(\d+)", str(comment))
-            return match.group(1) if match else None
-
-        elif processor.lower() == "shift4":
-            match = re.search(r"More Comment:[^$]*\$(\w+)", str(comment))
-            return match.group(1) if match else None
-
-        elif processor.lower() == "skrill":
-            match = re.search(r"More Comment:[^$]*\$(\d+)", str(comment))
-            return match.group(1) if match else None
-
-        else:
-            return None
-
-    df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
-
-    df = df[
-        (df["Name"].str.lower() == "deposit") &
-        (df["PSP name"].str.lower() == processor_name.lower())
-    ]
-
-    df = df.reset_index(drop=True)
-
-    if save_clean:
-        date_str = extract_date_from_filename(filepath)
-        out_path = (
-                PROCESSED_CRM_DIR / processor_name.lower() / date_str / f"{processor_name.lower()}_deposits.xlsx"
-        )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_excel(out_path, index=False)
-        print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
-    if processor_name is None:
-        raise ValueError("CRM loader requires a processor_name (e.g., 'paypal', 'safecharge')")
-
-    return df
 
 
 
@@ -210,6 +188,66 @@ def extract_date_from_filename(filepath: str) -> str:
     if match_slash:
         return datetime.strptime(match_slash.group(1), "%d_%m_%Y").strftime("%Y-%m-%d")
     return "unknown_date"
+
+# ----------------------------
+# CRM Handling
+# ----------------------------
+def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
+    df = pd.read_excel(filepath, engine="openpyxl")
+    df.columns = df.columns.str.strip()
+
+    # Normalize PSP name
+    df["PSP name"] = df["PSP name"].str.strip().str.lower()
+    normalized_processor = processor_name.lower()
+
+    def extract_crm_transaction_id(comment: str, processor: str):
+        processor = processor.lower()
+        if processor == "paypal":
+            match = re.search(r"PSP TransactionId:([A-Z0-9]+)", str(comment))
+        elif processor == "safecharge":
+            match = re.search(r"\b(1|2)\d{18}\b", str(comment))
+        elif processor == "powercash":
+            match = re.search(r"PSP TransactionId:(\d+)", str(comment))
+        elif processor == "shift4":
+            match = re.search(r"More Comment:[^$]*\$(\w+)", str(comment))
+        elif processor in ["skrill", "netteller"]:
+            match = re.search(r"More Comment:[^$]*\$(\d+)", str(comment))
+        else:
+            return None
+
+        # ✅ Return group(1) only if the group exists and was matched
+        try:
+            return match.group(1) if match else None
+        except IndexError:
+            return None
+        return match.group(1) if match else None
+
+    df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
+
+    # Special handling for "netteller" aliasing in CRM
+    if normalized_processor == "netteller":
+        psp_mask = df["PSP name"].isin(["netteller", "neteller"])
+    else:
+        psp_mask = df["PSP name"] == normalized_processor
+
+    df = df[
+        (df["Name"].str.lower() == "deposit") &
+        psp_mask
+    ]
+
+    df = df.reset_index(drop=True)
+
+    if save_clean:
+        date_str = extract_date_from_filename(filepath)
+        out_path = (
+            PROCESSED_CRM_DIR / normalized_processor / date_str / f"{normalized_processor}_deposits.xlsx"
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_excel(out_path, index=False)
+        print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
+
+    return df
+
 
 
 # ----------------------------

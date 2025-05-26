@@ -11,8 +11,6 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 # ----------------------------
 def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     processor = processor.lower()
-
-    # Trim all column names to remove leading/trailing whitespace
     df.columns = df.columns.str.strip()
 
     if processor == "paypal":
@@ -21,107 +19,60 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Gross", "Fee", "Net", "From Email Address", "To Email Address", "Transaction ID"
         ]
         df = df[keep_cols]
-
         allowed_types = ["Express Checkout Payment", "Mass Payment", "Payment Refund"]
-        df = df[
-            (df["Status"] == "Completed") &
-            (df["Type"].isin(allowed_types)) &
-            (df["Currency"] != "GBP")
-        ]
-
-        df = df.rename(columns={
-            "Transaction ID": "transaction_id",
-            "Gross": "amount",
-            "Date": "date"
-        })
+        df = df[(df["Status"] == "Completed") & (df["Type"].isin(allowed_types)) & (df["Currency"] != "GBP")]
+        df = df.rename(columns={"Transaction ID": "transaction_id", "Gross": "amount", "Date": "date"})
 
     elif processor == "safecharge":
-        df.columns = df.columns.str.strip()
-        df = df[
-            (df["Transaction Type"].str.lower() == "sale") &
-            (df["Transaction Result"].str.lower() == "approved")
-        ]
-
-        keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result"]
-        df = df[keep_cols]
-
-        df = df.rename(columns={
-            "Transaction ID": "transaction_id",
-            "Date": "date",
-            "Amount": "amount",
-            "Currency": "currency"
-        })
+        df = df[(df["Transaction Type"].str.lower() == "sale") & (df["Transaction Result"].str.lower() == "approved")]
+        df = df[["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result"]]
+        df = df.rename(columns={"Transaction ID": "transaction_id", "Date": "date", "Amount": "amount", "Currency": "currency"})
 
     elif processor == "powercash":
-        df = df[
-            (df["Tx-Type"].str.lower().isin(["capture", "aft"])) &
-            (df["Status"].str.lower() == "successful") &
-            (df["Currency"].str.upper() != "CAD")
-        ]
-
-        keep_cols = [
-            "Tx-Id", "Tx-Type", "Date", "Time", "Currency", "Amount", "Status",
-            "Firstname", "Lastname", "EMail", "Custom 3",
-            "Credit Card Brand", "Credit Card Number"
-        ]
-        df = df[keep_cols]
-
-        df = df.rename(columns={
-            "Tx-Id": "transaction_id",
-            "Amount": "amount",
-            "Date": "date"
-        })
+        df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (df["Currency"].str.upper() != "CAD")]
+        df = df[["Tx-Id", "Tx-Type", "Date", "Time", "Currency", "Amount", "Status", "Firstname", "Lastname", "EMail", "Custom 3", "Credit Card Brand", "Credit Card Number"]]
+        df = df.rename(columns={"Tx-Id": "transaction_id", "Amount": "amount", "Date": "date"})
 
     elif processor == "shift4":
-        df = df[
-            (df["Operation Type"].str.lower() == "sale") &
-            (df["Response"].str.lower() == "completed successfully")
-        ]
-
-        keep_cols = [
-            "Transaction Date", "Request ID (a1)", "Currency", "Amount", "Card Number",
-            "Card Scheme", "Cardholder Email"
-        ]
-        df = df[keep_cols]
-
-        df = df.rename(columns={
-            "Transaction Date": "date",
-            "Request ID (a1)": "transaction_id"
-        })
+        df = df[(df["Operation Type"].str.lower() == "sale") & (df["Response"].str.lower() == "completed successfully")]
+        df = df[["Transaction Date", "Request ID (a1)", "Currency", "Amount", "Card Number", "Card Scheme", "Cardholder Email"]]
+        df = df.rename(columns={"Transaction Date": "date", "Request ID (a1)": "transaction_id"})
 
     elif processor in ["skrill", "netteller"]:
-        df.columns = df.columns.str.strip()
         df = df.rename(columns={
-            "Time (CET)": "date",
-            "Time (UTC)": "date",
+            "Time (CET)": "date", "Time (UTC)": "date",
             "ID of the corresponding Skrill transaction": "transaction_id",
             "ID of the corresponding Neteller transaction": "transaction_id",
-            "[+]": "amount",
-            "Currency Sent": "currency"
+            "[+]": "amount", "Currency Sent": "currency"
         })
-        df = df[df["Type"].str.lower() == "receive money"]
-        df = df[df["Status"].str.lower() == "processed"]
-        df = df[df["amount"].notna()]
+        df = df[(df["Type"].str.lower() == "receive money") & (df["Status"].str.lower() == "processed") & df["amount"].notna()]
         df = df[~df["Transaction Details"].str.contains("fee", case=False, na=False)]
-        keep_cols = ["date", "transaction_id", "amount", "currency", "Transaction Details", "Reference"]
-        df = df[keep_cols]
+        df = df[["date", "transaction_id", "amount", "currency", "Transaction Details", "Reference"]]
 
     elif processor == "trustpayments":
-        df = df[
-            (df["errorcode"] == 0) &
-            (df["requesttypedescription"].str.upper() == "AUTH")
-        ]
-
+        df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
         df = df.rename(columns={
             "transactionreference": "transaction_id",
             "transactionstartedtimestamp": "date",
             "mainamount": "amount",
             "currencyiso3a": "currency"
         })
+        df = df[["transaction_id", "billingfullname", "paymenttypedescription", "date", "currency", "amount", "maskedpan", "orderreference"]]
 
+    elif processor == "zotapay":
+        df = df.copy()
+        df.columns = df.iloc[0].str.strip()
+        df = df.iloc[1:]
+        df = df[(df["Type"].str.upper() == "SALE") & (df["Status"].str.lower() == "approved")]
+        df = df.rename(columns={
+            "ID": "transaction_id",
+            "Order Currency": "currency",
+            "Order Amount": "amount",
+            "Created At": "date"
+        })
         keep_cols = [
-            "transaction_id", "billingfullname", "paymenttypedescription",
-            "date", "currency", "amount", "maskedpan", "orderreference"
+            "transaction_id", "Type", "Status", "currency", "amount", "Merchant Order Description",
+            "Payment Method", "date", "Ended At", "Customer Email", "Customer First Name", "Customer Last Name"
         ]
         df = df[keep_cols]
 
@@ -137,14 +88,12 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
 def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
-
     df["PSP name"] = df["PSP name"].str.strip().str.lower()
     normalized_processor = processor_name.lower()
 
     def extract_crm_transaction_id(comment: str, processor: str):
         text = str(comment)
         processor = processor.lower()
-
         patterns = {
             "paypal": r"PSP TransactionId:([A-Z0-9]+)",
             "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})",
@@ -152,13 +101,12 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
             "shift4": r"More Comment:[^$]*\$(\w+)",
             "skrill": r"More Comment:[^$]*\$(\d+)",
             "netteller": r"More Comment:[^$]*\$(\d+)",
-            "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)"
+            "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
+            "zotapay": r"PSP TransactionId:(\d+)"
         }
-
         pattern = patterns.get(processor)
         if not pattern:
             return None
-
         match = re.search(pattern, text)
         if match:
             return next((g for g in match.groups() if g), None)
@@ -170,21 +118,17 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
         psp_mask = df["PSP name"].isin(["netteller", "neteller"])
     elif normalized_processor == "trustpayments":
         psp_mask = df["PSP name"] == "acquiringcom"
+    elif normalized_processor == "zotapay":
+        psp_mask = df["PSP name"].isin(["zotapay"])
     else:
         psp_mask = df["PSP name"] == normalized_processor
 
-    df = df[
-        (df["Name"].str.lower() == "deposit") &
-        psp_mask
-    ]
-
+    df = df[(df["Name"].str.lower() == "deposit") & psp_mask]
     df = df.reset_index(drop=True)
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        out_path = (
-            PROCESSED_CRM_DIR / normalized_processor / date_str / f"{normalized_processor}_deposits.xlsx"
-        )
+        out_path = PROCESSED_CRM_DIR / normalized_processor / date_str / f"{normalized_processor}_deposits.xlsx"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_excel(out_path, index=False)
         print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
@@ -249,9 +193,7 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        out_path = (
-            PROCESSED_PROCESSOR_DIR / processor_name / date_str / f"{processor_name}_deposits.xlsx"
-        )
+        out_path = PROCESSED_PROCESSOR_DIR / processor_name / date_str / f"{processor_name}_deposits.xlsx"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df_clean.to_excel(out_path, index=False)
         print(f"✅ Saved cleaned {processor_name} deposits to {out_path}")

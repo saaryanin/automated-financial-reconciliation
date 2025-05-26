@@ -12,7 +12,7 @@ start_time = time.time()
 # --- Configuration ---
 DATE = "2025-05-07"
 NETTELLER_DATE = "2025-05-19"
-PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill"]
+PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments"]
 
 # --- Step 1: Gather files ---
 crm_files = list(CRM_DIR.glob("crm_2025-05-07.xlsx"))  # Only process relevant date
@@ -21,6 +21,8 @@ safecharge_files = list(PROCESSOR_DIR.glob("safecharge_*.xlsx"))
 powercash_files = list(PROCESSOR_DIR.glob("powercash_*.csv"))
 shift4_files = list(PROCESSOR_DIR.glob("shift4_*.csv"))
 skrill_files = list(PROCESSOR_DIR.glob("skrill_*.csv"))
+trustpayments_files = list(PROCESSOR_DIR.glob("trustpayments_*.xlsx"))
+
 netteller_files = list(PROCESSOR_DIR.glob("netteller_2025-05-19.csv"))
 netteller_crm_files = list(CRM_DIR.glob("crm_2025-05-19.xlsx"))
 
@@ -30,6 +32,7 @@ process_files_in_parallel(safecharge_files, processor_name="safecharge", is_crm=
 process_files_in_parallel(powercash_files, processor_name="powercash", is_crm=False)
 process_files_in_parallel(shift4_files, processor_name="shift4", is_crm=False)
 process_files_in_parallel(skrill_files, processor_name="skrill", is_crm=False)
+process_files_in_parallel(trustpayments_files, processor_name="trustpayments", is_crm=False)
 process_files_in_parallel(netteller_files, processor_name="netteller", is_crm=False)
 
 # --- Step 3: Preprocess CRM files ---

@@ -35,37 +35,22 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Date": "date"
         })
 
-
-
     elif processor == "safecharge":
-
         df.columns = df.columns.str.strip()
-
         df = df[
-
             (df["Transaction Type"].str.lower() == "sale") &
-
             (df["Transaction Result"].str.lower() == "approved")
-
-            ]
+        ]
 
         keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result"]
-
         df = df[keep_cols]
 
         df = df.rename(columns={
-
             "Transaction ID": "transaction_id",
-
             "Date": "date",
-
             "Amount": "amount",
-
             "Currency": "currency"
-
         })
-
-
 
     elif processor == "powercash":
         df = df[
@@ -126,12 +111,14 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             (df["errorcode"] == 0) &
             (df["requesttypedescription"].str.upper() == "AUTH")
         ]
+
         df = df.rename(columns={
             "transactionreference": "transaction_id",
             "transactionstartedtimestamp": "date",
             "mainamount": "amount",
             "currencyiso3a": "currency"
         })
+
         keep_cols = [
             "transaction_id", "billingfullname", "paymenttypedescription",
             "date", "currency", "amount", "maskedpan", "orderreference"
@@ -144,17 +131,100 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
     return df.reset_index(drop=True)
 
 
-
-# ----------------------------
-# rest of the file omitted for brevity...
-
-
-
-
-
-
 # ----------------------------
 # CRM Handling
+# ----------------------------
+def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
+    df = pd.read_excel(filepath, engine="openpyxl")
+    df.columns = df.columns.str.strip()
+
+    df["PSP name"] = df["PSP name"].str.strip().str.lower()
+    normalized_processor = processor_name.lower()
+
+    def extract_crm_transaction_id(comment: str, processor: str):
+        text = str(comment)
+        processor = processor.lower()
+
+        patterns = {
+            "paypal": r"PSP TransactionId:([A-Z0-9]+)",
+            "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})",
+            "powercash": r"PSP TransactionId:(\d+)",
+            "shift4": r"More Comment:[^$]*\$(\w+)",
+            "skrill": r"More Comment:[^$]*\$(\d+)",
+            "netteller": r"More Comment:[^$]*\$(\d+)",
+            "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)"
+        }
+
+        pattern = patterns.get(processor)
+        if not pattern:
+            return None
+
+        match = re.search(pattern, text)
+        if match:
+            return next((g for g in match.groups() if g), None)
+        return None
+
+    df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
+
+    if normalized_processor == "netteller":
+        psp_mask = df["PSP name"].isin(["netteller", "neteller"])
+    elif normalized_processor == "trustpayments":
+        psp_mask = df["PSP name"] == "acquiringcom"
+    else:
+        psp_mask = df["PSP name"] == normalized_processor
+
+    df = df[
+        (df["Name"].str.lower() == "deposit") &
+        psp_mask
+    ]
+
+    df = df.reset_index(drop=True)
+
+    if save_clean:
+        date_str = extract_date_from_filename(filepath)
+        out_path = (
+            PROCESSED_CRM_DIR / normalized_processor / date_str / f"{normalized_processor}_deposits.xlsx"
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_excel(out_path, index=False)
+        print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
+
+    return df
+
+
+# ----------------------------
+# Utility
+# ----------------------------
+def extract_date_from_filename(filepath: str) -> str:
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", filepath)
+    if match:
+        return match.group(1)
+    match_alt = re.search(r"(\d{2}\.\d{2}\.\d{4})", filepath)
+    if match_alt:
+        return datetime.strptime(match_alt.group(1), "%d.%m.%Y").strftime("%Y-%m-%d")
+    match_slash = re.search(r"(\d{2}_\d{2}_\d{4})", filepath)
+    if match_slash:
+        return datetime.strptime(match_slash.group(1), "%d_%m_%Y").strftime("%Y-%m-%d")
+    return "unknown_date"
+
+
+# ----------------------------
+# Parallel Batch Processor
+# ----------------------------
+def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True):
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for path in file_paths:
+            if is_crm:
+                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean))
+            else:
+                futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean))
+        results = [f.result() for f in futures]
+    return results
+
+
+# ----------------------------
+# Processor File Loader
 # ----------------------------
 def load_processor_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
     ext = Path(filepath).suffix.lower()
@@ -187,98 +257,3 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
         print(f"✅ Saved cleaned {processor_name} deposits to {out_path}")
 
     return df_clean
-
-
-
-
-
-# ----------------------------
-# Utility
-# ----------------------------
-def extract_date_from_filename(filepath: str) -> str:
-    match = re.search(r"(\d{4}-\d{2}-\d{2})", filepath)
-    if match:
-        return match.group(1)
-    match_alt = re.search(r"(\d{2}\.\d{2}\.\d{4})", filepath)
-    if match_alt:
-        return datetime.strptime(match_alt.group(1), "%d.%m.%Y").strftime("%Y-%m-%d")
-    match_slash = re.search(r"(\d{2}_\d{2}_\d{4})", filepath)
-    if match_slash:
-        return datetime.strptime(match_slash.group(1), "%d_%m_%Y").strftime("%Y-%m-%d")
-    return "unknown_date"
-
-# ----------------------------
-# CRM Handling
-# ----------------------------
-def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
-    df = pd.read_excel(filepath, engine="openpyxl")
-    df.columns = df.columns.str.strip()
-
-    # Normalize PSP name
-    df["PSP name"] = df["PSP name"].str.strip().str.lower()
-    normalized_processor = processor_name.lower()
-
-    def extract_crm_transaction_id(comment: str, processor: str) -> str | None:
-        processor = processor.lower()
-        comment = str(comment)
-        if processor == "paypal":
-            pattern = r"PSP TransactionId:([A-Z0-9]+)"
-        elif processor == "safecharge":
-            # Try PSP TransactionId first
-            match = re.search(r"PSP TransactionId:([12]\d{18})", comment)
-            if match:
-                return match.group(1)
-            # Fallback: More Comment with proper SafeCharge format
-            match = re.search(r"More Comment:[^$]*\$(\d{19})", comment)
-            return match.group(1) if match else None
-        elif processor == "powercash":
-            pattern = r"PSP TransactionId:(\d+)"
-        elif processor == "shift4":
-            pattern = r"More Comment:[^$]*\$(\w+)"
-        elif processor in ["skrill", "netteller"]:
-            pattern = r"More Comment:[^$]*\$(\d+)"
-        else:
-            return None
-
-        match = re.search(pattern, comment)
-        return match.group(1) if match else None
-
-    df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
-
-    # Special handling for "netteller" aliasing in CRM
-    if normalized_processor == "netteller":
-        psp_mask = df["PSP name"].isin(["netteller", "neteller"])
-    else:
-        psp_mask = df["PSP name"] == normalized_processor
-
-    df = df[
-        (df["Name"].str.lower() == "deposit") &
-        psp_mask
-    ]
-
-    df = df.reset_index(drop=True)
-
-    if save_clean:
-        date_str = extract_date_from_filename(filepath)
-        out_path = (
-            PROCESSED_CRM_DIR / normalized_processor / date_str / f"{normalized_processor}_deposits.xlsx"
-        )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_excel(out_path, index=False)
-        print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
-
-    return df
-
-# ----------------------------
-# Parallel Batch Processor
-# ----------------------------
-def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True):
-    with ThreadPoolExecutor() as executor:
-        futures = []
-        for path in file_paths:
-            if is_crm:
-                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean))
-            else:
-                futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean))
-        results = [f.result() for f in futures]
-    return results

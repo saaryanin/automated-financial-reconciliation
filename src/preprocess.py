@@ -35,18 +35,37 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Date": "date"
         })
 
+
+
     elif processor == "safecharge":
+
+        df.columns = df.columns.str.strip()
+
         df = df[
+
             (df["Transaction Type"].str.lower() == "sale") &
+
             (df["Transaction Result"].str.lower() == "approved")
-        ]
+
+            ]
+
+        keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result"]
+
+        df = df[keep_cols]
 
         df = df.rename(columns={
+
             "Transaction ID": "transaction_id",
-            "Transaction Date": "date",
+
+            "Date": "date",
+
             "Amount": "amount",
+
             "Currency": "currency"
+
         })
+
+
 
     elif processor == "powercash":
         df = df[
@@ -85,51 +104,50 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Request ID (a1)": "transaction_id"
         })
 
-
-
-
     elif processor in ["skrill", "netteller"]:
-
         df.columns = df.columns.str.strip()
-
-        # Rename first so we can filter reliably
-
         df = df.rename(columns={
-
             "Time (CET)": "date",
-
-            "Time (UTC)": "date",  # support both formats
-
+            "Time (UTC)": "date",
             "ID of the corresponding Skrill transaction": "transaction_id",
-
             "ID of the corresponding Neteller transaction": "transaction_id",
-
             "[+]": "amount",
-
             "Currency Sent": "currency"
-
         })
-
-        # Filter only valid rows
-
         df = df[df["Type"].str.lower() == "receive money"]
-
         df = df[df["Status"].str.lower() == "processed"]
-
         df = df[df["amount"].notna()]
-
         df = df[~df["Transaction Details"].str.contains("fee", case=False, na=False)]
-
         keep_cols = ["date", "transaction_id", "amount", "currency", "Transaction Details", "Reference"]
-
         df = df[keep_cols]
 
-
+    elif processor == "trustpayments":
+        df = df[
+            (df["errorcode"] == 0) &
+            (df["requesttypedescription"].str.upper() == "AUTH")
+        ]
+        df = df.rename(columns={
+            "transactionreference": "transaction_id",
+            "transactionstartedtimestamp": "date",
+            "mainamount": "amount",
+            "currencyiso3a": "currency"
+        })
+        keep_cols = [
+            "transaction_id", "billingfullname", "paymenttypedescription",
+            "date", "currency", "amount", "maskedpan", "orderreference"
+        ]
+        df = df[keep_cols]
 
     else:
         raise ValueError(f"Processor not supported yet: {processor}")
 
     return df.reset_index(drop=True)
+
+
+
+# ----------------------------
+# rest of the file omitted for brevity...
+
 
 
 
@@ -200,26 +218,29 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
     df["PSP name"] = df["PSP name"].str.strip().str.lower()
     normalized_processor = processor_name.lower()
 
-    def extract_crm_transaction_id(comment: str, processor: str):
+    def extract_crm_transaction_id(comment: str, processor: str) -> str | None:
         processor = processor.lower()
+        comment = str(comment)
         if processor == "paypal":
-            match = re.search(r"PSP TransactionId:([A-Z0-9]+)", str(comment))
+            pattern = r"PSP TransactionId:([A-Z0-9]+)"
         elif processor == "safecharge":
-            match = re.search(r"\b(1|2)\d{18}\b", str(comment))
+            # Try PSP TransactionId first
+            match = re.search(r"PSP TransactionId:([12]\d{18})", comment)
+            if match:
+                return match.group(1)
+            # Fallback: More Comment with proper SafeCharge format
+            match = re.search(r"More Comment:[^$]*\$(\d{19})", comment)
+            return match.group(1) if match else None
         elif processor == "powercash":
-            match = re.search(r"PSP TransactionId:(\d+)", str(comment))
+            pattern = r"PSP TransactionId:(\d+)"
         elif processor == "shift4":
-            match = re.search(r"More Comment:[^$]*\$(\w+)", str(comment))
+            pattern = r"More Comment:[^$]*\$(\w+)"
         elif processor in ["skrill", "netteller"]:
-            match = re.search(r"More Comment:[^$]*\$(\d+)", str(comment))
+            pattern = r"More Comment:[^$]*\$(\d+)"
         else:
             return None
 
-        # ✅ Return group(1) only if the group exists and was matched
-        try:
-            return match.group(1) if match else None
-        except IndexError:
-            return None
+        match = re.search(pattern, comment)
         return match.group(1) if match else None
 
     df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
@@ -247,8 +268,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
         print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
 
     return df
-
-
 
 # ----------------------------
 # Parallel Batch Processor

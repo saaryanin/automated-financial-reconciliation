@@ -38,7 +38,7 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
         df = df[["Transaction Date", "Request ID (a1)", "Currency", "Amount", "Card Number", "Card Scheme", "Cardholder Email"]]
         df = df.rename(columns={"Transaction Date": "date", "Request ID (a1)": "transaction_id"})
 
-    elif processor in ["skrill", "netteller"]:
+    elif processor in ["skrill", "neteller"]:
         df = df.rename(columns={
             "Time (CET)": "date", "Time (UTC)": "date",
             "ID of the corresponding Skrill transaction": "transaction_id",
@@ -110,7 +110,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
             "powercash": r"PSP TransactionId:(\d+)",
             "shift4": r"More Comment:[^$]*\$(\w+)",
             "skrill": r"More Comment:[^$]*\$(\d+)",
-            "netteller": r"More Comment:[^$]*\$(\d+)",
+            "neteller": r"More Comment:[^$]*\$(\d+)",
             "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
             "zotapay": r"PSP TransactionId:(\d+)",
              "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
@@ -125,8 +125,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
 
     df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
 
-    if normalized_processor == "netteller":
-        psp_mask = df["PSP name"].isin(["netteller", "neteller"])
+    if normalized_processor == "neteller":
+        psp_mask = df["PSP name"].isin(["neteller", "neteller"])
     elif normalized_processor == "trustpayments":
         psp_mask = df["PSP name"] == "acquiringcom"
     elif normalized_processor == "zotapay":

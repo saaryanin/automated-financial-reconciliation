@@ -96,7 +96,18 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "OriginalAmount": "amount"
         })
         df = df[["transaction_id", "amount"]]  # Time dropped
+    elif processor == "paymentasia":
+        df = df[(df["Type"].str.upper() == "SALE") & (df["Status"].str.upper() == "SUCCESS")]
+        df = df.rename(columns={
+            "Merchant Reference": "transaction_id",
+            "Order Amount": "amount",
+            "Order Currency": "currency",
+            "Created Time": "date"
+        })
+        df = df[["transaction_id", "amount", "currency", "date"]]
+
         return df.reset_index(drop=True)
+
 
 
 # ----------------------------
@@ -121,7 +132,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
             "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
             "zotapay": r"PSP TransactionId:(\d+)",
             "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
-            "ezeebill": r"(\d{7}-\d{18})"
+            "ezeebill": r"(\d{7}-\d{18})",
+            "paymentasia": r"(\d{7}-\d{18})",
         }
         pattern = patterns.get(processor)
         if not pattern:
@@ -139,6 +151,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
         psp_mask = df["PSP name"] == "acquiringcom"
     elif normalized_processor == "zotapay":
         psp_mask = df["PSP name"].isin(["zotapay"])
+    elif normalized_processor == "paymentasia":
+        psp_mask = df["PSP name"] == "pamy"
     else:
         psp_mask = df["PSP name"].str.lower() == normalized_processor
 

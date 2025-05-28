@@ -14,6 +14,7 @@ DATE = "2025-05-07"
 NETELLER_DATE = "2025-05-19"
 ZOTAPAY_DATE = "2025-03-28"
 BITPAY_DATE = "2025-05-16"
+EZEESAVE_DATE = "2024-08-22"
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments"]
 
 # --- Step 1: Gather files ---
@@ -30,6 +31,8 @@ zotapay_crm_files = list(CRM_DIR.glob("crm_2025-03-28.xlsx"))
 zotapay_files = list(PROCESSOR_DIR.glob("zotapay_2025-03-28.csv*"))
 bitpay_files = list(PROCESSOR_DIR.glob("bitpay_2025-05-16.csv"))
 bitpay_crm_files = list(CRM_DIR.glob("crm_2025-05-16.xlsx"))
+ezeebill_files = list(PROCESSOR_DIR.glob("ezeebill_2024-08-22.csv"))
+ezeebill_crm_files = list(CRM_DIR.glob("crm_2024-08-22.xlsx"))
 
 # --- Step 2: Preprocess processor files ---
 process_files_in_parallel(paypal_files, processor_name="paypal", is_crm=False)
@@ -41,6 +44,7 @@ process_files_in_parallel(trustpayments_files, processor_name="trustpayments", i
 process_files_in_parallel(neteller_files, processor_name="neteller", is_crm=False)
 process_files_in_parallel(zotapay_files, processor_name="zotapay", is_crm=False)
 process_files_in_parallel(bitpay_files, processor_name="bitpay", is_crm=False)
+process_files_in_parallel(ezeebill_files, processor_name="ezeebill", is_crm=False)
 
 # --- Step 3: Preprocess CRM files ---
 for processor in PROCESSORS:
@@ -48,16 +52,20 @@ for processor in PROCESSORS:
 process_files_in_parallel(neteller_crm_files, processor_name="neteller", is_crm=True)
 process_files_in_parallel(zotapay_crm_files, processor_name="zotapay", is_crm=True)
 process_files_in_parallel(bitpay_crm_files, processor_name="bitpay", is_crm=True)
+print(f"Ezeebill CRM files found: {ezeebill_crm_files}")
+process_files_in_parallel(ezeebill_crm_files, processor_name="ezeebill", is_crm=True)
+
+
 
 # --- Step 4: Match deposits ---
 unmatched_crm_frames = match_all_processors_in_parallel(PROCESSORS, DATE)
 unmatched_crm_neteller = match_deposits("neteller", NETELLER_DATE)
 unmatched_crm_zotapay = match_deposits("zotapay", ZOTAPAY_DATE)
 unmatched_crm_bitpay = match_deposits("bitpay", BITPAY_DATE)
+unmatched_crm_ezeebill = match_deposits("ezeebill", EZEESAVE_DATE)
 
 # --- Step 5: Save unmatched CRM deposits ---
-save_global_crm_unmatched(DATE, unmatched_crm_frames + [unmatched_crm_neteller, unmatched_crm_zotapay])
-save_global_crm_unmatched(DATE, unmatched_crm_frames + [unmatched_crm_neteller, unmatched_crm_zotapay, unmatched_crm_bitpay])
+save_global_crm_unmatched(DATE, unmatched_crm_frames + [unmatched_crm_neteller, unmatched_crm_zotapay, unmatched_crm_bitpay, unmatched_crm_ezeebill])
 
 end_time = time.time()
 print(f"\n⏱️ Total time: {end_time - start_time:.2f} seconds")

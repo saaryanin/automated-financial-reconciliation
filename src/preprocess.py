@@ -5,7 +5,6 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 
-
 # ----------------------------
 # Processor Handling
 # ----------------------------
@@ -75,6 +74,7 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Payment Method", "date", "Ended At", "Customer Email", "Customer First Name", "Customer Last Name"
         ]
         df = df[keep_cols]
+
     elif processor == "bitpay":
         df = df[df["txtype"].str.lower() == "sale"]
         df = df.rename(columns={
@@ -86,10 +86,17 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
         ]
         df = df[keep_cols]
 
-    else:
-        raise ValueError(f"Processor not supported yet: {processor}")
-
-    return df.reset_index(drop=True)
+    elif processor == "ezeebill":
+        df.columns = df.columns.str.replace(" ", "").str.strip()
+        df = df[df["Action"].str.upper() == "SALE"]
+        if df.empty:
+            return None
+        df = df.rename(columns={
+            "MerchantTxnID": "transaction_id",
+            "OriginalAmount": "amount"
+        })
+        df = df[["transaction_id", "amount"]]  # Time dropped
+        return df.reset_index(drop=True)
 
 
 # ----------------------------
@@ -113,7 +120,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
             "neteller": r"More Comment:[^$]*\$(\d+)",
             "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
             "zotapay": r"PSP TransactionId:(\d+)",
-             "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
+            "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
+            "ezeebill": r"(\d{7}-\d{18})"
         }
         pattern = patterns.get(processor)
         if not pattern:
@@ -132,7 +140,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
     elif normalized_processor == "zotapay":
         psp_mask = df["PSP name"].isin(["zotapay"])
     else:
-        psp_mask = df["PSP name"] == normalized_processor
+        psp_mask = df["PSP name"].str.lower() == normalized_processor
 
     df = df[(df["Name"].str.lower() == "deposit") & psp_mask]
     df = df.reset_index(drop=True)
@@ -142,7 +150,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
         out_path = PROCESSED_CRM_DIR / normalized_processor / date_str / f"{normalized_processor}_deposits.xlsx"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_excel(out_path, index=False)
-        print(f"Saved cleaned CRM {processor_name} deposits to {out_path}")
+        print(f"✅ Saved cleaned CRM {processor_name} deposits to {out_path}")
 
     return df
 
@@ -190,17 +198,18 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
         "ID of the corresponding Skrill transaction": str,
         "ID of the corresponding Neteller transaction": str
     }
-    skip = 11 if processor_name.lower() == "safecharge" else 0
+    skip = 15 if processor_name.lower() == "ezeebill" else 11 if processor_name.lower() == "safecharge" else 0
 
     if ext == ".csv":
-        df = pd.read_csv(filepath, dtype=dtype, encoding="utf-8-sig")
+        df = pd.read_csv(filepath, dtype=dtype, encoding="utf-8-sig", skiprows=skip)
     elif ext == ".xlsx":
         df = pd.read_excel(filepath, dtype=dtype, skiprows=skip, engine="openpyxl")
     else:
         raise ValueError("Unsupported file type")
 
-    df.columns = df.columns.str.strip()
     df_clean = standardize_processor_columns(df, processor_name)
+    if df_clean is None or df_clean.empty:
+        return None
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)

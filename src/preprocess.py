@@ -75,6 +75,16 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
             "Payment Method", "date", "Ended At", "Customer Email", "Customer First Name", "Customer Last Name"
         ]
         df = df[keep_cols]
+    elif processor == "bitpay":
+        df = df[df["txtype"].str.lower() == "sale"]
+        df = df.rename(columns={
+            "invoiceid": "transaction_id"
+        })
+        keep_cols = [
+            "date", "time", "transaction_id", "payoutamount",
+            "invoiceprice", "buyerName", "buyerEmail"
+        ]
+        df = df[keep_cols]
 
     else:
         raise ValueError(f"Processor not supported yet: {processor}")
@@ -102,7 +112,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
             "skrill": r"More Comment:[^$]*\$(\d+)",
             "netteller": r"More Comment:[^$]*\$(\d+)",
             "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
-            "zotapay": r"PSP TransactionId:(\d+)"
+            "zotapay": r"PSP TransactionId:(\d+)",
+             "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
         }
         pattern = patterns.get(processor)
         if not pattern:

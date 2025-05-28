@@ -13,6 +13,7 @@ start_time = time.time()
 DATE = "2025-05-07"
 NETTELLER_DATE = "2025-05-19"
 ZOTAPAY_DATE = "2025-03-28"
+BITPAY_DATE = "2025-05-16"
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments"]
 
 # --- Step 1: Gather files ---
@@ -27,6 +28,8 @@ netteller_files = list(PROCESSOR_DIR.glob("netteller_2025-05-19.csv"))
 netteller_crm_files = list(CRM_DIR.glob("crm_2025-05-19.xlsx"))
 zotapay_crm_files = list(CRM_DIR.glob("crm_2025-03-28.xlsx"))
 zotapay_files = list(PROCESSOR_DIR.glob("zotapay_2025-03-28.csv*"))
+bitpay_files = list(PROCESSOR_DIR.glob("bitpay_2025-05-16.csv"))
+bitpay_crm_files = list(CRM_DIR.glob("crm_2025-05-16.xlsx"))
 
 # --- Step 2: Preprocess processor files ---
 process_files_in_parallel(paypal_files, processor_name="paypal", is_crm=False)
@@ -37,20 +40,24 @@ process_files_in_parallel(skrill_files, processor_name="skrill", is_crm=False)
 process_files_in_parallel(trustpayments_files, processor_name="trustpayments", is_crm=False)
 process_files_in_parallel(netteller_files, processor_name="netteller", is_crm=False)
 process_files_in_parallel(zotapay_files, processor_name="zotapay", is_crm=False)
+process_files_in_parallel(bitpay_files, processor_name="bitpay", is_crm=False)
 
 # --- Step 3: Preprocess CRM files ---
 for processor in PROCESSORS:
     process_files_in_parallel(crm_files, processor_name=processor, is_crm=True)
 process_files_in_parallel(netteller_crm_files, processor_name="netteller", is_crm=True)
 process_files_in_parallel(zotapay_crm_files, processor_name="zotapay", is_crm=True)
+process_files_in_parallel(bitpay_crm_files, processor_name="bitpay", is_crm=True)
 
 # --- Step 4: Match deposits ---
 unmatched_crm_frames = match_all_processors_in_parallel(PROCESSORS, DATE)
 unmatched_crm_netteller = match_deposits("netteller", NETTELLER_DATE)
 unmatched_crm_zotapay = match_deposits("zotapay", ZOTAPAY_DATE)
+unmatched_crm_bitpay = match_deposits("bitpay", BITPAY_DATE)
 
 # --- Step 5: Save unmatched CRM deposits ---
 save_global_crm_unmatched(DATE, unmatched_crm_frames + [unmatched_crm_netteller, unmatched_crm_zotapay])
+save_global_crm_unmatched(DATE, unmatched_crm_frames + [unmatched_crm_netteller, unmatched_crm_zotapay, unmatched_crm_bitpay])
 
 end_time = time.time()
 print(f"\n⏱️ Total time: {end_time - start_time:.2f} seconds")

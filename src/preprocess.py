@@ -8,7 +8,7 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 # ----------------------------
 # Processor Handling
 # ----------------------------
-def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFrame:
+def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     processor = processor.lower()
     df.columns = df.columns.str.strip()
 
@@ -25,7 +25,8 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
     elif processor == "safecharge":
         df = df[(df["Transaction Type"].str.lower() == "sale") & (df["Transaction Result"].str.lower() == "approved")]
         df = df[["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result"]]
-        df = df.rename(columns={"Transaction ID": "transaction_id", "Date": "date", "Amount": "amount", "Currency": "currency"})
+        df = df.rename(
+            columns={"Transaction ID": "transaction_id", "Date": "date", "Amount": "amount", "Currency": "currency"})
 
     elif processor == "powercash":
         df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (df["Currency"].str.upper() != "CAD")]
@@ -108,12 +109,30 @@ def standardize_processor_columns(df: pd.DataFrame, processor: str) -> pd.DataFr
 
         return df.reset_index(drop=True)
 
+def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:
+    if processor.lower() == "safecharge":
+        df = df[(df["Transaction Type"].isin(["Credit", "Voidcheque"])) & (df["Transaction Result"] == "Approved")]
+        cancel_indexes = df[df["Transaction Type"] == "Voidcheque"].index
+        remove_indexes = set(cancel_indexes) | set(cancel_indexes - 1)
+        df = df.drop(remove_indexes, errors='ignore')
+        df = df.rename(columns={
+            "Amount": "amount",
+            "Currency": "currency",
+            "Date": "date",
+            "Email Address": "email",
+            "PAN": "last_4cc"
+        })
+        df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$")
+        df = df[["amount", "currency", "date", "last_4cc", "email"]]
+        return df
+    return pd.DataFrame()
+
 
 
 # ----------------------------
 # CRM Handling
 # ----------------------------
-def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
+def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
     df["PSP name"] = df["PSP name"].str.strip().str.lower()
@@ -146,27 +165,33 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False) -> pd.Da
     df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
 
     if normalized_processor == "neteller":
-        psp_mask = df["PSP name"].isin(["neteller", "neteller"])
+        psp_mask = df["PSP name"].isin(["neteller"])
     elif normalized_processor == "trustpayments":
         psp_mask = df["PSP name"] == "acquiringcom"
     elif normalized_processor == "zotapay":
-        psp_mask = df["PSP name"].isin(["zotapay"])
+        psp_mask = df["PSP name"] == "zotapay"
     elif normalized_processor == "paymentasia":
         psp_mask = df["PSP name"] == "pamy"
     else:
-        psp_mask = df["PSP name"].str.lower() == normalized_processor
+        psp_mask = df["PSP name"] == normalized_processor
 
-    df = df[(df["Name"].str.lower() == "deposit") & psp_mask]
-    df = df.reset_index(drop=True)
+    tx_type = "deposit" if transaction_type == "deposit" else "withdrawal"
+    df = df[(df["Name"].str.lower() == tx_type) & psp_mask].reset_index(drop=True)
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        out_path = PROCESSED_CRM_DIR / normalized_processor / date_str / f"{normalized_processor}_deposits.xlsx"
+        folder = f"{normalized_processor}_{transaction_type}s.xlsx"
+        out_path = PROCESSED_CRM_DIR / normalized_processor / date_str / folder
         out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if transaction_type == "withdrawal" and "transaction_id" in df.columns:
+            df = df.drop(columns=["transaction_id"])
+
         df.to_excel(out_path, index=False)
-        print(f"✅ Saved cleaned CRM {processor_name} deposits to {out_path}")
+        print(f"✅ Saved cleaned CRM {processor_name} {transaction_type}s to {out_path}")
 
     return df
+
 
 
 # ----------------------------
@@ -188,14 +213,14 @@ def extract_date_from_filename(filepath: str) -> str:
 # ----------------------------
 # Parallel Batch Processor
 # ----------------------------
-def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True):
+def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True,transaction_type="deposit"):
     with ThreadPoolExecutor() as executor:
         futures = []
         for path in file_paths:
             if is_crm:
-                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean))
+                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean, transaction_type))
             else:
-                futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean))
+                futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean, transaction_type=transaction_type))
         results = [f.result() for f in futures]
     return results
 
@@ -203,7 +228,7 @@ def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, sav
 # ----------------------------
 # Processor File Loader
 # ----------------------------
-def load_processor_file(filepath: str, processor_name: str, save_clean=False) -> pd.DataFrame:
+def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
     ext = Path(filepath).suffix.lower()
     dtype = {
         "Transaction ID": str,
@@ -221,15 +246,21 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False) ->
     else:
         raise ValueError("Unsupported file type")
 
-    df_clean = standardize_processor_columns(df, processor_name)
+    if transaction_type == "deposit":
+        df_clean = standardize_processor_columns_deposits(df, processor_name)
+    else:
+        df_clean = standardize_processor_columns_withdrawals(df, processor_name)
+
     if df_clean is None or df_clean.empty:
         return None
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        out_path = PROCESSED_PROCESSOR_DIR / processor_name / date_str / f"{processor_name}_deposits.xlsx"
+        out_filename = f"{processor_name}_{transaction_type}s.xlsx"
+        out_path = PROCESSED_PROCESSOR_DIR / processor_name / date_str / out_filename
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df_clean.to_excel(out_path, index=False)
-        print(f"✅ Saved cleaned {processor_name} deposits to {out_path}")
+        print(f"✅ Saved cleaned {processor_name} {transaction_type}s to {out_path}")
 
     return df_clean
+

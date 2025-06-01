@@ -185,7 +185,20 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         if transaction_type == "withdrawal" and "transaction_id" in df.columns:
-            df = df.drop(columns=["transaction_id"])
+            needed_columns = [
+                "Created On",
+                "First Name (Account) (Account)",
+                "Last Name (Account) (Account)",
+                "Email (Account) (Account)",
+                "Amount",
+                "Currency",
+                "Method of Payment",
+                "PSP name",
+                "CC Last 4 Digits"
+            ]
+            if "transaction_id" in df.columns:
+                df = df.drop(columns=["transaction_id"])
+            df = df[[col for col in needed_columns if col in df.columns]]
 
         df.to_excel(out_path, index=False)
         print(f"✅ Saved cleaned CRM {processor_name} {transaction_type}s to {out_path}")

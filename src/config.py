@@ -9,4 +9,5 @@ PROCESSOR_DIR = DATA_DIR / "processor_reports"
 PROCESSED_DIR = DATA_DIR / "processed"
 PROCESSED_CRM_DIR = PROCESSED_DIR / "crm"
 PROCESSED_PROCESSOR_DIR = PROCESSED_DIR / "processors"
+RATES_DIR = DATA_DIR / "rates"
 

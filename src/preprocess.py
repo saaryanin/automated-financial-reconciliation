@@ -124,6 +124,10 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         })
         df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$")
         df = df[["amount", "currency", "date", "last_4cc", "email"]]
+        df["currency"] = df["currency"].replace({
+            "Euro": "EUR",
+            "US Dollar": "USD"
+        })
         return df
     return pd.DataFrame()
 
@@ -177,6 +181,12 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 
     tx_type = "deposit" if transaction_type == "deposit" else "withdrawal"
     df = df[(df["Name"].str.lower() == tx_type) & psp_mask].reset_index(drop=True)
+
+    if "Currency" in df.columns:
+        df["Currency"] = df["Currency"].replace({
+            "Euro": "EUR",
+            "US Dollar": "USD"
+        })
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)

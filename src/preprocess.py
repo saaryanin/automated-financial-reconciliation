@@ -111,7 +111,31 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
 
 def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     if processor.lower() == "safecharge":
+        # Check if Safecharge-specific pattern exists
+        processor_name_value = "safecharge"
+        if "Acquiring Bank" in df.columns and df["Acquiring Bank"].astype(str).str.contains("Nuvei", case=False).any():
+            processor_name_value = "safecharge"
+
         df = df[(df["Transaction Type"].isin(["Credit", "Voidcheque"])) & (df["Transaction Result"] == "Approved")]
+        cancel_indexes = df[df["Transaction Type"] == "Voidcheque"].index
+        remove_indexes = set(cancel_indexes) | set(cancel_indexes - 1)
+        df = df.drop(remove_indexes, errors='ignore')
+        df = df.rename(columns={
+            "Amount": "amount",
+            "Currency": "currency",
+            "Date": "date",
+            "Email Address": "email",
+            "PAN": "last_4cc"
+        })
+        df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$")
+        df["currency"] = df["currency"].replace({
+            "Euro": "EUR",
+            "US Dollar": "USD"
+        })
+        df["processor_name"] = processor_name_value
+        df = df[["amount", "currency", "date", "last_4cc", "email", "processor_name"]]
+        return df
+
         cancel_indexes = df[df["Transaction Type"] == "Voidcheque"].index
         remove_indexes = set(cancel_indexes) | set(cancel_indexes - 1)
         df = df.drop(remove_indexes, errors='ignore')

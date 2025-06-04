@@ -45,6 +45,7 @@ processor_df['proc_emails'] = processor_df['email'].fillna('').astype(str)
 processor_df['proc_last4_digits'] = processor_df['last_4cc'].astype(str).str.zfill(4).str[-4:]
 processor_df['proc_currency'] = processor_df['currency']
 processor_df['proc_total_amount'] = pd.to_numeric(processor_df['amount'], errors='coerce').abs()
+processor_df['proc_processor_name'] = processor_df['processor_name'].fillna(processor_name)
 
 # --- Load exchange rates ---
 logger.info("Loading exchange rates...")

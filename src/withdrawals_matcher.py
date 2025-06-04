@@ -351,6 +351,7 @@ class ReconciliationEngine:
                 'proc_last4_digits': [c['row_data']['proc_last4_digits'] for c in combo],
                 'proc_currencies': [c['currency'] for c in combo],
                 'proc_total_amounts': [c['row_data']['proc_total_amount'] for c in combo],
+                'proc_processor_name': next(iter({c['row_data']['processor_name'] for c in combo}), None),
                 'converted_amount_total': round(best_combo['total_amount'], 4),
                 'exchange_rates': [c['rate'] for c in combo],
                 'email_similarity_avg': round(best_avg_score, 4),

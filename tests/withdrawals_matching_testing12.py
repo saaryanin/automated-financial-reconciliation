@@ -6,16 +6,22 @@ from functools import lru_cache
 import pandas as pd
 import logging, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import json
+from pprint import pprint
 
+def anonymize_email(email):
+    return hashlib.sha256(email.encode()).hexdigest()[:8] if email else None
 class ReconciliationEngine:
     def __init__(self, exchange_rate_map, config=None):
         self.exchange_rate_map = exchange_rate_map
         self.config = {
-            'max_combo': 20, 'tolerance': 0.02, 'email_threshold': 0.5,
-            'top_candidates': 100, 'fallback_email_threshold': 0.5,
+            'max_combo': 20, 'tolerance': 0.02, 'email_threshold': 0.4,
+            'top_candidates': 50, 'fallback_email_threshold': 0.5,
             'enable_fallback': True, 'enable_diagnostics': True,
             'log_level': logging.INFO, 'deep_search': True,
-            'timeout': 300, 'auto_adjust': True
+            'require_email_match': False,
+            'timeout': 300, 'auto_adjust': True,'minimum_email_similarity': 0.75,
         }
         if config: self.config.update(config)
 
@@ -87,7 +93,12 @@ class ReconciliationEngine:
                         matches.append(self._create_unmatched_crm_record(crm_df.loc[idx]))
                         self.metrics['unmatched'] += 1
                         if self.config['enable_diagnostics']:
-                            self.diagnostics.append({'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
+                            self.diagnostics.append({
+                                'crm_idx': idx,
+                                'failure_reason': diag.get('failure_reason', 'No candidates'),
+                                'crm_email_hash': anonymize_email(crm_df.loc[idx].get('crm_email')),
+                                'email_threshold': self.config['email_threshold']
+                            })
                 if idx % 10 == 0: self._update_eta(len(crm_df), idx + 1)
 
         for idx, row in processor_df.iterrows():
@@ -148,7 +159,7 @@ class ReconciliationEngine:
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
         crm_last4, crm_cur, crm_amt, crm_email = crm_row['crm_last4'], crm_row['crm_currency'], crm_row['crm_amount'], crm_row['crm_email']
-        candidates, diag = [], {}
+        candidates, diag_info = [], {}
         indices = [i for i in proc_dict if i not in used] if crm_last4 in ("0", "0000", "", None) else last4_map.get(crm_last4, [])
 
         for i in indices:
@@ -157,9 +168,32 @@ class ReconciliationEngine:
             conv, rate = self.convert_amount(row['proc_total_amount'], row['proc_currency'], crm_cur)
             if conv is None: continue
             sim = self.enhanced_email_similarity(crm_email, row['proc_emails'])
-            if self.config.get('require_email_match', True) and sim < self.config['email_threshold']:
-                if not (row['proc_last4_digits'] == crm_last4 and abs(conv - crm_amt) < 0.01):
-                    continue
+            min_sim = self.config.get('minimum_email_similarity', 0.75)
+            if sim < min_sim and abs(conv - crm_amt) > self.config['tolerance'] * crm_amt:
+                if self.config['enable_diagnostics']:
+                    diag_info.setdefault('all_candidates', []).append({
+                        'email_score': round(sim, 3),
+                        'converted_amount': round(conv, 2),
+                        'currency': row['proc_currency'],
+                        'proc_last4': row['proc_last4_digits'],
+                        'amount_diff': round(abs(conv - crm_amt), 4),
+                    })
+                continue
+            sim = self.enhanced_email_similarity(crm_email, row['proc_emails'])
+            conv, rate = self.convert_amount(row['proc_total_amount'], row['proc_currency'], crm_cur)
+            if conv is None: continue
+
+            # ⬇️ NEW: Always log diagnostics for all attempted candidates
+            diag_info.setdefault('all_candidates', []).append({
+                'email_score': round(sim, 3),
+                'converted_amount': round(conv, 2),
+                'currency': row['proc_currency'],
+                'proc_last4': row['proc_last4_digits'],
+                'amount_diff': round(abs(conv - crm_amt), 4),
+                'reason': 'Filtered out by email/amount threshold' if sim < 0.75 and abs(conv - crm_amt) > self.config[
+                    'tolerance'] * crm_amt else 'Included'
+            })
+
             candidates.append({
                 'index': i, 'converted_amount': conv, 'email_score': sim, 'currency': row['proc_currency'],
                 'rate': rate, 'row_data': row
@@ -167,6 +201,9 @@ class ReconciliationEngine:
 
         candidates.sort(key=lambda x: x['email_score'], reverse=True)
         candidates = candidates[:self.config['top_candidates']]
+
+        diag_info['crm_amount'] = crm_amt
+        diag_info['converted_amounts'] = [round(c['converted_amount'], 2) for c in candidates[:5]]
 
         best_combo, best_score = None, 0.0
         abs_tol, rel_tol, n = 0.1, self.config['tolerance'] * crm_amt, len(candidates)
@@ -205,8 +242,29 @@ class ReconciliationEngine:
                 'combo_len': best_combo['k'], 'label': 1,
                 'matched_proc_indices': [r['index'] for r in c]
             }, {'best_combo': best_combo}
-        return None, {'failure_reason': 'No valid combination found'}
+        # Add tolerance signal for near matches (even if no combo was selected)
+        diag_info['amount_within_tolerance'] = any(
+            abs(c['converted_amount'] - crm_amt) <= self.config['tolerance'] * crm_amt
+            for c in candidates
+        )
 
+        if not best_combo:
+            diag_info.update({
+                'top_email_scores': [
+                    {'email_hash': anonymize_email(c['row_data']['proc_emails']), 'score': round(c['email_score'], 3)}
+                    for c in candidates[:5]
+                ],
+                'candidate_count': len(candidates),
+                'crm_amount': crm_amt,
+                'converted_amounts': [round(c['converted_amount'], 2) for c in candidates[:5]],
+                'crm_email_hash': anonymize_email(crm_email),
+                'email_threshold': self.config['email_threshold'],
+                'failure_reason': 'No valid combination found',
+                'proc_currency_candidates': [c['currency'] for c in candidates[:5]],
+                'last4_match_candidates': [c['row_data']['proc_last4_digits'] == crm_last4 for c in candidates[:5]]
+            })
+            # ✅ Now includes all diagnostic candidates
+            return None, diag_info
     def _create_unmatched_crm_record(self, row):
         return {k: row.get(k) for k in ['crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_last4', 'crm_currency', 'crm_amount', 'crm_processor_name']} | {
             'proc_dates': [], 'proc_emails': [], 'proc_last4_digits': [],
@@ -214,3 +272,18 @@ class ReconciliationEngine:
             'exchange_rates': [], 'email_similarity_avg': None, 'last4_match': False,
             'converted': False, 'combo_len': 0, 'label': 0
         }
+diagnostics_path = r'C:\Users\yanin\Projects\reconciliation_project\data\training_dataset\diagnostics_2025-05-07.json'
+
+with open(diagnostics_path, 'r') as f:
+    diagnostics = json.load(f)
+
+for entry in diagnostics:
+    print(f"\n--- Unmatched CRM idx {entry['crm_idx']} ---")
+    pprint({k: v for k, v in entry.items() if k != 'crm_email_hash'})
+
+    if 'all_candidates' in entry:
+        print("Candidate Diagnostics:")
+        for rc in entry['all_candidates']:
+            print(f"  → Email Sim: {rc['email_score']}, Amount Diff: {rc['amount_diff']}, Last4: {rc['proc_last4']}, Currency: {rc['currency']}, Reason: {rc['reason']}")
+    else:
+        print("No candidate data recorded.\n")

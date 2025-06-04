@@ -2,7 +2,7 @@ from config import CRM_DIR, PROCESSOR_DIR, DATA_DIR
 from pathlib import Path
 import pandas as pd
 from src.preprocess import process_files_in_parallel, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
-from src.withdrawals_matcher import ReconciliationEngine  # Updated import
+from src.withdrawals_matcher import ReconciliationEngine
 import logging
 
 # Configure logging
@@ -67,7 +67,7 @@ logger.info("Configuring reconciliation engine...")
 config = {
     'max_combo': 20,
     'tolerance': 0.02,
-    'email_threshold': 0.5,
+    'email_threshold': 0.4,
     'enable_diagnostics': True,
     'log_level': logging.DEBUG
 }
@@ -90,6 +90,7 @@ matches_df = pd.DataFrame(matches)
 
 # 🔥 Remove internal-use column
 matches_df = matches_df.drop(columns=['matched_proc_indices'], errors='ignore')
+
 
 # Save full results
 matches_df.to_csv(output_path, index=False)

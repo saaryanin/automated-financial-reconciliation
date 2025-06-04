@@ -64,6 +64,18 @@ class ReconciliationEngine:
         e2 = str(e2).split('@')[0] if e2 else ""
         return SequenceMatcher(None, e1, e2).ratio()
 
+    @lru_cache(maxsize=None)
+    def enhanced_email_similarity(self, e1, e2):
+        if not e1 or not e2:
+            return 0.0
+        e1_parts = str(e1).lower().split('@')
+        e2_parts = str(e2).lower().split('@')
+        local1, domain1 = e1_parts if len(e1_parts) == 2 else ('', '')
+        local2, domain2 = e2_parts if len(e2_parts) == 2 else ('', '')
+        score_local = SequenceMatcher(None, local1, local2).ratio()
+        score_domain = 1.0 if domain1 == domain2 and domain1 else 0.0
+        return 0.85 * score_local + 0.15 * score_domain
+
     def convert_amount(self, amount, from_currency, to_currency):
         if from_currency == to_currency:
             return amount, 1.0
@@ -121,7 +133,15 @@ class ReconciliationEngine:
                     with self.lock:
                         matches.append(match)
                         used_crm_indices.add(crm_idx)
-                        used_proc_indices.update(match['proc_indices'])
+                        for proc_date, proc_email, proc_last4 in zip(
+                                match['proc_dates'], match['proc_emails'], match['proc_last4_digits']
+                        ):
+                            for idx, row in processor_df.iterrows():
+                                if (row['proc_date'] == proc_date and
+                                        row['proc_emails'] == proc_email and
+                                        row['proc_last4_digits'] == proc_last4):
+                                    used_proc_indices.add(idx)
+                                    break
                         self.metrics['matched_main'] += 1
 
                         combo_len = match['combo_len']
@@ -242,7 +262,11 @@ class ReconciliationEngine:
         diag_info = {}
 
         # Get candidate processor indices for this last4
-        candidate_indices = last4_index_map.get(crm_last4, [])
+        if crm_last4 in ("0", "0000", "", None):
+            # Fallback: use all processor rows not already used
+            candidate_indices = [i for i in processor_dict if i not in used_proc_indices]
+        else:
+            candidate_indices = last4_index_map.get(crm_last4, [])
         candidates = []
         for idx in candidate_indices:
             if idx in used_proc_indices:
@@ -259,13 +283,18 @@ class ReconciliationEngine:
                 continue
 
             # Email similarity (always compute)
-            sim = self.email_similarity(crm_email, proc_row['proc_emails'])
+            sim = self.enhanced_email_similarity(crm_email, proc_row['proc_emails'])
 
             # If email match is required, enforce threshold
-            if self.config.get('require_email_match', True):
-                if sim < self.config['email_threshold']:
+            email_required = self.config.get('require_email_match', True)
+            email_threshold = self.config['email_threshold']
+
+            # Relax email check if last4 AND amount match exactly
+            if email_required and sim < email_threshold:
+                same_last4 = proc_row['proc_last4_digits'] == crm_last4
+                amount_match = abs(converted - crm_amount) < 0.01  # strict amount check
+                if not (same_last4 and amount_match):
                     continue
-            # If not required, allow all (no early rejection)
 
             # Add candidate
             candidates.append({
@@ -334,7 +363,6 @@ class ReconciliationEngine:
                 'converted': not best_combo['exact_currency'],
                 'combo_len': best_combo['k'],
                 'label': 1,
-                'proc_indices': [c['index'] for c in combo]
             }
             diag_info['best_combo'] = best_combo
             return match_record, diag_info
@@ -365,7 +393,6 @@ class ReconciliationEngine:
             'converted': False,
             'combo_len': 0,
             'label': 0,
-            'proc_indices': []
         }
 
 # --- Example usage ---

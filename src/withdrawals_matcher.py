@@ -133,15 +133,9 @@ class ReconciliationEngine:
                     with self.lock:
                         matches.append(match)
                         used_crm_indices.add(crm_idx)
-                        for proc_date, proc_email, proc_last4 in zip(
-                                match['proc_dates'], match['proc_emails'], match['proc_last4_digits']
-                        ):
-                            for idx, row in processor_df.iterrows():
-                                if (row['proc_date'] == proc_date and
-                                        row['proc_emails'] == proc_email and
-                                        row['proc_last4_digits'] == proc_last4):
-                                    used_proc_indices.add(idx)
-                                    break
+                        for idx in match.get('matched_proc_indices', []):
+                            used_proc_indices.add(idx)
+
                         self.metrics['matched_main'] += 1
 
                         combo_len = match['combo_len']
@@ -342,6 +336,7 @@ class ReconciliationEngine:
 
         if best_combo:
             combo = best_combo['combo']
+            matched_proc_indices = [c['index'] for c in combo]
             match_record = {
                 'crm_date': crm_row.get('crm_date'),
                 'crm_email': crm_email,
@@ -363,6 +358,7 @@ class ReconciliationEngine:
                 'converted': not best_combo['exact_currency'],
                 'combo_len': best_combo['k'],
                 'label': 1,
+                'matched_proc_indices': matched_proc_indices,
             }
             diag_info['best_combo'] = best_combo
             return match_record, diag_info

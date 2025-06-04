@@ -87,6 +87,9 @@ logger.info("Saving results...")
 output_path.parent.mkdir(parents=True, exist_ok=True)
 matches_df = pd.DataFrame(matches)
 
+# 🔥 Remove internal-use column
+matches_df = matches_df.drop(columns=['matched_proc_indices'], errors='ignore')
+
 # Save full results
 matches_df.to_csv(output_path, index=False)
 

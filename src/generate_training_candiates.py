@@ -74,6 +74,8 @@ config = {
 
 engine = ReconciliationEngine(exchange_rate_map, config=config)
 logger.info(f"Starting reconciliation for {len(crm_df)} CRM rows and {len(processor_df)} processor rows...")
+converted, rate = engine.convert_amount(100, "EUR", "USD")
+print(f"Converted: {converted}, Rate Used: {rate}")
 matches = engine.match_withdrawals(crm_df, processor_df)
 
 # --- Generate report and diagnostics ---
@@ -102,3 +104,4 @@ if engine.diagnostics:
 
 logger.info(f"✅ Saved {len(matches)} rows (matched + unmatched) to {output_path}")
 logger.info(f"Metrics: {engine.metrics}")
+print(engine.exchange_rate_map)

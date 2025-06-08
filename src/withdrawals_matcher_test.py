@@ -45,6 +45,17 @@ PROCESSOR_CONFIGS = {
         enable_name_fallback=True,
         matching_logic="paypal"
     ),
+    'shift4': ProcessorConfig(
+        email_threshold=0.75,
+        name_match_threshold=0.70,
+        require_last4=True,
+        require_email=True,
+        enable_name_fallback=True,
+        enable_exact_match=True,
+        max_combo=20,
+        tolerance=0.02,
+        matching_logic="shift4"
+    ),
     # ... other processors ...
 }
 
@@ -215,13 +226,13 @@ class ReconciliationEngine:
         return matches
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
-        # Get processor-specific configuration
         proc_name = crm_row.get('crm_processor_name', '').lower()
         proc_config = self.get_processor_config(proc_name)
 
-        # Select matching logic based on processor
         if proc_config.matching_logic == "paypal":
             return self._match_paypal_row(crm_row, proc_dict, last4_map, used, proc_config)
+        elif proc_config.matching_logic == "shift4":
+            return self._match_shift4_row(crm_row, proc_dict, last4_map, used, proc_config)
         else:
             return self._match_standard_row(crm_row, proc_dict, last4_map, used, proc_config)
 
@@ -411,6 +422,158 @@ class ReconciliationEngine:
             'comment': "No matching processor row found",
             'matched_proc_indices': []
         }
+
+    def _match_shift4_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        # --- Extract CRM fields ---
+        crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
+        crm_cur = crm_row['crm_currency']
+        crm_amt = crm_row['crm_amount']
+        crm_email = (crm_row['crm_email'] or '').lower()
+        crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
+        crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
+
+        # --- Build candidate list by last4 filter ---
+        indices = [i for i in proc_dict if i not in used]
+        if crm_last4 and crm_last4 in last4_map and proc_config.require_last4:
+            indices = last4_map[crm_last4]
+
+        candidates = []
+        for i in indices:
+            row = proc_dict[i]
+            # convert amount into CRM currency
+            conv, rate = self.convert_amount(row['proc_total_amount'], row['proc_currency'], crm_cur)
+            if conv is None:
+                continue
+
+            # exact checks
+            last4_match = (crm_last4 == str(row['proc_last4_digits']))
+            amt_match = abs(conv - crm_amt) < 0.01
+            full_exact = last4_match and amt_match
+
+            # email similarity
+            email_sim = self.enhanced_email_similarity(crm_email, row['proc_emails'])
+
+            # name‐fallback: 3‐letter prefix first+last
+            proc_first = str(row.get('proc_firstname', '')).lower().strip()
+            proc_last = str(row.get('proc_lastname', '')).lower().strip()
+            name_prefix_match = (
+                    crm_first[:3] == proc_first[:3] and
+                    crm_last[:3] == proc_last[:3]
+            )
+
+            # email‐prefix fallback: first 2 letters of local‐part
+            loc_crm = crm_email.split('@')[0]
+            loc_proc = str(row['proc_emails']).lower().split('@')[0]
+            email_prefix_match = loc_crm[:2] == loc_proc[:2]
+
+            # allow any of the above fallbacks
+            fallback_ok = name_prefix_match or email_prefix_match
+
+            # exact‐match shortcut
+            if proc_config.enable_exact_match and full_exact:
+                candidates.append((i, conv, rate, row, last4_match, True, True, email_sim))
+                continue
+
+            # now enforce last4 + (email or fallback)
+            if not last4_match:
+                continue
+            if email_sim < proc_config.email_threshold and not fallback_ok:
+                continue
+
+            candidates.append((i, conv, rate, row, last4_match, False, fallback_ok, email_sim))
+
+        # sort by (exact first, email_sim desc, fallback)
+        candidates.sort(key=lambda x: (
+            -int(x[5]),  # exact_match
+            -x[7],  # email_sim
+            -int(x[6])  # fallback_ok
+        ))
+
+        # combination search identical to standard but using our candidate tuples:
+        abs_tol = 0.1
+        rel_tol = proc_config.tolerance * crm_amt
+        best_strict = best_fallback = None
+        best_strict_score = best_fallback_error = 0
+
+        # unpack helper
+        def unpack(c):
+            return {
+                'index': c[0],
+                'amount': c[1],
+                'rate': c[2],
+                'row_data': c[3],
+                'last4_match': c[4],
+                'exact_match': c[5],
+                'fallback_ok': c[6],
+                'email_score': c[7]
+            }
+
+        n = len(candidates)
+        for k in range(1, min(proc_config.max_combo, n) + 1):
+            for combo_idxs in combinations(range(n), k):
+                combo = [unpack(candidates[j]) for j in combo_idxs]
+                same = all(c['row_data']['proc_currency'] == crm_cur for c in combo)
+                total = sum(c['amount'] for c in combo)
+                tol = abs_tol if same else rel_tol
+                diff = total - crm_amt
+                err = abs(diff)
+                avg = sum(c['email_score'] for c in combo) / k
+
+                if err <= tol:
+                    if avg > best_strict_score:
+                        best_strict_score = avg
+                        best_strict = (combo, k, total, same)
+                        if avg >= 0.99: break
+                else:
+                    if best_fallback is None or err < best_fallback_error:
+                        best_fallback_error = err
+                        best_fallback = (combo, k, total, same, diff, avg)
+            if best_strict and best_strict_score >= 0.99:
+                break
+
+        # decide best combo
+        chosen, strict, score = None, False, 0
+        if best_strict:
+            combo, k, total, same = best_strict
+            strict, score = True, best_strict_score
+        elif best_fallback:
+            combo, k, total, same, diff, score = best_fallback
+            strict = False
+        else:
+            return None, {'failure_reason': 'No valid Shift4 combination'}
+
+        received = round(total, 4)
+        payment_status = 1 if strict else 0
+        comment = "" if strict else f"Client received {'less' if received < crm_amt else 'more'} {abs(received - crm_amt):.2f} {crm_cur}"
+
+        return {
+            'crm_date': crm_row.get('crm_date'),
+            'crm_email': crm_email,
+            'crm_firstname': crm_row.get('crm_firstname', ''),
+            'crm_lastname': crm_row.get('crm_lastname', ''),
+            'crm_last4': crm_last4,
+            'crm_currency': crm_cur,
+            'crm_amount': crm_amt,
+            'crm_processor_name': crm_row.get('crm_processor_name'),
+            'proc_dates': [c['row_data']['proc_date'] for c in combo],
+            'proc_emails': [c['row_data']['proc_emails'] for c in combo],
+            'proc_last4_digits': [c['row_data']['proc_last4_digits'] for c in combo],
+            'proc_currencies': [c['row_data']['proc_currency'] for c in combo],
+            'proc_total_amounts': [c['row_data']['proc_total_amount'] for c in combo],
+            'proc_processor_name': 'shift4',
+            'converted_amount_total': received,
+            'exchange_rates': [c['rate'] for c in combo],
+            'email_similarity_avg': round(score, 4),
+            'last4_match': all(c['last4_match'] for c in combo),
+            'name_fallback_used': any(c['fallback_ok'] for c in combo),
+            'exact_match_used': any(c['exact_match'] for c in combo),
+            'converted': not same,
+            'combo_len': k,
+            'match_status': 1,
+            'payment_status': payment_status,
+            'comment': comment,
+            'matched_proc_indices': [c['index'] for c in combo]
+        }, {'best_combo': combo}
 
     def _match_paypal_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_cur = crm_row['crm_currency']

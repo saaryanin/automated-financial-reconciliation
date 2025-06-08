@@ -95,6 +95,10 @@ class ReconciliationEngine:
     def get_processor_config(self, processor_name):
         """Get configuration for specific processor"""
         processor_name = processor_name.lower()
+        # ─── alias PowerCash to SafeCharge ────────────────────────────────
+        if processor_name == "powercash":
+            processor_name = "safecharge"
+        # ───────────────────────────────────────────────────────────────────
         return PROCESSOR_CONFIGS.get(processor_name, ProcessorConfig())
 
     @lru_cache(maxsize=None)

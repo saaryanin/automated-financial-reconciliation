@@ -10,12 +10,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-05-05"
-processors = ["safecharge", "paypal"]
+date = "2025-05-07"
+processors = ["safecharge", "paypal","powercash"]
 # Define processor input formats
 processor_filetypes = {
     "safecharge": ".xlsx",
     "paypal": ".csv",
+    "powercash": ".csv",
     # Add others as needed
 }
 

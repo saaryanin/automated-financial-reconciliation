@@ -202,6 +202,50 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "US Dollar": "USD"
         })
         return df
+
+    elif processor.lower() == "powercash":
+        # — filter to only refunds or CFTs, successful EUR/USD rows
+        df.columns = df.columns.str.strip()
+        df = df[
+            df["Tx-Type"].str.lower().isin(["refund", "cft"]) &
+            (df["Status"].str.lower() == "successful") &
+            (df["Currency"].str.upper().isin(["EUR", "USD"]))
+        ]
+        if df.empty:
+            print("No PowerCash withdrawals found after filtering.")
+            return pd.DataFrame()
+
+        # — rename to the common schema
+        df = df.rename(columns={
+            "Date": "date",
+            "Amount": "amount",
+            "Currency": "currency",
+            "EMail": "email",
+        })
+
+        # — last four of card
+        df["last_4cc"] = (
+            df["Credit Card Number"]
+              .astype(str).str[-4:]
+        )
+
+        # — names
+        df["first_name"] = df.get("Firstname", "").astype(str)
+        df["last_name"]  = df.get("Lastname",  "").astype(str)
+
+        # — tag processor
+        df["processor_name"] = "powercash"
+
+        # — enforce same column order as PayPal/SafeCharge
+        df = df[[
+            "amount", "currency", "date",
+            "last_4cc", "email",
+            "first_name", "last_name",
+            "processor_name"
+        ]]
+
+        return df
+
     return pd.DataFrame()
 
 

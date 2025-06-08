@@ -51,8 +51,8 @@ crm_dfs, proc_dfs = [], []
 
 for proc in processors:
     crm_file = PROCESSED_CRM_DIR / proc / date / f"{proc}_withdrawals.xlsx"
-    proc_file_ext = ".xlsx" if proc == "safecharge" else ".csv"
-    proc_file = PROCESSED_PROCESSOR_DIR / proc / date / f"{proc}_withdrawals{proc_file_ext}"
+    proc_file = PROCESSED_PROCESSOR_DIR / proc / date / f"{proc}_withdrawals.xlsx"
+
 
     if crm_file.exists():
         crm_df = pd.read_excel(crm_file)
@@ -77,6 +77,16 @@ for proc in processors:
         proc_df['proc_currency'] = proc_df['currency']
         proc_df['proc_total_amount'] = pd.to_numeric(proc_df['amount'], errors='coerce').abs()
         proc_df['proc_processor_name'] = proc_df['processor_name'].fillna(proc)
+        if 'first_name' in proc_df.columns:
+            proc_df['proc_firstname'] = proc_df['first_name'].astype(str).fillna('')
+        else:
+            proc_df['proc_firstname'] = ''
+
+        if 'last_name' in proc_df.columns:
+            proc_df['proc_lastname'] = proc_df['last_name'].astype(str).fillna('')
+        else:
+            proc_df['proc_lastname'] = ''
+
         proc_dfs.append(proc_df)
 
 # --- Combine all CRM and Processor data ---

@@ -129,6 +129,8 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "Currency": "currency",
             "To Email Address": "email"
         })
+        # Remove comma separators in amount (e.g., "3,000.00" -> "3000.00")
+        df["amount"] = df["amount"].astype(str).str.replace(",", "", regex=False)
 
         df["last_4cc"] = ""  # PayPal doesn't provide card digits
         df["processor_name"] = "paypal"

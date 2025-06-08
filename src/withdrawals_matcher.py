@@ -138,51 +138,44 @@ class ReconciliationEngine:
 
         self._estimate_runtime(crm_df, proc_dict, last4_map)
 
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(self._match_crm_row, row, proc_dict, last4_map, used_proc): idx
-                for idx, row in crm_df.iterrows() if idx not in used_crm
-            }
-            for future in as_completed(futures):
-                idx = futures[future]
-                if self._check_timeout():
-                    break
-                try:
-                    match, diag = future.result()
-                except Exception as e:
-                    self.logger.error(f"Error processing row {idx}: {e}")
-                    match, diag = None, {'failure_reason': str(e)}
+        for idx, row in crm_df.iterrows():
+            if idx in used_crm:
+                continue
+            if self._check_timeout():
+                break
+            try:
+                match, diag = self._match_crm_row(row, proc_dict, last4_map, used_proc)
+            except Exception as e:
+                self.logger.error(f"Error processing row {idx}: {e}")
+                match, diag = None, {'failure_reason': str(e)}
 
-                with self.lock:
-                    if match:
-                        matches.append(match)
-                        used_crm.add(idx)
-                        used_proc.update(match.get('matched_proc_indices', []))
-                        self.metrics['matched_main'] += 1
-                        self.metrics['combo_distribution'][match['combo_len']] = self.metrics['combo_distribution'].get(
-                            match['combo_len'], 0) + 1
-                        self.metrics['currency_matches'][match['crm_currency']] = self.metrics['currency_matches'].get(
-                            match['crm_currency'], 0) + 1
+            if match:
+                matches.append(match)
+                used_crm.add(idx)
+                used_proc.update(match.get('matched_proc_indices', []))
+                self.metrics['matched_main'] += 1
+                self.metrics['combo_distribution'][match['combo_len']] = self.metrics['combo_distribution'].get(
+                    match['combo_len'], 0) + 1
+                self.metrics['currency_matches'][match['crm_currency']] = self.metrics['currency_matches'].get(
+                    match['crm_currency'], 0) + 1
 
-                        # Track payment correctness
-                        if match['payment_status'] == 1:
-                            self.metrics['correct_payments'] += 1
-                        else:
-                            self.metrics['incorrect_payments'] += 1
-                    else:
-                        unmatched_record = self._create_unmatched_crm_record(crm_df.loc[idx])
-                        matches.append(unmatched_record)
-                        self.metrics['unmatched'] += 1
-                        if self.config['enable_diagnostics']:
-                            self.diagnostics.append(
-                                {'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
-                if idx % 10 == 0:
-                    self._update_eta(len(crm_df), idx + 1)
+                if match['payment_status'] == 1:
+                    self.metrics['correct_payments'] += 1
+                else:
+                    self.metrics['incorrect_payments'] += 1
+            else:
+                unmatched_record = self._create_unmatched_crm_record(crm_df.loc[idx])
+                matches.append(unmatched_record)
+                self.metrics['unmatched'] += 1
+                if self.config['enable_diagnostics']:
+                    self.diagnostics.append(
+                        {'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
+            if idx % 10 == 0:
+                self._update_eta(len(crm_df), idx + 1)
 
-        # Add unmatched processor rows
         for idx, row in processor_df.iterrows():
             if idx not in used_proc:
-                record = {
+                matches.append({
                     'crm_date': None,
                     'crm_email': None,
                     'crm_firstname': None,
@@ -191,29 +184,31 @@ class ReconciliationEngine:
                     'crm_currency': None,
                     'crm_amount': None,
                     'crm_processor_name': None,
-                    'proc_dates': [row['proc_date']],
-                    'proc_emails': [row['proc_emails']],
-                    'proc_last4_digits': [row['proc_last4_digits']],
-                    'proc_currencies': [row['proc_currency']],
-                    'proc_total_amounts': [row['proc_total_amount']],
+                    'proc_dates': [row.get('proc_date')],
+                    'proc_emails': [row.get('proc_emails')],
+                    'proc_last4_digits': [row.get('proc_last4_digits')],
+                    'proc_currencies': [row.get('proc_currency')],
+                    'proc_total_amounts': [row.get('proc_total_amount')],
+                    'proc_processor_name': row.get('proc_processor_name'),
+                    'proc_firstnames': [row.get('proc_firstname')],
+                    'proc_lastnames': [row.get('proc_lastname')],
                     'converted_amount_total': None,
                     'exchange_rates': None,
                     'email_similarity_avg': None,
                     'last4_match': None,
+                    'name_fallback_used': False,
+                    'exact_match_used': False,
                     'converted': False,
                     'combo_len': 1,
                     'match_status': 0,
                     'payment_status': 0,
                     'comment': "No matching CRM row found",
                     'matched_proc_indices': [idx]
-                }
-                matches.append(record)
+                })
 
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
         return matches
-
-    # ... [Estimate runtime, adjust parameters, etc. methods remain the same] ...
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
         # Get processor-specific configuration
@@ -370,6 +365,8 @@ class ReconciliationEngine:
                 'crm_processor_name': crm_row.get('crm_processor_name'),
                 'proc_dates': [r['row_data']['proc_date'] for r in c],
                 'proc_emails': [r['row_data']['proc_emails'] for r in c],
+                'proc_firstnames': [r['row_data'].get('proc_firstname', '') for r in c],
+                'proc_lastnames': [r['row_data'].get('proc_lastname', '') for r in c],
                 'proc_last4_digits': [r['row_data']['proc_last4_digits'] for r in c],
                 'proc_currencies': [r['currency'] for r in c],
                 'proc_total_amounts': [r['row_data']['proc_total_amount'] for r in c],
@@ -412,65 +409,45 @@ class ReconciliationEngine:
         }
 
     def _match_paypal_row(self, crm_row, proc_dict, last4_map, used, proc_config):
-        crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
         crm_cur = crm_row['crm_currency']
         crm_amt = crm_row['crm_amount']
         crm_email = crm_row['crm_email']
-        crm_first = str(crm_row.get('crm_firstname', ''))
-        crm_last = str(crm_row.get('crm_lastname', ''))
+        crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
+        crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
 
         candidates = []
         indices = [i for i in proc_dict if i not in used]
 
-        # PayPal doesn't use last4 digits
-        # We'll skip last4 filtering since PayPal doesn't provide this information
-
         for i in indices:
-            if i in used:
-                continue
             row = proc_dict[i]
             conv, rate = self.convert_amount(row['proc_total_amount'], row['proc_currency'], crm_cur)
             if conv is None:
                 continue
 
-            # Calculate email similarity
-            email_sim = self.enhanced_email_similarity(crm_email, row['proc_emails'])
+            email = row['proc_emails']
+            email_sim = self.enhanced_email_similarity(crm_email, email)
 
-            # PayPal-specific matching logic
-            name_fallback = False
-            name_in_email = False
-
-            # Tier 1: Email match
+            # Tier 1: Strong email match
             email_match = email_sim >= proc_config.email_threshold
 
-            # Tier 2: Name match (if email doesn't match)
-            name_match = False
-            if not email_match and crm_first and crm_last:
-                # Get processor names - for PayPal, we assume firstname/lastname are in the row
-                proc_first = str(row.get('proc_firstname', '')).lower()
-                proc_last = str(row.get('proc_lastname', '')).lower()
+            # Tier 2: First + last name match
+            proc_first = str(row.get('proc_firstname', '')).lower().strip()
+            proc_last = str(row.get('proc_lastname', '')).lower().strip()
+            name_match = (
+                    crm_first and crm_last and
+                    SequenceMatcher(None, crm_first, proc_first).ratio() >= proc_config.name_match_threshold and
+                    SequenceMatcher(None, crm_last, proc_last).ratio() >= proc_config.name_match_threshold
+            )
 
-                # Compare names
-                crm_first_lower = crm_first.lower()
-                crm_last_lower = crm_last.lower()
-                name_match = (
-                        SequenceMatcher(None, crm_first_lower,
-                                        proc_first).ratio() >= proc_config.name_match_threshold and
-                        SequenceMatcher(None, crm_last_lower, proc_last).ratio() >= proc_config.name_match_threshold
-                )
+            # Tier 3: Partial fallback (name in email)
+            name_in_email_match = self.name_in_email(crm_first, email) or self.name_in_email(crm_last, email)
 
-            # Tier 3: Name in email (if previous tiers didn't match)
-            if not email_match and not name_match:
-                if crm_first:
-                    name_in_email = self.name_in_email(crm_first, row['proc_emails'])
-                if not name_in_email and crm_last:
-                    name_in_email = self.name_in_email(crm_last, row['proc_emails'])
-
-            # Only consider candidates that pass at least one matching tier
-            if not (email_match or name_match or name_in_email):
+            # Accept if any tier matches
+            if not (email_match or name_match or name_in_email_match):
                 continue
 
-            # Valid candidate
+            tier = 1 if email_match else (2 if name_match else 3)
+
             candidates.append({
                 'index': i,
                 'converted_amount': conv,
@@ -478,14 +455,12 @@ class ReconciliationEngine:
                 'currency': row['proc_currency'],
                 'rate': rate,
                 'row_data': row,
-                'last4_match': False,  # PayPal doesn't have last4
-                'name_fallback': name_match or name_in_email,
-                'exact_match': False,
-                'match_tier': 1 if email_match else (2 if name_match else 3)
+                'match_tier': tier,
+                'name_fallback': tier > 1
             })
 
-        # Prioritize by match tier (email first, then name, then name-in-email)
-        candidates.sort(key=lambda x: (x['match_tier'], -x['email_score']))
+        # Sort: prioritize best tier and highest email similarity
+        candidates.sort(key=lambda c: (c['match_tier'], -c['email_score']))
         candidates = candidates[:self.config['top_candidates']]
 
         best_combo = None
@@ -497,24 +472,21 @@ class ReconciliationEngine:
         for k in range(1, min(proc_config.max_combo, n) + 1):
             for combo_idxs in combinations(range(n), k):
                 combo = [candidates[i] for i in combo_idxs]
-                same = all(c['currency'] == crm_cur for c in combo)
+                same_currency = all(c['currency'] == crm_cur for c in combo)
                 total = sum(c['converted_amount'] for c in combo)
-                tol = abs_tol if same else rel_tol
-                avg_score = sum(c['email_score'] for c in combo) / k
-                score_ok = avg_score >= proc_config.email_threshold
-
-                if not score_ok:
-                    continue  # still skip bad scores
-
+                tol = abs_tol if same_currency else rel_tol
                 diff = abs(total - crm_amt)
-                if best_combo is None or avg_score > best_score:
-                    best_combo = {'combo': combo, 'k': k, 'total_amount': total, 'exact_currency': same}
-                    best_score = avg_score
-
                 avg_score = sum(c['email_score'] for c in combo) / k
-                if avg_score > best_score:
-                    best_score = avg_score
-                    best_combo = {'combo': combo, 'k': k, 'total_amount': total, 'exact_currency': same}
+
+                if diff <= tol:
+                    if avg_score > best_score:
+                        best_combo = {
+                            'combo': combo,
+                            'k': k,
+                            'total_amount': total,
+                            'exact_currency': same_currency
+                        }
+                        best_score = avg_score
                     if avg_score >= 0.99:
                         break
             if best_score >= 0.99:
@@ -523,48 +495,35 @@ class ReconciliationEngine:
         if best_combo:
             c = best_combo['combo']
             received_amount = round(best_combo['total_amount'], 4)
-            abs_tol = 0.1
-            rel_tol = proc_config.tolerance * crm_amt
-            tol = abs_tol if best_combo['exact_currency'] else rel_tol
-            diff = received_amount - crm_amt
-            abs_diff = abs(diff)
-
-            # Determine payment correctness
-            payment_status = 1 if abs_diff <= tol else 0
-
-            # Create comment explaining payment status
+            diff = abs(received_amount - crm_amt)
             comment = ""
-            if payment_status == 0:
-                comment = (f"Amount mismatch: Expected {crm_amt:.2f} {crm_cur}, "
-                           f"received {received_amount:.2f} {crm_cur} "
-                           f"(difference: {abs_diff:.2f} {crm_cur})")
-            elif not best_combo['exact_currency']:
-                comment = "Amount converted from multiple currencies"
+            if diff > (abs_tol if best_combo['exact_currency'] else rel_tol):
+                comment = f"Amount mismatch of {diff:.2f} {crm_cur}. "
+            if not best_combo['exact_currency']:
+                comment += "Mixed currencies. "
             if best_combo['k'] > 1:
-                comment = "Split payment across multiple transactions"
+                comment += "Multiple transactions combined. "
 
-            # Add PayPal-specific matching details
             match_tiers = [cand['match_tier'] for cand in c]
-            if all(tier == 1 for tier in match_tiers):
-                match_method = "Email match"
-            elif any(tier == 2 for tier in match_tiers):
-                match_method = "Name match"
-            else:
-                match_method = "Name in email match"
+            match_method = ("Email match" if all(t == 1 for t in match_tiers)
+                            else "Name match" if any(t == 2 for t in match_tiers)
+            else "Name in email")
 
-            comment += f" | Matched by: {match_method}"
+            comment += f"Matched by: {match_method}"
 
             return {
                 'crm_date': crm_row.get('crm_date'),
                 'crm_email': crm_email,
                 'crm_firstname': crm_row.get('crm_firstname', ''),
                 'crm_lastname': crm_row.get('crm_lastname', ''),
-                'crm_last4': crm_last4,
+                'crm_last4': crm_row.get('crm_last4'),
                 'crm_currency': crm_cur,
                 'crm_amount': crm_amt,
                 'crm_processor_name': crm_row.get('crm_processor_name'),
                 'proc_dates': [r['row_data']['proc_date'] for r in c],
                 'proc_emails': [r['row_data']['proc_emails'] for r in c],
+                'proc_firstnames': [r['row_data'].get('proc_firstname', '') for r in c],
+                'proc_lastnames': [r['row_data'].get('proc_lastname', '') for r in c],
                 'proc_last4_digits': [r['row_data']['proc_last4_digits'] for r in c],
                 'proc_currencies': [r['currency'] for r in c],
                 'proc_total_amounts': [r['row_data']['proc_total_amount'] for r in c],
@@ -572,19 +531,18 @@ class ReconciliationEngine:
                 'converted_amount_total': received_amount,
                 'exchange_rates': [r['rate'] for r in c],
                 'email_similarity_avg': round(best_score, 4),
-                'last4_match': False,  # PayPal doesn't have last4
-                'name_fallback_used': any(r.get('name_fallback', False) for r in c),
-                'exact_match_used': any(r.get('exact_match', False) for r in c),
+                'last4_match': False,
+                'name_fallback_used': any(r['name_fallback'] for r in c),
+                'exact_match_used': False,
                 'converted': not best_combo['exact_currency'],
                 'combo_len': best_combo['k'],
                 'match_status': 1,
-                'payment_status': payment_status,
+                'payment_status': 1 if diff <= (abs_tol if best_combo['exact_currency'] else rel_tol) else 0,
                 'comment': comment,
                 'matched_proc_indices': [r['index'] for r in c]
             }, {'best_combo': best_combo}
 
-        # No match found
-        return None, {'failure_reason': 'No valid combination found for PayPal transaction'}
+        return None, {'failure_reason': 'No valid PayPal match found'}
 
     def _estimate_runtime(self, crm_df, proc_dict, last4_map):
         samples = list(crm_df.iterrows())[:min(5, len(crm_df))]

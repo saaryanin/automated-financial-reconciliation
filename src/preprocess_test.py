@@ -113,50 +113,47 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
     if processor.lower() == "paypal":
         df.columns = df.columns.str.strip()
 
-        # Filter by Type and Status
-        allowed_types = ["Mass Payment", "Payment Refund"]
-        allowed_status = ["Completed", "Unclaimed"]
+        # Normalize case for filtering
+        df["Type"] = df["Type"].astype(str).str.strip().str.lower()
+        df["Status"] = df["Status"].astype(str).str.strip().str.lower()
+        df["Currency"] = df["Currency"].astype(str).str.strip().str.upper()
+
+        # Allowed filters - now lowercase
+        allowed_types = ["mass payment", "payment refund"]
+        allowed_status = ["completed", "unclaimed"]
+
         df = df[
             df["Type"].isin(allowed_types) &
             df["Status"].isin(allowed_status) &
             (df["Currency"] != "GBP")
             ]
+
         if df.empty:
-            print(f"No PayPal Withdrawals found after filtering.")
+            print("⚠️ Filtered PayPal data is empty.")
             return pd.DataFrame()
 
         # Rename for consistency
         df = df.rename(columns={
             "Date": "date",
             "Gross": "amount",
-            "Currency": "currency",
-            "To Email Address": "email"
+            "To Email Address": "email",
+            "Name": "name"
         })
-        # Remove comma separators in amount (e.g., "3,000.00" -> "3000.00")
-        df["amount"] = df["amount"].astype(str).str.replace(",", "", regex=False)
 
-        df["last_4cc"] = ""  # PayPal doesn't provide card digits
+        df["amount"] = df["amount"].astype(str).str.replace(",", "", regex=False)
+        df["last_4cc"] = ""
         df["processor_name"] = "paypal"
 
-        # Handle names
-        if "Name" in df.columns and not df["Name"].isna().all():
-            name_split = df["Name"].astype(str).str.strip().str.split(n=1, expand=True)
-            if isinstance(name_split, pd.DataFrame) and name_split.shape[1] >= 1:
-                df["first_name"] = name_split[0]
-                df["last_name"] = name_split[1] if name_split.shape[1] > 1 else ""
-            else:
-                df["first_name"] = ""
-                df["last_name"] = ""
-        else:
-            df["first_name"] = ""
-            df["last_name"] = ""
+        # Split name into first/last
+        df[["first_name", "last_name"]] = df["name"].astype(str).str.strip().str.split(" ", n=1, expand=True)
 
-        # Final column order
-        df = df[[
-            "amount", "currency", "date", "last_4cc",
+        df = df[[  # Final cleaned structure
+            "amount", "Currency", "date", "last_4cc",
             "email", "first_name", "last_name", "processor_name"
         ]]
+
         return df
+
 
 
     elif processor.lower() == "safecharge":
@@ -267,6 +264,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         folder = f"{normalized_processor}_{transaction_type}s.xlsx"
         out_path = PROCESSED_CRM_DIR / normalized_processor / date_str / folder
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        print("✅ Attempting to save cleaned PayPal processor file")
 
         if transaction_type == "withdrawal" and "transaction_id" in df.columns:
             needed_columns = [

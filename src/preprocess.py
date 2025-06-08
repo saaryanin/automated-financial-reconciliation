@@ -110,7 +110,47 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         return df.reset_index(drop=True)
 
 def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:
-    if processor.lower() == "safecharge":
+    if processor.lower() == "paypal":
+        df.columns = df.columns.str.strip()
+
+        # Filter by Type and Status
+        allowed_types = ["Mass Payment", "Payment Refund"]
+        allowed_status = ["Completed", "Unclaimed"]
+        df = df[
+            df["Type"].isin(allowed_types) &
+            df["Status"].isin(allowed_status) &
+            (df["Currency"] != "GBP")
+            ]
+
+        # Rename for consistency
+        df = df.rename(columns={
+            "Date": "date",
+            "Gross": "amount",
+            "Currency": "currency",
+            "To Email Address": "email"
+        })
+
+        df["last_4cc"] = ""  # PayPal doesn't provide card digits
+        df["processor_name"] = "paypal"
+
+        # Handle names
+        if "Name" in df.columns:
+            name_split = df["Name"].astype(str).str.strip().str.split(n=1, expand=True)
+            df["first_name"] = name_split[0]
+            df["last_name"] = name_split[1].fillna("")
+        else:
+            df["first_name"] = ""
+            df["last_name"] = ""
+
+        # Final column order
+        df = df[[
+            "amount", "currency", "date", "last_4cc",
+            "email", "first_name", "last_name", "processor_name"
+        ]]
+        return df
+
+
+    elif processor.lower() == "safecharge":
         # Check if Safecharge-specific pattern exists
         processor_name_value = "safecharge"
         if "Acquiring Bank" in df.columns and df["Acquiring Bank"].astype(str).str.contains("Nuvei", case=False).any():
@@ -200,6 +240,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         psp_mask = df["PSP name"] == "zotapay"
     elif normalized_processor == "paymentasia":
         psp_mask = df["PSP name"] == "pamy"
+
     else:
         psp_mask = df["PSP name"] == normalized_processor
 

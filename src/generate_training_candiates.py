@@ -2,53 +2,88 @@ from config import CRM_DIR, PROCESSOR_DIR, DATA_DIR
 from pathlib import Path
 import pandas as pd
 from src.preprocess import process_files_in_parallel, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
-from src.withdrawals_matcher import ReconciliationEngine  # Updated import
+from src.withdrawals_matcher_test import ReconciliationEngine
 import logging
 
-# Configure logging
+# Setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-processor_name = "safecharge"
-date = "2025-05-07"
-crm_path = CRM_DIR / f"crm_{date}.xlsx"
-processor_path = PROCESSOR_DIR / f"{processor_name}_{date}.xlsx"
-output_path = DATA_DIR / "training_dataset" / f"training_dataset_{date}.csv"
+date = "2025-05-05"
+processors = ["safecharge", "paypal"]
+# Define processor input formats
+processor_filetypes = {
+    "safecharge": ".xlsx",
+    "paypal": ".csv",
+    # Add others as needed
+}
 
 # --- Preprocess ---
-logger.info("Preprocessing CRM file...")
-process_files_in_parallel([crm_path], processor_name=processor_name, is_crm=True, save_clean=True, transaction_type="withdrawal")
-logger.info("Preprocessing processor file...")
-process_files_in_parallel([processor_path], processor_name=processor_name, is_crm=False, save_clean=True, transaction_type="withdrawal")
+for proc in processors:
+    # CRM is always .xlsx
+    crm_file = CRM_DIR / f"crm_{date}.xlsx"
+    # Get correct processor file extension
+    proc_ext = processor_filetypes.get(proc, ".csv")
+    processor_file = PROCESSOR_DIR / f"{proc}_{date}{proc_ext}"
+
+    logger.info(f"Preprocessing CRM file for {proc}...")
+    process_files_in_parallel([crm_file], processor_name=proc, is_crm=True, save_clean=True, transaction_type="withdrawal")
+
+    logger.info(f"Preprocessing processor file for {proc}...")
+    process_files_in_parallel([processor_file], processor_name=proc, is_crm=False, save_clean=True, transaction_type="withdrawal")
+
+
+# --- Preprocess ---
+for proc in processors:
+    logger.info(f"Preprocessing CRM file for {proc}...")
+    crm_file = CRM_DIR / f"crm_{date}.xlsx"
+    process_files_in_parallel([crm_file], processor_name=proc, is_crm=True, save_clean=True, transaction_type="withdrawal")
+
+    logger.info(f"Preprocessing processor file for {proc}...")
+    proc_ext = processor_filetypes.get(proc, ".csv")
+    processor_file = PROCESSOR_DIR / f"{proc}_{date}{proc_ext}"
+    process_files_in_parallel([processor_file], processor_name=proc, is_crm=False, save_clean=True, transaction_type="withdrawal")
+
 
 # --- Load processed files ---
-logger.info("Loading processed files...")
-crm_df = pd.read_excel(PROCESSED_CRM_DIR / processor_name / date / f"{processor_name}_withdrawals.xlsx")
-processor_df = pd.read_excel(PROCESSED_PROCESSOR_DIR / processor_name / date / f"{processor_name}_withdrawals.xlsx")
+crm_dfs, proc_dfs = [], []
 
-# --- Format CRM data ---
-logger.info("Formatting CRM data...")
-crm_df['crm_date'] = pd.to_datetime(crm_df['Created On']).dt.date
-crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
-crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
-crm_df['crm_lastname'] = crm_df['Last Name (Account) (Account)'].fillna('')
-crm_df['crm_last4'] = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
-crm_df['crm_currency'] = crm_df['Currency'].replace({'US Dollar': 'USD'})
-crm_df['crm_amount'] = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
-crm_df['crm_processor_name'] = crm_df['PSP name']
+for proc in processors:
+    crm_file = PROCESSED_CRM_DIR / proc / date / f"{proc}_withdrawals.xlsx"
+    proc_file_ext = ".xlsx" if proc == "safecharge" else ".csv"
+    proc_file = PROCESSED_PROCESSOR_DIR / proc / date / f"{proc}_withdrawals{proc_file_ext}"
 
-# --- Format processor data ---
-logger.info("Formatting processor data...")
-processor_df['proc_date'] = pd.to_datetime(processor_df['date']).dt.date
-processor_df['proc_emails'] = processor_df['email'].fillna('').astype(str)
-processor_df['proc_last4_digits'] = processor_df['last_4cc'].astype(str).str.zfill(4).str[-4:]
-processor_df['proc_currency'] = processor_df['currency']
-processor_df['proc_total_amount'] = pd.to_numeric(processor_df['amount'], errors='coerce').abs()
-processor_df['proc_processor_name'] = processor_df['processor_name'].fillna(processor_name)
+    if crm_file.exists():
+        crm_df = pd.read_excel(crm_file)
+        crm_df['crm_date'] = pd.to_datetime(crm_df['Created On']).dt.date
+        crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
+        crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
+        crm_df['crm_lastname'] = crm_df['Last Name (Account) (Account)'].fillna('')
+        crm_df['crm_last4'] = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
+        crm_df['crm_currency'] = crm_df['Currency'].replace({'US Dollar': 'USD'})
+        crm_df['crm_amount'] = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
+        crm_df['crm_processor_name'] = crm_df['PSP name']
+        crm_dfs.append(crm_df)
+
+    if proc_file.exists():
+        if proc_file.suffix =="csv":
+            prof_df = pd.read_csv(proc_file)
+        else:
+            proc_df = pd.read_excel(proc_file)
+        proc_df['proc_date'] = pd.to_datetime(proc_df['date']).dt.date
+        proc_df['proc_emails'] = proc_df['email'].fillna('').astype(str)
+        proc_df['proc_last4_digits'] = proc_df['last_4cc'].astype(str).str.zfill(4).str[-4:]
+        proc_df['proc_currency'] = proc_df['currency']
+        proc_df['proc_total_amount'] = pd.to_numeric(proc_df['amount'], errors='coerce').abs()
+        proc_df['proc_processor_name'] = proc_df['processor_name'].fillna(proc)
+        proc_dfs.append(proc_df)
+
+# --- Combine all CRM and Processor data ---
+crm_df = pd.concat(crm_dfs, ignore_index=True)
+processor_df = pd.concat(proc_dfs, ignore_index=True)
 
 # --- Load exchange rates ---
-logger.info("Loading exchange rates...")
 rates_path = DATA_DIR / "rates" / f"rates_{date}.csv"
 if rates_path.exists():
     rates_df = pd.read_csv(rates_path)
@@ -64,44 +99,34 @@ else:
 
 # --- Configure and run reconciliation ---
 logger.info("Configuring reconciliation engine...")
-config = {
+engine = ReconciliationEngine(exchange_rate_map, config={
     'max_combo': 20,
     'tolerance': 0.02,
     'email_threshold': 0.5,
     'enable_diagnostics': True,
     'log_level': logging.DEBUG
-}
+})
 
-engine = ReconciliationEngine(exchange_rate_map, config=config)
 logger.info(f"Starting reconciliation for {len(crm_df)} CRM rows and {len(processor_df)} processor rows...")
-converted, rate = engine.convert_amount(100, "EUR", "USD")
-print(f"Converted: {converted}, Rate Used: {rate}")
 matches = engine.match_withdrawals(crm_df, processor_df)
 
 # --- Generate report and diagnostics ---
-logger.info("Generating reconciliation report...")
 report = engine.generate_report()
 print("\n" + "="*80)
 print(report)
 print("="*80 + "\n")
 
 # --- Save results ---
-logger.info("Saving results...")
+output_path = DATA_DIR / "training_dataset" / f"training_dataset_{date}.csv"
 output_path.parent.mkdir(parents=True, exist_ok=True)
+
 matches_df = pd.DataFrame(matches)
+matches_df.drop(columns=['matched_proc_indices'], errors='ignore').to_csv(output_path, index=False)
 
-# 🔥 Remove internal-use column
-matches_df = matches_df.drop(columns=['matched_proc_indices'], errors='ignore')
-
-# Save full results
-matches_df.to_csv(output_path, index=False)
-
-# Save diagnostics separately
 if engine.diagnostics:
     diag_path = output_path.with_name(f"diagnostics_{date}.json")
     pd.DataFrame(engine.diagnostics).to_json(diag_path, orient='records', indent=2)
     logger.info(f"Saved diagnostics to {diag_path}")
 
-logger.info(f"✅ Saved {len(matches)} rows (matched + unmatched) to {output_path}")
+logger.info(f"✅ Saved {len(matches)} rows to {output_path}")
 logger.info(f"Metrics: {engine.metrics}")
-print(engine.exchange_rate_map)

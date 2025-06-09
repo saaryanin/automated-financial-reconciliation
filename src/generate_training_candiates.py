@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-05-07"
+date = "2025-05-05"
 processors = ["safecharge", "paypal","powercash","shift4","skrill"]
 # Define processor input formats
 processor_filetypes = {
@@ -56,42 +56,52 @@ for proc in processors:
     crm_file = PROCESSED_CRM_DIR / proc / date / f"{proc}_withdrawals.xlsx"
     proc_file = PROCESSED_PROCESSOR_DIR / proc / date / f"{proc}_withdrawals.xlsx"
 
-
     if crm_file.exists():
         crm_df = pd.read_excel(crm_file)
         crm_df['crm_date'] = pd.to_datetime(crm_df['Created On']).dt.date
         crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
         crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
-        crm_df['crm_lastname'] = crm_df['Last Name (Account) (Account)'].fillna('')
-        crm_df['crm_tp'] = crm_df['tp'].fillna('')
-        crm_df['crm_last4'] = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
-        crm_df['crm_currency'] = crm_df['Currency'].replace({'US Dollar': 'USD'})
-        crm_df['crm_amount'] = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
+        crm_df['crm_lastname']  = crm_df['Last Name (Account) (Account)'].fillna('')
+        crm_df['crm_tp']        = crm_df['tp'].fillna('')
+        crm_df['crm_last4']     = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
+        crm_df['crm_currency']  = crm_df['Currency'].replace({'US Dollar': 'USD'})
+        crm_df['crm_amount']    = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
         crm_df['crm_processor_name'] = crm_df['PSP name']
         crm_dfs.append(crm_df)
 
     if proc_file.exists():
-        if proc_file.suffix =="csv":
-            prof_df = pd.read_csv(proc_file)
+        if proc_file.suffix == ".csv":
+            proc_df = pd.read_csv(proc_file)
         else:
             proc_df = pd.read_excel(proc_file)
+
         proc_df['proc_date'] = pd.to_datetime(proc_df['date']).dt.date
         proc_df['proc_emails'] = proc_df['email'].fillna('').astype(str)
+
+        # extract processor TP
+        if 'tp' in proc_df.columns:
+            proc_df['proc_tp'] = proc_df['tp'].astype(str).fillna('')
+        else:
+            proc_df['proc_tp'] = ''
+
         proc_df['proc_last4_digits'] = proc_df['last_4cc'].astype(str).str.zfill(4).str[-4:]
         proc_df['proc_currency'] = proc_df['currency']
         proc_df['proc_total_amount'] = pd.to_numeric(proc_df['amount'], errors='coerce').abs()
         proc_df['proc_processor_name'] = proc_df['processor_name'].fillna(proc)
-        if 'first_name' in proc_df.columns:
-            proc_df['proc_firstname'] = proc_df['first_name'].astype(str).fillna('')
+
+        # safely populate first_name / last_name
+        if 'first_name' in proc_df.columns and hasattr(proc_df['first_name'], "fillna"):
+            proc_df['proc_firstname'] = proc_df['first_name'].fillna('').astype(str)
         else:
             proc_df['proc_firstname'] = ''
 
-        if 'last_name' in proc_df.columns:
-            proc_df['proc_lastname'] = proc_df['last_name'].astype(str).fillna('')
+        if 'last_name' in proc_df.columns and hasattr(proc_df['last_name'], "fillna"):
+            proc_df['proc_lastname'] = proc_df['last_name'].fillna('').astype(str)
         else:
             proc_df['proc_lastname'] = ''
 
         proc_dfs.append(proc_df)
+
 
 # --- Combine all CRM and Processor data ---
 crm_df = pd.concat(crm_dfs, ignore_index=True)

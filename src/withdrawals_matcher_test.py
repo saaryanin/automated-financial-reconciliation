@@ -56,6 +56,16 @@ PROCESSOR_CONFIGS = {
         tolerance=0.02,
         matching_logic="shift4"
     ),
+    'skrill': ProcessorConfig(
+        email_threshold=0.75,
+        require_last4=False,
+        require_email=True,
+        enable_name_fallback=False,
+        enable_exact_match=False,
+        max_combo=5,
+        tolerance=0.05,
+        matching_logic="skrill"
+    ),
     # ... other processors ...
 }
 
@@ -165,20 +175,24 @@ class ReconciliationEngine:
                 self.logger.error(f"Error processing row {idx}: {e}")
                 match, diag = None, {'failure_reason': str(e)}
 
-            # insert crm_tp immediately after crm_lastname
             crm_tp_val = row.get('crm_tp')
 
             if match:
-                reordered = {}
+                # collect proc_tp for this combo
+                proc_tp_vals = [proc_dict[i].get('proc_tp', '') for i in match['matched_proc_indices']]
+
+                ordered = {}
                 for k, v in match.items():
-                    reordered[k] = v
+                    ordered[k] = v
+                    if k == 'proc_emails':
+                        ordered['proc_tp'] = proc_tp_vals
                     if k == 'crm_lastname':
-                        reordered['crm_tp'] = crm_tp_val
-                match = reordered
+                        ordered['crm_tp'] = crm_tp_val
+                match = ordered
 
                 matches.append(match)
                 used_crm.add(idx)
-                used_proc.update(match.get('matched_proc_indices', []))
+                used_proc.update(match['matched_proc_indices'])
                 self.metrics['matched_main'] += 1
                 self.metrics['combo_distribution'][match['combo_len']] = \
                     self.metrics['combo_distribution'].get(match['combo_len'], 0) + 1
@@ -192,12 +206,14 @@ class ReconciliationEngine:
 
             else:
                 unmatched = self._create_unmatched_crm_record(crm_df.loc[idx])
-                reordered = {}
+                ordered = {}
                 for k, v in unmatched.items():
-                    reordered[k] = v
+                    ordered[k] = v
                     if k == 'crm_lastname':
-                        reordered['crm_tp'] = crm_tp_val
-                matches.append(reordered)
+                        ordered['crm_tp'] = crm_tp_val
+                    if k == 'proc_emails':
+                        ordered['proc_tp'] = []  # no proc match
+                matches.append(ordered)
                 self.metrics['unmatched'] += 1
                 if self.config['enable_diagnostics']:
                     self.diagnostics.append({
@@ -208,15 +224,15 @@ class ReconciliationEngine:
             if idx % 10 == 0:
                 self._update_eta(len(crm_df), idx + 1)
 
-        # unmatched processor-only rows
+        # unmatched processor‐only rows
         for idx, row in processor_df.iterrows():
             if idx not in used_proc:
-                entry = {
+                base = {
                     'crm_date': None,
                     'crm_email': None,
                     'crm_firstname': None,
                     'crm_lastname': None,
-                    'crm_tp': row.get('proc_tp'),
+                    'crm_tp': None,
                     'crm_last4': None,
                     'crm_currency': None,
                     'crm_amount': None,
@@ -240,14 +256,19 @@ class ReconciliationEngine:
                     'match_status': 0,
                     'payment_status': 0,
                     'comment': "No matching CRM row found",
-                    'matched_proc_indices': [idx]
+                    'matched_proc_indices': [idx],
                 }
+                # build in order so that proc_tp follows proc_emails
+                entry = {}
+                for k, v in base.items():
+                    entry[k] = v
+                    if k == 'proc_emails':
+                        entry['proc_tp'] = [row.get('proc_tp', '')]
                 matches.append(entry)
 
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
         return matches
-
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
         """
@@ -269,6 +290,10 @@ class ReconciliationEngine:
         if proc == 'shift4':
             return self._match_shift4_row(crm_row, proc_dict, last4_map, used,
                                           self.get_processor_config('shift4'))
+        if proc == 'skrill':
+            return self._match_skrill_row(crm_row, proc_dict, last4_map, used,
+                                          self.get_processor_config('skrill')
+            )
 
         # everything else uses the standard (SafeCharge/PowerCash) logic
         return self._match_standard_row(crm_row, proc_dict, last4_map, used,
@@ -725,6 +750,127 @@ class ReconciliationEngine:
             }, {'best_combo': best_combo}
 
         return None, {'failure_reason': 'No valid PayPal match found'}
+
+    def _match_skrill_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        """
+        1) Gather all TP‐matched processor rows
+        2) Look for a “strict” combo (within tolerance) at the smallest k
+        3) If none strict, pick the combo (any k≤max_combo) with the smallest error
+        4) If *no* TP rows at all, fall back to the single best email match
+        """
+
+        crm_tp = crm_row['crm_tp']
+        crm_amt = crm_row['crm_amount']
+        crm_cur = crm_row['crm_currency']
+
+        abs_tol = 0.1
+        rel_tol = proc_config.tolerance * crm_amt
+
+        # 1) collect TP candidates
+        tp_cands = []
+        for idx, p in proc_dict.items():
+            if idx in used or p.get('tp') != crm_tp:
+                continue
+            conv, rate = self.convert_amount(p['proc_total_amount'],
+                                             p['proc_currency'], crm_cur)
+            if conv is not None:
+                tp_cands.append({'idx': idx, 'conv': conv, 'rate': rate, 'row': p})
+
+        strict_combo = None
+        # 2) search for first *strict* match at smallest k
+        for k in range(1, min(proc_config.max_combo, len(tp_cands)) + 1):
+            for combo in combinations(tp_cands, k):
+                total = sum(c['conv'] for c in combo)
+                same = all(c['row']['proc_currency'] == crm_cur for c in combo)
+                tol = abs_tol if same else rel_tol
+                if abs(total - crm_amt) <= tol:
+                    strict_combo = combo
+                    break
+            if strict_combo:
+                break
+
+        if strict_combo:
+            best_combo = strict_combo
+        else:
+            # 3) no strict combos => pick the TP combo with minimal error
+            best_err = float('inf')
+            best_combo = None
+            for k in range(1, min(proc_config.max_combo, len(tp_cands)) + 1):
+                for combo in combinations(tp_cands, k):
+                    total = sum(c['conv'] for c in combo)
+                    err = abs(total - crm_amt)
+                    if err < best_err:
+                        best_err = err
+                        best_combo = combo
+
+        # 4) if still no combo, fallback by email
+        if not best_combo and not tp_cands:
+            best_sim = 0.0
+            best_item = None
+            for idx, p in proc_dict.items():
+                if idx in used:
+                    continue
+                sim = self.enhanced_email_similarity(crm_row['crm_email'], p['proc_emails'])
+                if sim >= proc_config.email_threshold and sim > best_sim:
+                    conv, rate = self.convert_amount(p['proc_total_amount'],
+                                                     p['proc_currency'], crm_cur)
+                    if conv is not None:
+                        best_sim = sim
+                        best_item = {'idx': idx, 'conv': conv, 'rate': rate, 'row': p}
+            if best_item:
+                best_combo = (best_item,)
+                best_err = abs(best_item['conv'] - crm_amt)
+
+        if not best_combo:
+            return None, {'failure_reason': 'No Skrill match'}
+
+        # build the output
+        combo = list(best_combo)
+        total_received = round(sum(c['conv'] for c in combo), 4)
+        same_currency = all(c['row']['proc_currency'] == crm_cur for c in combo)
+        tol_used = abs_tol if same_currency else rel_tol
+        payment_status = 1 if abs(total_received - crm_amt) <= tol_used else 0
+
+        # comment when not strict
+        if payment_status == 0:
+            diff = total_received - crm_amt
+            more_less = 'less' if diff < 0 else 'more'
+            comment = f"Client received {more_less} {abs(diff):.2f} {crm_cur}"
+        else:
+            comment = ""
+
+        return {
+            'crm_date': crm_row['crm_date'],
+            'crm_email': crm_row['crm_email'],
+            'crm_firstname': crm_row['crm_firstname'],
+            'crm_lastname': crm_row['crm_lastname'],
+            'crm_tp': crm_tp,
+            'crm_last4': crm_row['crm_last4'],
+            'crm_currency': crm_cur,
+            'crm_amount': crm_amt,
+            'crm_processor_name': crm_row['crm_processor_name'],
+
+            'proc_dates': [c['row']['proc_date'] for c in combo],
+            'proc_emails': [c['row']['proc_emails'] for c in combo],
+            'proc_tp': [c['row'].get('tp', '') for c in combo],
+            'proc_last4_digits': [c['row']['proc_last4_digits'] for c in combo],
+            'proc_currencies': [c['row']['proc_currency'] for c in combo],
+            'proc_total_amounts': [c['row']['proc_total_amount'] for c in combo],
+            'proc_processor_name': 'skrill',
+
+            'converted_amount_total': total_received,
+            'exchange_rates': [c['rate'] for c in combo],
+            'email_similarity_avg': None,
+            'last4_match': None,
+            'name_fallback_used': False,
+            'exact_match_used': False,
+            'converted': not same_currency,
+            'combo_len': len(combo),
+            'match_status': 1,
+            'payment_status': payment_status,
+            'comment': comment,
+            'matched_proc_indices': [c['idx'] for c in combo]
+        }, {}
 
     def _estimate_runtime(self, crm_df, proc_dict, last4_map):
         samples = list(crm_df.iterrows())[:min(5, len(crm_df))]

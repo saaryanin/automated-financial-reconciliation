@@ -245,6 +245,58 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         ]]
 
         return df
+    elif processor.lower() == "shift4":
+        # 1) strip headers & filter to only Referral Credit + Completed Successfully
+        df.columns = df.columns.str.strip()
+        df = df[
+            (df["Operation Type"].str.lower() == "referral credit") &
+            (df["Response"].str.lower() == "completed successfully")
+        ]
+        if df.empty:
+            print("No Shift4 withdrawals found after filtering.")
+            return pd.DataFrame()
+
+        # 2) select only the needed columns
+        df = df[[
+            "Transaction Date",
+            "Card Number",
+            "Currency",
+            "Amount",
+            "Cardholder Name",
+            "Cardholder Email"
+        ]]
+
+        # 3) rename into our unified schema
+        df = df.rename(columns={
+            "Transaction Date": "date",
+            "Currency": "currency",
+            "Amount": "amount",
+            "Cardholder Email": "email"
+        })
+
+        # 4) extract last-4 digits from the card number
+        df["last_4cc"] = df["Card Number"].astype(str).str.extract(r"(\d{4})$").fillna("")
+
+        # 5) split the masked Cardholder Name (e.g. "Lui* Lor***")
+        name_split = df["Cardholder Name"].astype(str).str.split(n=1, expand=True)
+        df["first_name"] = name_split[0].str.rstrip("*")
+        df["last_name"] = (
+            name_split[1].str.rstrip("*")
+            if name_split.shape[1] > 1 else ""
+        )
+
+        # 6) tag the processor and reorder
+        df["processor_name"] = "shift4"
+        return df[[
+            "amount",
+            "currency",
+            "date",
+            "last_4cc",
+            "email",
+            "first_name",
+            "last_name",
+            "processor_name"
+        ]]
 
 
     return pd.DataFrame()
@@ -258,6 +310,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
     df["PSP name"] = df["PSP name"].str.strip().str.lower()
+    df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
     normalized_processor = processor_name.lower()
 
     def extract_crm_transaction_id(comment: str, processor: str):
@@ -319,6 +372,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
                 "First Name (Account) (Account)",
                 "Last Name (Account) (Account)",
                 "Email (Account) (Account)",
+                "tp",
                 "Amount",
                 "Currency",
                 "Method of Payment",

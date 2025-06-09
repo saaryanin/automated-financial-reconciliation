@@ -1,7 +1,7 @@
 from config import CRM_DIR, PROCESSOR_DIR, DATA_DIR
 from pathlib import Path
 import pandas as pd
-from src.preprocess import process_files_in_parallel, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
+from src.preprocess_test import process_files_in_parallel, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 from src.withdrawals_matcher_test import ReconciliationEngine
 import logging
 
@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-05-07"
+date = "2025-05-05"
 processors = ["safecharge", "paypal","powercash","shift4"]
 # Define processor input formats
 processor_filetypes = {
@@ -62,6 +62,7 @@ for proc in processors:
         crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
         crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
         crm_df['crm_lastname'] = crm_df['Last Name (Account) (Account)'].fillna('')
+        crm_df['crm_tp'] = crm_df['tp'].fillna('')
         crm_df['crm_last4'] = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
         crm_df['crm_currency'] = crm_df['Currency'].replace({'US Dollar': 'USD'})
         crm_df['crm_amount'] = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()

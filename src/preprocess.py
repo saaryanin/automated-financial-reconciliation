@@ -310,6 +310,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
     df["PSP name"] = df["PSP name"].str.strip().str.lower()
+    df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
     normalized_processor = processor_name.lower()
 
     def extract_crm_transaction_id(comment: str, processor: str):
@@ -371,6 +372,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
                 "First Name (Account) (Account)",
                 "Last Name (Account) (Account)",
                 "Email (Account) (Account)",
+                "tp",
                 "Amount",
                 "Currency",
                 "Method of Payment",

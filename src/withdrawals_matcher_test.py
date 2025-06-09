@@ -153,6 +153,7 @@ class ReconciliationEngine:
 
         self._estimate_runtime(crm_df, proc_dict, last4_map)
 
+        # match CRM rows
         for idx, row in crm_df.iterrows():
             if idx in used_crm:
                 continue
@@ -164,55 +165,58 @@ class ReconciliationEngine:
                 self.logger.error(f"Error processing row {idx}: {e}")
                 match, diag = None, {'failure_reason': str(e)}
 
+            # insert crm_tp immediately after crm_lastname
+            crm_tp_val = row.get('crm_tp')
+
             if match:
-                # insert crm_tp immediately after crm_lastname
-                crm_tp_val = row.get('crm_tp')
                 reordered = {}
                 for k, v in match.items():
                     reordered[k] = v
                     if k == 'crm_lastname':
                         reordered['crm_tp'] = crm_tp_val
                 match = reordered
+
                 matches.append(match)
                 used_crm.add(idx)
                 used_proc.update(match.get('matched_proc_indices', []))
                 self.metrics['matched_main'] += 1
-                self.metrics['combo_distribution'][match['combo_len']] = self.metrics['combo_distribution'].get(
-                    match['combo_len'], 0) + 1
-                self.metrics['currency_matches'][match['crm_currency']] = self.metrics['currency_matches'].get(
-                    match['crm_currency'], 0) + 1
+                self.metrics['combo_distribution'][match['combo_len']] = \
+                    self.metrics['combo_distribution'].get(match['combo_len'], 0) + 1
+                self.metrics['currency_matches'][match['crm_currency']] = \
+                    self.metrics['currency_matches'].get(match['crm_currency'], 0) + 1
 
                 if match['payment_status'] == 1:
                     self.metrics['correct_payments'] += 1
                 else:
                     self.metrics['incorrect_payments'] += 1
+
             else:
-                unmatched_record = self._create_unmatched_crm_record(crm_df.loc[idx])
-                # insert crm_tp after crm_lastname
-                crm_tp_val = row.get('crm_tp')
+                unmatched = self._create_unmatched_crm_record(crm_df.loc[idx])
                 reordered = {}
-                for k, v in unmatched_record.items():
+                for k, v in unmatched.items():
                     reordered[k] = v
                     if k == 'crm_lastname':
                         reordered['crm_tp'] = crm_tp_val
-                unmatched_record = reordered
-                matches.append(unmatched_record)
+                matches.append(reordered)
                 self.metrics['unmatched'] += 1
                 if self.config['enable_diagnostics']:
-                    self.diagnostics.append(
-                        {'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
+                    self.diagnostics.append({
+                        'crm_idx': idx,
+                        'failure_reason': diag.get('failure_reason', 'No candidates')
+                    })
+
             if idx % 10 == 0:
                 self._update_eta(len(crm_df), idx + 1)
 
+        # unmatched processor-only rows
         for idx, row in processor_df.iterrows():
             if idx not in used_proc:
-                # processor-only entries; crm fields None + crm_tp None after crm_lastname
                 entry = {
                     'crm_date': None,
                     'crm_email': None,
                     'crm_firstname': None,
                     'crm_lastname': None,
-                    'crm_tp': None,
+                    'crm_tp': row.get('proc_tp'),
                     'crm_last4': None,
                     'crm_currency': None,
                     'crm_amount': None,
@@ -238,14 +242,12 @@ class ReconciliationEngine:
                     'comment': "No matching CRM row found",
                     'matched_proc_indices': [idx]
                 }
+                matches.append(entry)
 
-        self.metrics['processing_time'] = (
-                datetime.now() - self.start_time
-        ).total_seconds()
-        self.logger.info(
-            f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}"
-        )
+        self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
+        self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
         return matches
+
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
         """

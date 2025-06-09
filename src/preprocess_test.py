@@ -297,6 +297,54 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "last_name",
             "processor_name"
         ]]
+    elif processor.lower() == "skrill":
+        # 1) strip headers & keep only Send Money + Processed
+        df.columns = df.columns.str.strip()
+        df = df[
+            (df["Type"].str.lower() == "send money") &
+            (df["Status"].str.lower() == "processed")
+            ]
+        if df.empty:
+            print("No Skrill withdrawals found after filtering.")
+            return pd.DataFrame()
+
+        # 2) remove rows where Amount Sent is empty
+        df = df[df["Amount Sent"].notna() & df["Amount Sent"].astype(str).str.strip().ne("")]
+        if df.empty:
+            print("No Skrill withdrawals with Amount Sent found after filtering.")
+            return pd.DataFrame()
+
+        # 3) select & rename our needed fields
+        df = df[["Time (CET)", "Transaction Details", "Amount Sent", "Currency Sent", "Reference"]]
+        df = df.rename(columns={
+            "Time (CET)": "date",
+            "Amount Sent": "amount",
+            "Currency Sent": "currency",
+            "Reference": "tp",  # for later proc_tp
+        })
+
+        # 4) pull out the email from "to someone@example.com"
+        df["email"] = (
+            df["Transaction Details"]
+            .astype(str)
+            .str.replace(r"^\s*to\s*", "", regex=True)
+            .str.strip()
+        )
+
+        # 5) fill in the rest of our unified schema
+        df["last_4cc"] = ""
+        df["first_name"] = ""
+        df["last_name"] = ""
+        df["processor_name"] = "skrill"
+
+        # 6) enforce the same column ordering
+        return df[
+            [
+                "amount", "currency", "date", "last_4cc",
+                "email", "first_name", "last_name",
+                "processor_name", "tp"
+            ]
+        ]
 
 
     return pd.DataFrame()

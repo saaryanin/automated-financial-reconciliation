@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-05-05"
+date = "2025-05-07"
 processors = ["safecharge", "paypal","powercash","shift4"]
 # Define processor input formats
 processor_filetypes = {

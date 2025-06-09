@@ -45,6 +45,17 @@ PROCESSOR_CONFIGS = {
         enable_name_fallback=True,
         matching_logic="paypal"
     ),
+    'shift4': ProcessorConfig(
+        email_threshold=0.75,
+        name_match_threshold=0.70,
+        require_last4=True,
+        require_email=True,
+        enable_name_fallback=True,
+        enable_exact_match=True,
+        max_combo=20,
+        tolerance=0.02,
+        matching_logic="shift4"
+    ),
     # ... other processors ...
 }
 
@@ -215,15 +226,29 @@ class ReconciliationEngine:
         return matches
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
-        # Get processor-specific configuration
-        proc_name = crm_row.get('crm_processor_name', '').lower()
-        proc_config = self.get_processor_config(proc_name)
+        """
+        Route each CRM row to its processor-specific matcher:
+          • SafeCharge / PowerCash: standard logic
+          • PayPal: paypal logic
+          • Shift4: shift4 logic
+        """
+        proc = (crm_row.get('crm_processor_name') or '').strip().lower()
 
-        # Select matching logic based on processor
-        if proc_config.matching_logic == "paypal":
-            return self._match_paypal_row(crm_row, proc_dict, last4_map, used, proc_config)
-        else:
-            return self._match_standard_row(crm_row, proc_dict, last4_map, used, proc_config)
+        # alias PowerCash → SafeCharge
+        if proc == 'powercash':
+            proc = 'safecharge'
+
+        if proc == 'paypal':
+            return self._match_paypal_row(crm_row, proc_dict, last4_map, used,
+                                          self.get_processor_config('paypal'))
+
+        if proc == 'shift4':
+            return self._match_shift4_row(crm_row, proc_dict, last4_map, used,
+                                          self.get_processor_config('shift4'))
+
+        # everything else uses the standard (SafeCharge/PowerCash) logic
+        return self._match_standard_row(crm_row, proc_dict, last4_map, used,
+                                        self.get_processor_config(proc))
 
     def _match_standard_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
@@ -411,6 +436,151 @@ class ReconciliationEngine:
             'comment': "No matching processor row found",
             'matched_proc_indices': []
         }
+
+    def _match_shift4_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        """
+        Match CRM withdrawals against Shift4 processor rows by:
+          1. last-4 must match
+          2. then at least one of: email-prefix(2), first-name-prefix(3), last-name-prefix(3)
+          3. combine up to max_combo to sum to the CRM amount (within tolerance)
+          4. pick the combo that maximizes prefix‐matches (then email_sim)
+        """
+        # --- 1) extract CRM fields ---
+        crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
+        crm_amt = crm_row['crm_amount']
+        crm_cur = crm_row['crm_currency']
+        crm_email_local = (crm_row.get('crm_email') or '').lower().split('@')[0]
+        crm_first3 = str(crm_row.get('crm_firstname', '')).lower()[:3]
+        crm_last3 = str(crm_row.get('crm_lastname', '')).lower()[:3]
+
+        # --- 2) build candidate list (filter by last4 + prefix rules) ---
+        indices = [i for i in proc_dict if i not in used]
+        if crm_last4 and crm_last4 in last4_map and proc_config.require_last4:
+            indices = last4_map[crm_last4]
+
+        candidates = []
+        for i in indices:
+            row = proc_dict[i]
+            # must match last4
+            if str(row.get('proc_last4_digits', '')) != crm_last4:
+                continue
+
+            # convert amount
+            conv, rate = self.convert_amount(row['proc_total_amount'],
+                                             row['proc_currency'], crm_cur)
+            if conv is None:
+                continue
+
+            # prefix checks
+            proc_email_local = str(row.get('proc_emails', '')).lower().split('@')[0]
+            email_prefix = crm_email_local and proc_email_local.startswith(crm_email_local[:2])
+
+            proc_first = str(row.get('proc_firstname', '')).lower()
+            first_prefix = crm_first3 and proc_first.startswith(crm_first3)
+
+            proc_last = str(row.get('proc_lastname', '')).lower()
+            last_prefix = crm_last3 and proc_last.startswith(crm_last3)
+
+            # require at least one prefix match
+            if not (email_prefix or first_prefix or last_prefix):
+                continue
+
+            # raw email similarity (fallback sort key)
+            email_sim = self.enhanced_email_similarity(crm_email_local, proc_email_local)
+
+            candidates.append({
+                'index': i,
+                'amount': conv,
+                'rate': rate,
+                'row': row,
+                'email_prefix': email_prefix,
+                'first_prefix': first_prefix,
+                'last_prefix': last_prefix,
+                'email_sim': email_sim
+            })
+
+        if not candidates:
+            return None, {'failure_reason': 'No Shift4 rows pass last4+prefix test'}
+
+        # --- 3) combination search (same as standard) but scoring by prefix-count ---
+        abs_tol = 0.1
+        rel_tol = proc_config.tolerance * crm_amt
+
+        best = None
+        best_score = -1
+        best_fallback = None
+        best_err = float('inf')
+
+        for k in range(1, min(proc_config.max_combo, len(candidates)) + 1):
+            for combo_idxs in combinations(range(len(candidates)), k):
+                combo = [candidates[j] for j in combo_idxs]
+                total = sum(c['amount'] for c in combo)
+                err = abs(total - crm_amt)
+                tol = abs_tol if all(c['row']['proc_currency'] == crm_cur for c in combo) else rel_tol
+
+                # strict
+                if err <= tol:
+                    # score = how many prefix‐flags are true across all rows
+                    prefix_score = sum(
+                        int(c['email_prefix']) + int(c['first_prefix']) + int(c['last_prefix'])
+                        for c in combo
+                    )
+                    # tie-breaker by avg email_sim
+                    avg_email_sim = sum(c['email_sim'] for c in combo) / k
+                    score = prefix_score + avg_email_sim * 0.01
+
+                    if score > best_score:
+                        best_score = score
+                        best = (combo, k, total, err <= tol)
+                else:
+                    # record fallback by minimal error
+                    if err < best_err:
+                        best_err = err
+                        avg_email_sim = sum(c['email_sim'] for c in combo) / k
+                        best_fallback = (combo, k, total, False, err, avg_email_sim)
+
+        # choose strict > fallback
+        if best:
+            combo, k, total, strict = best
+            score = best_score
+        elif best_fallback:
+            combo, k, total, strict, err, score = best_fallback
+        else:
+            return None, {'failure_reason': 'No valid Shift4 combination'}
+
+        received = round(total, 4)
+        payment_status = 1 if strict else 0
+        comment = "" if strict else f"Amount {'under' if received < crm_amt else 'over'} by {abs(received - crm_amt):.2f} {crm_cur}"
+
+        return {
+            'crm_date': crm_row.get('crm_date'),
+            'crm_email': crm_row.get('crm_email'),
+            'crm_firstname': crm_row.get('crm_firstname', ''),
+            'crm_lastname': crm_row.get('crm_lastname', ''),
+            'crm_last4': crm_last4,
+            'crm_currency': crm_cur,
+            'crm_amount': crm_amt,
+            'crm_processor_name': 'shift4',
+            'proc_dates': [c['row']['proc_date'] for c in combo],
+            'proc_emails': [c['row']['proc_emails'] for c in combo],
+            'proc_firstnames': [c['row'].get('proc_firstname', '') for c in combo],
+            'proc_lastnames': [c['row'].get('proc_lastname', '') for c in combo],
+            'proc_last4_digits': [c['row']['proc_last4_digits'] for c in combo],
+            'proc_currencies': [c['row']['proc_currency'] for c in combo],
+            'proc_total_amounts': [c['row']['proc_total_amount'] for c in combo],
+            'converted_amount_total': received,
+            'exchange_rates': [c['rate'] for c in combo],
+            'email_similarity_avg': round(score, 4),
+            'last4_match': True,
+            'combo_len': k,
+            'match_status': 1,
+            'payment_status': payment_status,
+            'comment': comment,
+            'matched_proc_indices': [c['index'] for c in combo]
+        }, {'best_combo': combo}
+
+        # … otherwise fall back into your existing sort + combination logic …
+        # (leave the rest of your function untouched)
 
     def _match_paypal_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_cur = crm_row['crm_currency']

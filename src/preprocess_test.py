@@ -4,6 +4,8 @@ from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
+import logging
+
 
 # ----------------------------
 # Processor Handling
@@ -297,33 +299,54 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "last_name",
             "processor_name"
         ]]
-    elif processor.lower() == "skrill":
-        # 1) strip headers & keep only Send Money + Processed
+    elif processor.lower() in ("skrill", "neteller"):
         df.columns = df.columns.str.strip()
-        df = df[
-            (df["Type"].str.lower() == "send money") &
-            (df["Status"].str.lower() == "processed")
-            ]
+
+        # both Skrill and Neteller withdrawals are "send money" + processed
+        df = df.loc[
+             (df["Type"].str.lower() == "send money") &
+             (df["Status"].str.lower() == "processed"),
+             :
+             ]
         if df.empty:
-            print("No Skrill withdrawals found after filtering.")
+            print(f"No {processor} withdrawals found after filtering.")
             return pd.DataFrame()
 
-        # 2) remove rows where Amount Sent is empty
-        df = df[df["Amount Sent"].notna() & df["Amount Sent"].astype(str).str.strip().ne("")]
+        # pick whichever column holds the amount
+        amt_col = "Amount Sent" if "Amount Sent" in df.columns else "[+]"
+        df = df.loc[
+             df[amt_col].notna() & df[amt_col].astype(str).str.strip().ne(""),
+             :
+             ]
         if df.empty:
-            print("No Skrill withdrawals with Amount Sent found after filtering.")
+            print(f"No {processor} withdrawals with amount found after filtering.")
             return pd.DataFrame()
 
-        # 3) select & rename our needed fields
-        df = df[["Time (CET)", "Transaction Details", "Amount Sent", "Currency Sent", "Reference"]]
+        # pull the numeric TP out of Reference
+        df["tp"] = (
+            df["Reference"]
+            .astype(str)
+            .str.extract(r"(\d+)")
+            .fillna("")
+        )
+
+        # normalize date into a single "date" column
+        if "Time (CET)" in df.columns:
+            df["date"] = pd.to_datetime(df["Time (CET)"])
+        elif "Time (UTC)" in df.columns:
+            df["date"] = pd.to_datetime(df["Time (UTC)"])
+        elif "Date" in df.columns:
+            df["date"] = pd.to_datetime(df["Date"])
+        else:
+            raise ValueError(f"Could not find a date column for {processor}")
+
+        # rename amount & currency to your unified names
         df = df.rename(columns={
-            "Time (CET)": "date",
-            "Amount Sent": "amount",
-            "Currency Sent": "currency",
-            "Reference": "tp",  # for later proc_tp
+            amt_col: "amount",
+            "Currency Sent": "currency"
         })
 
-        # 4) pull out the email from "to someone@example.com"
+        # strip the leading "to " off the Transaction Details to get email
         df["email"] = (
             df["Transaction Details"]
             .astype(str)
@@ -331,20 +354,18 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             .str.strip()
         )
 
-        # 5) fill in the rest of our unified schema
+        # fill out the rest
         df["last_4cc"] = ""
         df["first_name"] = ""
         df["last_name"] = ""
-        df["processor_name"] = "skrill"
+        df["processor_name"] = processor.lower()
 
-        # 6) enforce the same column ordering
-        return df[
-            [
-                "amount", "currency", "date", "last_4cc",
-                "email", "first_name", "last_name",
-                "processor_name", "tp"
-            ]
-        ]
+        # return exactly the columns you want
+        return df[[
+            "amount", "currency", "date", "last_4cc",
+            "email", "first_name", "last_name",
+            "processor_name", "tp"
+        ]]
 
 
     return pd.DataFrame()
@@ -388,7 +409,12 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
 
     if normalized_processor == "neteller":
-        psp_mask = df["PSP name"].isin(["neteller"])
+        psp_mask = (
+                df["PSP name"].str.lower().eq("neteller")
+                |
+                df["Method of Payment"].str.lower().str.contains("neteller", na=False)
+        )
+
     elif normalized_processor == "trustpayments":
         psp_mask = df["PSP name"] == "acquiringcom"
     elif normalized_processor == "zotapay":
@@ -457,7 +483,11 @@ def extract_date_from_filename(filepath: str) -> str:
 # ----------------------------
 # Parallel Batch Processor
 # ----------------------------
-def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True,transaction_type="deposit"):
+def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True,
+                              transaction_type="deposit"):
+    valid_paths = [str(p) for p in file_paths if Path(p).exists()]
+    if not valid_paths:
+        return []
     with ThreadPoolExecutor() as executor:
         futures = []
         for path in file_paths:
@@ -473,6 +503,10 @@ def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, sav
 # Processor File Loader
 # ----------------------------
 def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
+    # Check if file exists before processing
+    if not Path(filepath).exists():
+
+        return None  # Return None instead of raising error
     ext = Path(filepath).suffix.lower()
     dtype = {
         "Transaction ID": str,
@@ -499,12 +533,16 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         return None
 
     if save_clean:
-        date_str = extract_date_from_filename(filepath)
-        out_filename = f"{processor_name}_{transaction_type}s.xlsx"
-        out_path = PROCESSED_PROCESSOR_DIR / processor_name / date_str / out_filename
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        df_clean.to_excel(out_path, index=False)
-        print(f"✅ Saved cleaned {processor_name} {transaction_type}s to {out_path}")
+        # Only save if we have data
+        if df_clean is not None and not df_clean.empty:
+            date_str = extract_date_from_filename(filepath)
+            out_filename = f"{processor_name}_{transaction_type}s.xlsx"
+            out_path = PROCESSED_PROCESSOR_DIR / processor_name / date_str / out_filename
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            df_clean.to_excel(out_path, index=False)
+            print(f"✅ Saved cleaned {processor_name} {transaction_type}s to {out_path}")
+        else:
+            print(f"⚠️ Not saving empty {processor_name} {transaction_type}s")
 
     return df_clean
 

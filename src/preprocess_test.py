@@ -366,6 +366,34 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "email", "first_name", "last_name",
             "processor_name", "tp"
         ]]
+    elif processor == "bitpay":
+        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+        df = df[df["tx_type"].str.lower() == "invoice refund"]
+        if df.empty:
+            print("No BitPay withdrawals found after filtering.")
+            return pd.DataFrame()
+
+        df = df.rename(columns={
+            "invoice_id": "transaction_id",
+            "payout_amount": "amount",
+            "payout_currency": "currency",
+            "buyername": "full_name",
+            "buyeremail": "email"
+        })
+
+        # Split buyer full name into first and last names
+        name_split = df["full_name"].astype(str).str.strip().str.split(n=1, expand=True)
+        df["first_name"] = name_split[0]
+        df["last_name"] = name_split[1] if name_split.shape[1] > 1 else ""
+
+        df["last_4cc"] = ""  # No card digits in BitPay
+        df["processor_name"] = "bitpay"
+
+        df = df[[
+            "amount", "currency", "date", "last_4cc",
+            "email", "first_name", "last_name", "processor_name"
+        ]]
+        return df
 
 
     return pd.DataFrame()

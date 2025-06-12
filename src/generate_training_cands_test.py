@@ -10,8 +10,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-05-28"
-processors = ["safecharge", "paypal","powercash","shift4","skrill","neteller"]
+date = "2025-05-09"
+processors = ["safecharge", "paypal","powercash","shift4","skrill","neteller","bitpay"]
 # Define processor input formats
 processor_filetypes = {
     "safecharge": ".xlsx",
@@ -19,7 +19,8 @@ processor_filetypes = {
     "powercash": ".csv",
     "shift4": ".csv",
     "skrill": ".csv",
-    "neteller":".csv"
+    "neteller":".csv",
+    "bitpay":".csv",
     # Add others as needed
 }
 

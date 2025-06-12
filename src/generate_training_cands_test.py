@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-05-05"
+date = "2025-05-28"
 processors = ["safecharge", "paypal","powercash","shift4","skrill","neteller"]
 # Define processor input formats
 processor_filetypes = {
@@ -72,7 +72,23 @@ for proc in processors:
         crm_df['crm_last4']     = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
         crm_df['crm_currency']  = crm_df['Currency'].replace({'US Dollar': 'USD'})
         crm_df['crm_amount']    = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
-        crm_df['crm_processor_name'] = crm_df['PSP name']
+        psp_map = {
+            'netteler': 'neteller',
+            'skrilll': 'skrill',
+            'skrill ': 'skrill',
+            'skrll': 'skrill',
+            'paypal ': 'paypal',
+            'safecharge ': 'safecharge',
+            'powercash ': 'powercash',
+            'shift4 ': 'shift4',
+            # Add other known mis-spellings here
+        }
+        crm_df['crm_processor_name'] = (
+            crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
+        )
+        # ✅ Add this to debug processor label + TP
+        print(
+            f"[{proc.upper()}] CRM rows: {len(crm_df)}, PSPs: {crm_df['crm_processor_name'].unique()}, TPs: {crm_df['crm_tp'].unique()}")
         crm_dfs.append(crm_df)
 
     if proc_file.exists():

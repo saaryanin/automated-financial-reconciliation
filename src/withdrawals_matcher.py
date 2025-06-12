@@ -66,6 +66,16 @@ PROCESSOR_CONFIGS = {
         tolerance=0.05,
         matching_logic="skrill"
     ),
+    'neteller': ProcessorConfig(
+        email_threshold=0.75,
+        require_last4=False,
+        require_email=True,
+        enable_name_fallback=False,
+        enable_exact_match=False,
+        max_combo=5,
+        tolerance=0.05,
+        matching_logic="skrill"   # we'll just reuse the Skrill logic
+    ),
     # ... other processors ...
 }
 
@@ -290,9 +300,12 @@ class ReconciliationEngine:
         if proc == 'shift4':
             return self._match_shift4_row(crm_row, proc_dict, last4_map, used,
                                           self.get_processor_config('shift4'))
-        if proc == 'skrill':
-            return self._match_skrill_row(crm_row, proc_dict, last4_map, used,
-                                          self.get_processor_config('skrill')
+        if proc in ("skrill", "neteller"):
+            # pass proc (“skrill” or “neteller”) into the matcher so we tag the right name
+            return self._match_skrill_neteller_row(
+                crm_row, proc_dict, last4_map, used,
+                self.get_processor_config(proc),
+                processor_name=proc
             )
 
         # everything else uses the standard (SafeCharge/PowerCash) logic
@@ -753,28 +766,72 @@ class ReconciliationEngine:
 
     from itertools import combinations
 
-    def _match_skrill_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+    def _match_skrill_neteller_row(self, crm_row, proc_dict, last4_map, used, proc_config, processor_name):
         """
-        Revised Skrill matching with a final fallback step:
-          1) Gather candidates from all processor rows. Mark as primary if TP matches;
-             otherwise, include only if email similarity >= 0.75.
-          2) Sort candidates by priority (primary, exact match, email score, last4, name fallback).
-          3) Search all combinations (sizes 1 to n) to find a grouping with minimal error.
-             We record both “strict” (error within tolerance) and fallback combinations.
-          4) After the exhaustive search, attempt to append any remaining candidate
-             (greedily) if it further reduces the error.
-          5) Build and return the final result.
+        Skrill/Neteller matcher:
+         0) if there's a perfect 1:1 on TP+email+amount+currency, take it immediately
+         1) else run your exhaustive+greedy combination logic
         """
-        # --- Step 1: Extract CRM details ---
-        crm_tp = crm_row['crm_tp']
+        # --- CRM fields ---
+        crm_tp = str(crm_row.get('crm_tp', '')).strip()
         crm_amt = crm_row['crm_amount']
-        crm_cur = crm_row['crm_currency']
-        crm_email = crm_row['crm_email']
-        crm_last4 = str(crm_row['crm_last4']) if crm_row.get('crm_last4') is not None else ''
-        crm_first = str(crm_row.get('crm_firstname', ''))
-        crm_last = str(crm_row.get('crm_lastname', ''))
+        crm_cur = str(crm_row['crm_currency']).strip().upper()
+        crm_email = str(crm_row['crm_email']).strip().lower()
+        crm_last4 = str(crm_row.get('crm_last4', '')).strip()
 
-        # --- Step 2: Gather all candidates (primary and fallback) ---
+        # --- Debug: show processor-side TP values ---
+        all_tps = [p.get('proc_tp', '') for p in proc_dict.values()]
+        self.logger.debug(f"[{processor_name}] CRM TP={crm_tp!r} | Processor TPs={all_tps}")
+
+        # --- 0) SHORT-CIRCUIT exact 1:1 match ---
+        for idx, row in proc_dict.items():
+            if idx in used:
+                continue
+
+            proc_tp = str(row.get('proc_tp', '')).strip()
+            proc_email = str(row.get('proc_emails', '')).strip().lower()
+            proc_currency = str(row.get('proc_currency', '')).strip().upper()
+            proc_amount = row.get('proc_total_amount', 0)
+
+            if (
+                    proc_tp == crm_tp and
+                    proc_email == crm_email and
+                    proc_currency == crm_cur and
+                    abs(proc_amount - crm_amt) < 0.01
+            ):
+                self.logger.debug(f"[{processor_name}] Exact match on idx={idx}")
+                return {
+                    'crm_date': crm_row['crm_date'],
+                    'crm_email': crm_email,
+                    'crm_firstname': crm_row['crm_firstname'],
+                    'crm_lastname': crm_row['crm_lastname'],
+                    'crm_last4': crm_last4,
+                    'crm_currency': crm_cur,
+                    'crm_amount': crm_amt,
+                    'crm_processor_name': crm_row['crm_processor_name'],
+                    'proc_dates': [row['proc_date']],
+                    'proc_emails': [row['proc_emails']],
+                    'proc_firstnames': [row.get('proc_firstname', '')],
+                    'proc_lastnames': [row.get('proc_lastname', '')],
+                    'proc_last4_digits': [row['proc_last4_digits']],
+                    'proc_currencies': [row['proc_currency']],
+                    'proc_total_amounts': [row['proc_total_amount']],
+                    'proc_processor_name': row['proc_processor_name'],
+                    'converted_amount_total': crm_amt,
+                    'exchange_rates': [1.0],
+                    'email_similarity_avg': 1.0,
+                    'last4_match': False,
+                    'name_fallback_used': False,
+                    'exact_match_used': True,
+                    'converted': False,
+                    'combo_len': 1,
+                    'match_status': 1,
+                    'payment_status': 1,
+                    'comment': "",
+                    'matched_proc_indices': [idx]
+                }, {}
+
+        # --- 1) FALLBACK: gather candidates by TP or email threshold ---
         candidates = []
         for idx, row in proc_dict.items():
             if idx in used:
@@ -784,180 +841,123 @@ class ReconciliationEngine:
                 continue
             email_sim = self.enhanced_email_similarity(crm_email, row['proc_emails'])
             last4_valid = crm_last4 not in ("0", "0000", "", "nan")
-            last4_match = last4_valid and (crm_last4 == str(row.get('proc_last4_digits', '')))
-            converted_amt_match = abs(conv - crm_amt) < 0.01
-            full_exact_match = last4_match and converted_amt_match
+            last4_match = last4_valid and crm_last4 == str(row['proc_last4_digits'])
+            exact_amt = abs(conv - crm_amt) < 0.01
+            full_exact = last4_match and exact_amt
 
-            name_fallback = False
-            if proc_config.enable_name_fallback:
-                if crm_first:
-                    name_fallback = self.name_in_email(crm_first, row['proc_emails'])
-                if not name_fallback and crm_last:
-                    name_fallback = self.name_in_email(crm_last, row['proc_emails'])
-
-            candidate = {
+            cand = {
                 'index': idx,
                 'converted_amount': conv,
                 'email_score': email_sim,
                 'currency': row['proc_currency'],
                 'rate': rate,
                 'row_data': row,
-                'last4_match': last4_match,
-                'name_fallback': name_fallback,
-                'exact_match': full_exact_match
+                'primary': str(row.get('proc_tp', '')).strip() == crm_tp,
+                'exact_match': full_exact,
+                'last4_match': last4_match
             }
-            # Accept as primary if TP matches; otherwise only if email similarity is strong
-            if row.get('tp') == crm_tp:
-                candidate['primary'] = True
-                candidates.append(candidate)
-            else:
-                candidate['primary'] = False
-                if email_sim >= 0.75:
-                    candidates.append(candidate)
+            if cand['primary'] or email_sim >= proc_config.email_threshold:
+                candidates.append(cand)
+
         if not candidates:
-            return None, {'failure_reason': 'No Skrill candidate found'}
+            return None, {'failure_reason': f'No {processor_name} candidate found'}
 
-        # --- Step 3: Sort candidates ---
-        candidates.sort(key=lambda x: (
-            -int(x.get('primary', False)),
-            -int(x.get('exact_match', False)),
-            -x['email_score'],
-            -int(x['last4_match']),
-            -int(x['name_fallback'])
+        # --- sort & exhaustive combo search ---
+        candidates.sort(key=lambda c: (
+            -int(c['primary']),
+            -int(c['exact_match']),
+            -c['email_score'],
+            -int(c['last4_match'])
         ))
-        n = len(candidates)
-
-        # --- Step 4: Combination Selection ---
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
+        best_strict, best_fallback = None, None
 
-        best_strict_combo = None
-        best_strict_score = 0.0
-        best_fallback_combo = None
-        best_fallback_error = None
-
-        # Exhaustively search over all candidate combinations (sizes 1 to n)
-        for k in range(1, n + 1):
+        for k in range(1, min(proc_config.max_combo, len(candidates)) + 1):
             for combo in combinations(candidates, k):
-                same_currency = all(c['currency'] == crm_cur for c in combo)
                 total = sum(c['converted_amount'] for c in combo)
-                tol_here = abs_tol if same_currency else rel_tol
-                error = abs(total - crm_amt)
-                avg_score = sum(c['email_score'] for c in combo) / k
+                same_cur = all(c['currency'] == crm_cur for c in combo)
+                tol = abs_tol if same_cur else rel_tol
+                err = abs(total - crm_amt)
+                score = sum(c['email_score'] for c in combo) / k
 
-                if error <= tol_here:
-                    if best_strict_combo is None or (avg_score > best_strict_score) or (
-                            error < best_strict_combo.get('error', float('inf'))):
-                        best_strict_score = avg_score
-                        best_strict_combo = {
-                            'combo': combo,
-                            'k': k,
-                            'total_amount': total,
-                            'exact_currency': same_currency,
-                            'error': error
+                if err <= tol:
+                    if (not best_strict) or score > best_strict['score'] or err < best_strict['error']:
+                        best_strict = {
+                            'combo': combo, 'k': k, 'total': total,
+                            'error': err, 'score': score, 'exact': same_cur
                         }
                 else:
-                    if best_fallback_combo is None or error < best_fallback_error:
-                        best_fallback_error = error
-                        best_fallback_combo = {
-                            'combo': combo,
-                            'k': k,
-                            'total_amount': total,
-                            'exact_currency': same_currency,
-                            'error': error,
-                            'avg_score': avg_score
+                    if (not best_fallback) or err < best_fallback['error']:
+                        best_fallback = {
+                            'combo': combo, 'k': k, 'total': total,
+                            'error': err, 'score': score, 'exact': same_cur
                         }
-        if best_strict_combo is not None:
-            best_combo = best_strict_combo
-            strict_match = True
-            best_score = best_strict_score
-        elif best_fallback_combo is not None:
-            best_combo = best_fallback_combo
-            strict_match = False
-            best_score = best_fallback_combo['avg_score']
-        else:
-            best_combo = None
+            if best_strict and best_strict['score'] >= 0.99:
+                break
 
-        if best_combo is None:
+        chosen = best_strict or best_fallback
+        if not chosen:
             return None, {'failure_reason': 'No valid combination found'}
+        strict = (chosen is best_strict)
 
-        # --- Step 5: Fallback Greedy Append ---
-        # After the combination search, try adding any candidate (not already in best_combo)
-        # that reduces the overall error further.
-        final_combo = list(best_combo['combo'])
-        final_total = best_combo['total_amount']
-        current_error = abs(final_total - crm_amt)
+        # --- greedy append to reduce error ---
+        combo = list(chosen['combo'])
+        total = chosen['total']
+        err = abs(total - crm_amt)
         while True:
-            candidate_to_add = None
-            best_new_error = current_error
-            for cand in candidates:
-                if cand in final_combo:
+            best_imp, best_new = err, None
+            for c in candidates:
+                if c in combo:
                     continue
-                new_total = final_total + cand['converted_amount']
-                new_error = abs(new_total - crm_amt)
-                if new_error < best_new_error:
-                    best_new_error = new_error
-                    candidate_to_add = cand
-            if candidate_to_add:
-                final_combo.append(candidate_to_add)
-                final_total += candidate_to_add['converted_amount']
-                current_error = best_new_error
+                new_err = abs((total + c['converted_amount']) - crm_amt)
+                if new_err < best_imp:
+                    best_imp, best_new = new_err, c
+            if best_new:
+                combo.append(best_new)
+                total += best_new['converted_amount']
+                err = best_imp
             else:
                 break
 
-        final_k = len(final_combo)
-        final_same_currency = all(c['currency'] == crm_cur for c in final_combo)
-        final_tol = abs_tol if final_same_currency else rel_tol
-        final_error = abs(final_total - crm_amt)
-        # Mark as strict if the final error falls within tolerance.
-        strict_match = (final_error <= final_tol)
+        # --- build final result ---
+        final_k = len(combo)
+        final_same = all(c['currency'] == crm_cur for c in combo)
+        final_tol = abs_tol if final_same else rel_tol
+        final_err = abs(total - crm_amt)
+        payment_status = int(final_err <= final_tol)
+        comment = "" if payment_status else (
+            f"Client received {'less' if total < crm_amt else 'more'} {abs(total - crm_amt):.2f} {crm_cur}"
+        )
 
-        # --- Step 6: Build final result ---
-        received_amount = round(final_total, 4)
-        diff = received_amount - crm_amt
-        abs_diff = abs(diff)
-        if strict_match:
-            payment_status = 1
-            comment = ""
-        else:
-            payment_status = 0
-            comment = f"Client received {'less' if diff < 0 else 'more'} {abs_diff:.2f} {crm_cur}"
-
-        result = {
-            # CRM side
-            'crm_date': crm_row.get('crm_date'),
+        return {
+            'crm_date': crm_row['crm_date'],
             'crm_email': crm_email,
-            'crm_firstname': crm_row.get('crm_firstname', ''),
-            'crm_lastname': crm_row.get('crm_lastname', ''),
+            'crm_firstname': crm_row['crm_firstname'],
+            'crm_lastname': crm_row['crm_lastname'],
             'crm_last4': crm_last4,
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
-            'crm_processor_name': crm_row.get('crm_processor_name'),
-            # Processor side
-            'proc_dates': [c['row_data']['proc_date'] for c in final_combo],
-            'proc_emails': [c['row_data']['proc_emails'] for c in final_combo],
-            'proc_firstnames': [c['row_data'].get('proc_firstname', '') for c in final_combo],
-            'proc_lastnames': [c['row_data'].get('proc_lastname', '') for c in final_combo],
-            'proc_last4_digits': [c['row_data']['proc_last4_digits'] for c in final_combo],
-            'proc_currencies': [c['currency'] for c in final_combo],
-            'proc_total_amounts': [c['row_data']['proc_total_amount'] for c in final_combo],
-            'proc_processor_name': 'skrill',
-            # Meta data
-            'converted_amount_total': received_amount,
-            'exchange_rates': [c['rate'] for c in final_combo],
-            'email_similarity_avg': round(sum(c['email_score'] for c in final_combo) / final_k, 4),
-            'last4_match': any(c['last4_match'] for c in final_combo),
-            'name_fallback_used': any(c.get('name_fallback', False) for c in final_combo),
-            'exact_match_used': any(c.get('exact_match', False) for c in final_combo),
-            'converted': not final_same_currency,
+            'crm_processor_name': crm_row['crm_processor_name'],
+            'proc_dates': [c['row_data']['proc_date'] for c in combo],
+            'proc_emails': [c['row_data']['proc_emails'] for c in combo],
+            'proc_last4_digits': [c['row_data']['proc_last4_digits'] for c in combo],
+            'proc_currencies': [c['currency'] for c in combo],
+            'proc_total_amounts': [c['row_data']['proc_total_amount'] for c in combo],
+            'proc_processor_name': processor_name,
+            'converted_amount_total': round(total, 4),
+            'exchange_rates': [c['rate'] for c in combo],
+            'email_similarity_avg': round(sum(c['email_score'] for c in combo) / final_k, 4),
+            'last4_match': any(c['last4_match'] for c in combo),
+            'name_fallback_used': False,
+            'exact_match_used': any(c['exact_match'] for c in combo),
+            'converted': not final_same,
             'combo_len': final_k,
             'match_status': 1,
             'payment_status': payment_status,
             'comment': comment,
-            'matched_proc_indices': [c['index'] for c in final_combo]
-        }
-        return result, {'best_combo': best_combo, 'final_combo': final_combo}
-
+            'matched_proc_indices': [c['index'] for c in combo]
+        }, {'strict': strict, 'chosen_error': chosen['error']}
 
     def _estimate_runtime(self, crm_df, proc_dict, last4_map):
         samples = list(crm_df.iterrows())[:min(5, len(crm_df))]

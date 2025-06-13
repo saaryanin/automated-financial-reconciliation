@@ -76,6 +76,17 @@ PROCESSOR_CONFIGS = {
         tolerance=0.05,
         matching_logic="skrill"   # we'll just reuse the Skrill logic
     ),
+    'bitpay': ProcessorConfig(
+        email_threshold=0.75,
+        require_last4=False,
+        require_email=True,
+        enable_name_fallback=True,
+        enable_exact_match=False,
+        max_combo=5,
+        tolerance=0.05,
+        matching_logic="bitpay"
+    ),
+
     # ... other processors ...
 }
 
@@ -307,6 +318,9 @@ class ReconciliationEngine:
                 self.get_processor_config(proc),
                 processor_name=proc
             )
+        if proc == 'bitpay':
+            return self._match_bitpay_row(crm_row, proc_dict, last4_map, used,
+                                          self.get_processor_config('bitpay'))
 
         # everything else uses the standard (SafeCharge/PowerCash) logic
         return self._match_standard_row(crm_row, proc_dict, last4_map, used,
@@ -475,6 +489,111 @@ class ReconciliationEngine:
                 'comment': comment,
                 'matched_proc_indices': [r['index'] for r in c]
             }, {'best_combo': best_combo}
+
+    def _match_bitpay_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        crm_cur = crm_row['crm_currency']
+        crm_amt = crm_row['crm_amount']
+        crm_email = crm_row['crm_email']
+        crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
+        crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
+
+        candidates = []
+        for i, row in proc_dict.items():
+            if i in used:
+                continue
+            conv, rate = self.convert_amount(row['proc_total_amount'], row['proc_currency'], crm_cur)
+            if conv is None:
+                continue
+
+            proc_email = str(row['proc_emails']).strip().lower()
+            email_sim = self.enhanced_email_similarity(crm_email, proc_email)
+            email_match = email_sim >= proc_config.email_threshold
+
+            proc_first = str(row.get('proc_firstname', '')).lower().strip()
+            proc_last = str(row.get('proc_lastname', '')).lower().strip()
+            name_match = (
+                    SequenceMatcher(None, crm_first, proc_first).ratio() >= proc_config.name_match_threshold or
+                    SequenceMatcher(None, crm_last, proc_last).ratio() >= proc_config.name_match_threshold
+                )
+
+            if not (email_match or name_match):
+                continue
+
+            candidates.append({
+                'index': i,
+                'converted_amount': conv,
+                'email_score': email_sim,
+                'currency': row['proc_currency'],
+                'rate': rate,
+                'row_data': row,
+                'name_fallback': name_match and not email_match
+                })
+
+        candidates.sort(key=lambda c: (-int(c['email_score'] >= 0.75), -c['email_score']))
+        candidates = candidates[:self.config['top_candidates']]
+
+        abs_tol = 0.1
+        rel_tol = proc_config.tolerance * crm_amt
+        best = None
+        best_score = 0
+
+        for k in range(1, min(proc_config.max_combo, len(candidates)) + 1):
+            for combo in combinations(candidates, k):
+                total = sum(c['converted_amount'] for c in combo)
+                same_cur = all(c['currency'] == crm_cur for c in combo)
+                tol = abs_tol if same_cur else rel_tol
+                err = abs(total - crm_amt)
+                score = sum(c['email_score'] for c in combo) / k
+
+                if err <= tol and score > best_score:
+                    best = {
+                        'combo': combo,
+                        'k': k,
+                        'total': total,
+                        'score': score,
+                        'exact_currency': same_cur
+                        }
+                    best_score = score
+            if best_score >= 0.99:
+                break
+
+        if not best:
+            return None, {'failure_reason': 'No valid BitPay combo'}
+
+        c = best['combo']
+        payment_status = 1
+        comment = "" if best['score'] >= 0.99 else f"Matched with lower email score: {best['score']:.2f}"
+
+        return {
+            'crm_date': crm_row.get('crm_date'),
+            'crm_email': crm_email,
+            'crm_firstname': crm_row.get('crm_firstname', ''),
+            'crm_lastname': crm_row.get('crm_lastname', ''),
+            'crm_last4': crm_row.get('crm_last4'),
+            'crm_currency': crm_cur,
+            'crm_amount': crm_amt,
+            'crm_processor_name': 'bitpay',
+            'proc_dates': [r['row_data']['proc_date'] for r in c],
+            'proc_emails': [r['row_data']['proc_emails'] for r in c],
+            'proc_firstnames': [r['row_data'].get('proc_firstname', '') for r in c],
+            'proc_lastnames': [r['row_data'].get('proc_lastname', '') for r in c],
+            'proc_last4_digits': [r['row_data']['proc_last4_digits'] for r in c],
+            'proc_currencies': [r['currency'] for r in c],
+            'proc_total_amounts': [r['row_data']['proc_total_amount'] for r in c],
+            'proc_processor_name': 'bitpay',
+            'converted_amount_total': round(best['total'], 4),
+            'exchange_rates': [r['rate'] for r in c],
+            'email_similarity_avg': round(best['score'], 4),
+            'last4_match': False,
+            'name_fallback_used': any(r.get('name_fallback') for r in c),
+            'exact_match_used': False,
+            'converted': not best['exact_currency'],
+            'combo_len': best['k'],
+            'match_status': 1,
+            'payment_status': payment_status,
+            'comment': comment,
+            'matched_proc_indices': [r['index'] for r in c]
+        }, {'bitpay_combo': best}
 
         return None, {'failure_reason': 'No valid combination found'}
 

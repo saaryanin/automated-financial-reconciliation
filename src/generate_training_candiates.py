@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-05-09"
+date = "2025-05-05"
 processors = ["safecharge", "paypal","powercash","shift4","skrill","neteller","bitpay"]
 # Define processor input formats
 processor_filetypes = {
@@ -57,43 +57,56 @@ crm_dfs, proc_dfs = [], []
 for proc in processors:
     crm_file = PROCESSED_CRM_DIR / proc / date / f"{proc}_withdrawals.xlsx"
     proc_file = PROCESSED_PROCESSOR_DIR / proc / date / f"{proc}_withdrawals.xlsx"
-    if not crm_file.exists() or not proc_file.exists():
-        logger.warning(f"Skipping {proc} - processed files not found")
+
+    if not crm_file.exists():
+        logger.warning(f"Skipping {proc} - CRM file not found")
         continue
 
+    # --- Load CRM ---
+    crm_df = pd.read_excel(crm_file)
+    crm_df['crm_date'] = pd.to_datetime(crm_df['Created On']).dt.date
+    crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
+    crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
+    crm_df['crm_lastname'] = crm_df['Last Name (Account) (Account)'].fillna('')
+    crm_df['crm_tp'] = crm_df['tp'].fillna('')
+    crm_df['crm_currency'] = crm_df['Currency'].replace({'US Dollar': 'USD'})
+    crm_df['crm_amount'] = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
 
-    if crm_file.exists():
-        crm_df_part = pd.read_excel(crm_file)
-        crm_df = pd.read_excel(crm_file)
-        crm_df['crm_date'] = pd.to_datetime(crm_df['Created On']).dt.date
-        crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
-        crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
-        crm_df['crm_lastname']  = crm_df['Last Name (Account) (Account)'].fillna('')
-        crm_df['crm_tp']        = crm_df['tp'].fillna('')
-        crm_df['crm_last4']     = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
-        crm_df['crm_currency']  = crm_df['Currency'].replace({'US Dollar': 'USD'})
-        crm_df['crm_amount']    = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
-        psp_map = {
-            'netteler': 'neteller',
-            'skrilll': 'skrill',
-            'skrill ': 'skrill',
-            'skrll': 'skrill',
-            'paypal ': 'paypal',
-            'safecharge ': 'safecharge',
-            'powercash ': 'powercash',
-            'shift4 ': 'shift4',
-            # Add other known mis-spellings here
-        }
-        crm_df['crm_processor_name'] = (
-            crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
+    # Handle missing 'CC Last 4 Digits'
+    if 'CC Last 4 Digits' in crm_df.columns:
+        crm_df['crm_last4'] = (
+            crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
         )
-        # ✅ Add this to debug processor label + TP
-        print(
-            f"[{proc.upper()}] CRM rows: {len(crm_df)}, PSPs: {crm_df['crm_processor_name'].unique()}, TPs: {crm_df['crm_tp'].unique()}")
-        crm_dfs.append(crm_df)
+    else:
+        logger.warning(f"'CC Last 4 Digits' column not found in CRM file for {proc}. Setting empty values.")
+        crm_df['crm_last4'] = ''
 
-    if proc_file.exists():
-        proc_df_part = pd.read_excel(proc_file) if proc_file.suffix == ".xlsx" else pd.read_csv(proc_file)
+    # Normalize PSP names
+    psp_map = {
+        'netteler': 'neteller',
+        'skrilll': 'skrill',
+        'skrill ': 'skrill',
+        'skrll': 'skrill',
+        'paypal ': 'paypal',
+        'safecharge ': 'safecharge',
+        'powercash ': 'powercash',
+        'shift4 ': 'shift4',
+    }
+    crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
+
+    print(f"[{proc.upper()}] CRM rows: {len(crm_df)}, PSPs: {crm_df['crm_processor_name'].unique()}, TPs: {crm_df['crm_tp'].unique()}")
+    crm_dfs.append(crm_df)
+
+    # --- Load Processor ---
+    if not proc_file.exists():
+        logger.warning(f"Processor file for {proc} not found. Continuing with CRM only.")
+        proc_df = pd.DataFrame(columns=[
+            'proc_date', 'proc_emails', 'proc_tp', 'proc_last4_digits',
+            'proc_currency', 'proc_total_amount', 'proc_processor_name',
+            'proc_firstname', 'proc_lastname'
+        ])
+        proc_df['proc_processor_name'] = proc
+    else:
         if proc_file.suffix == ".csv":
             proc_df = pd.read_csv(proc_file)
         else:
@@ -101,30 +114,17 @@ for proc in processors:
 
         proc_df['proc_date'] = pd.to_datetime(proc_df['date']).dt.date
         proc_df['proc_emails'] = proc_df['email'].fillna('').astype(str)
-
-        # extract processor TP
-        if 'tp' in proc_df.columns:
-            proc_df['proc_tp'] = proc_df['tp'].astype(str).fillna('')
-        else:
-            proc_df['proc_tp'] = ''
-
+        proc_df['proc_tp'] = proc_df['tp'].astype(str).fillna('') if 'tp' in proc_df.columns else ''
         proc_df['proc_last4_digits'] = proc_df['last_4cc'].astype(str).str.zfill(4).str[-4:]
         proc_df['proc_currency'] = proc_df['currency']
         proc_df['proc_total_amount'] = pd.to_numeric(proc_df['amount'], errors='coerce').abs()
-        proc_df['proc_processor_name'] = proc_df['processor_name'].fillna(proc)
+        proc_df['proc_processor_name'] = proc_df.get('processor_name', proc)
 
-        # safely populate first_name / last_name
-        if 'first_name' in proc_df.columns and hasattr(proc_df['first_name'], "fillna"):
-            proc_df['proc_firstname'] = proc_df['first_name'].fillna('').astype(str)
-        else:
-            proc_df['proc_firstname'] = ''
+        proc_df['proc_firstname'] = proc_df['first_name'].fillna('').astype(str) if 'first_name' in proc_df else ''
+        proc_df['proc_lastname'] = proc_df['last_name'].fillna('').astype(str) if 'last_name' in proc_df else ''
 
-        if 'last_name' in proc_df.columns and hasattr(proc_df['last_name'], "fillna"):
-            proc_df['proc_lastname'] = proc_df['last_name'].fillna('').astype(str)
-        else:
-            proc_df['proc_lastname'] = ''
+    proc_dfs.append(proc_df)
 
-        proc_dfs.append(proc_df)
 
 # Handle case where no files were found
 if not crm_dfs or not proc_dfs:

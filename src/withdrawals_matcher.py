@@ -245,6 +245,20 @@ class ReconciliationEngine:
             if idx % 10 == 0:
                 self._update_eta(len(crm_df), idx + 1)
 
+            proc_name = str(row.get('crm_processor_name', '')).strip().lower()
+            proc_rows_for_processor = processor_df[
+                processor_df['proc_processor_name'].str.lower().str.strip() == proc_name
+                ]
+
+            if proc_rows_for_processor.empty:
+                unmatched = self._create_unmatched_crm_record(row)
+                ...
+                self.diagnostics.append({
+                    'crm_idx': idx,
+                    'failure_reason': 'No processor data found for this CRM processor'
+                })
+                continue
+
         # unmatched processor‐only rows
         for idx, row in processor_df.iterrows():
             if idx not in used_proc:
@@ -297,6 +311,8 @@ class ReconciliationEngine:
           • SafeCharge / PowerCash: standard logic
           • PayPal: paypal logic
           • Shift4: shift4 logic
+          • Skrill/Neteller: skrill_neteller logic
+          • Bitpay:bitpay logic
         """
         proc = (crm_row.get('crm_processor_name') or '').strip().lower()
 

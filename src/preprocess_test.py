@@ -436,25 +436,22 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 
     df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
 
-    if normalized_processor == "neteller":
-        psp_mask = (
-                df["PSP name"].str.lower().eq("neteller")
-                |
-                df["Method of Payment"].str.lower().str.contains("neteller", na=False)
+    if normalized_processor in ["zotapay", "paymentasia"]:
+        name_has_chinese = (
+                df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
+                df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
         )
 
-    elif normalized_processor == "trustpayments":
-        psp_mask = df["PSP name"] == "acquiringcom"
-    elif normalized_processor == "zotapay":
-        psp_mask = df["PSP name"] == "zotapay"
-    elif normalized_processor == "paymentasia":
-        psp_mask = df["PSP name"] == "pamy"
+        # Filter by known indicators
+        name_col_match = df["Name"].str.lower() == "withdrawal"
+        psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup", case=False, na=False)
 
+        full_mask = name_col_match & (psp_match | method_match)
+        df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
-
-    tx_type = "deposit" if transaction_type == "deposit" else "withdrawal"
-    df = df[(df["Name"].str.lower() == tx_type) & psp_mask].reset_index(drop=True)
+        df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
 
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({
@@ -464,8 +461,11 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        folder = f"{normalized_processor}_{transaction_type}s.xlsx"
-        out_path = PROCESSED_CRM_DIR / normalized_processor / date_str / folder
+        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay",
+                                                                        "paymentasia"] else normalized_processor
+        folder = f"{folder_name}_{transaction_type}s.xlsx"
+        out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
+
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         if transaction_type == "withdrawal" and "transaction_id" in df.columns:
@@ -488,7 +488,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         df.to_excel(out_path, index=False)
         print(f"✅ Saved cleaned CRM {processor_name} {transaction_type}s to {out_path}")
 
-    return df
+    return df.reset_index(drop=True)
+
 
 
 

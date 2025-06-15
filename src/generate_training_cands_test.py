@@ -62,8 +62,18 @@ else:
 # --- Load processed files ---
 crm_dfs, proc_dfs = [], []
 
+seen_combined_crm = False
+
 for proc in processors:
-    folder_name = "zotapay_paymentasia" if proc in ["zotapay", "paymentasia"] else proc
+    # Only load zotapay_paymentasia CRM once
+    if proc in ["zotapay", "paymentasia"]:
+        if seen_combined_crm:
+            continue
+        folder_name = "zotapay_paymentasia"
+        seen_combined_crm = True
+    else:
+        folder_name = proc
+
     crm_file = PROCESSED_CRM_DIR / folder_name / date / f"{folder_name}_withdrawals.xlsx"
     proc_file = PROCESSED_PROCESSOR_DIR / folder_name / date / f"{folder_name}_withdrawals.xlsx"
 

@@ -111,6 +111,86 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
 
         return df.reset_index(drop=True)
 
+
+def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
+    import pandas as pd
+
+    processor_tag = processor.lower()  # 🔄 Change: Save files under their actual name, not combined tag
+
+    df.columns = df.columns.str.strip().str.replace(u'\xa0', ' ', regex=False)
+
+    # Handle Zotapay
+    if processor.lower() == "zotapay":
+        print("✅ Entered Zotapay block")
+
+        if df.columns[0].lower() not in ["type", "status", "order amount"]:
+            df.columns = df.iloc[0].astype(str).str.strip()
+            df = df.iloc[1:].copy()
+
+        if "Type" not in df.columns or "Status" not in df.columns:
+            print("❌ Zotapay: required columns missing.")
+            return pd.DataFrame()
+
+        df = df[(df["Type"].astype(str).str.upper() == "PAYOUT") &
+                (df["Status"].astype(str).str.upper() == "APPROVED")]
+
+        df = df.rename(columns={
+            "Order Amount": "amount",
+            "Order Currency": "currency",
+            "Ended At": "date",
+            "Customer Email": "email",
+            "Customer Bank Account Name": "full_name",
+            "Merchant Order ID": "tp"
+        })
+
+        df["full_name"] = df["full_name"].astype(str).str.strip()
+        df["first_name"] = df["full_name"].str[:2]
+        df["last_name"] = df["full_name"].str[2:]
+        df["email"] = df["email"].fillna("")
+        df["tp"] = df["tp"].fillna("")
+
+    # Handle PaymentAsia
+    elif processor.lower() == "paymentasia":
+        print("✅ Entered PaymentAsia block")
+
+        required_cols = ["Status", "Order Amount", "Completed Time", "Beneficiary Name"]
+        normalized_cols = [col.strip().replace(u'\xa0', ' ') for col in df.columns]
+        missing_cols = [col for col in required_cols if col not in normalized_cols]
+
+        if missing_cols:
+            print(f"❌ PaymentAsia: missing required columns: {missing_cols}")
+            return pd.DataFrame()
+
+        df = df[df["Status"].astype(str).str.upper() == "SUCCESS"]
+
+        df = df.rename(columns={
+            "Order Amount": "amount",
+            "Order Currency": "currency",
+            "Completed Time": "date",
+            "Beneficiary Name": "full_name",
+            "Request Reference": "tp"
+        })
+
+        df["full_name"] = df["full_name"].astype(str).str.strip()
+        full_split = df["full_name"].str.split(n=2, expand=True)
+        df["first_name"] = full_split[0].fillna("") + " " + full_split[1].fillna("")
+        df["last_name"] = full_split[2].fillna("")
+        df["email"] = ""
+        df["tp"] = df["tp"].fillna("")
+
+    # Final clean-up
+    df["amount"] = df["amount"].astype(str).str.replace(",", "", regex=False)
+    df["last_4cc"] = ""
+    df["processor_name"] = processor_tag
+
+    return df[[
+        "amount", "currency", "date", "last_4cc",
+        "email", "first_name", "last_name", "processor_name", "tp"
+    ]]
+
+
+
+
 def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     if processor.lower() == "paypal":
         df.columns = df.columns.str.strip()
@@ -396,6 +476,11 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         return df
 
 
+
+
+    elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
+        return patch_standardize_zotapay_paymentasia_withdrawals(df, processor)
+
     return pd.DataFrame()
 
 
@@ -565,8 +650,9 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         # Only save if we have data
         if df_clean is not None and not df_clean.empty:
             date_str = extract_date_from_filename(filepath)
-            out_filename = f"{processor_name}_{transaction_type}s.xlsx"
-            out_path = PROCESSED_PROCESSOR_DIR / processor_name / date_str / out_filename
+            folder_name = processor_name.lower()
+            out_filename = f"{folder_name}_{transaction_type}s.xlsx"
+            out_path = PROCESSED_PROCESSOR_DIR / folder_name / date_str / out_filename
             out_path.parent.mkdir(parents=True, exist_ok=True)
             df_clean.to_excel(out_path, index=False)
             print(f"✅ Saved cleaned {processor_name} {transaction_type}s to {out_path}")

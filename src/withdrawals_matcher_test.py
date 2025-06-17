@@ -161,11 +161,22 @@ class ReconciliationEngine:
     def convert_amount(self, amount, from_cur, to_cur):
         if from_cur == to_cur:
             return amount, 1.0
-        rate = self.exchange_rate_map.get((from_cur, to_cur))
 
-        if rate is None:
-            self.logger.warning(f"Missing exchange rate: {from_cur} -> {to_cur}")
-        return (amount * rate, rate) if rate else (None, None)
+        # Try direct rate
+        rate = self.exchange_rate_map.get((from_cur, to_cur))
+        if rate:
+            return amount * rate, rate
+
+        # Try USD bridge if available
+        usd_rate1 = self.exchange_rate_map.get(('USD', to_cur))
+        usd_rate2 = self.exchange_rate_map.get((from_cur, 'USD'))
+
+        if usd_rate1 and usd_rate2:
+            usd_amount = amount * usd_rate2
+            return usd_amount * usd_rate1, usd_rate2 * usd_rate1
+
+        self.logger.error(f"Missing conversion: {from_cur}->{to_cur}")
+        return None, None
 
     def generate_report(self):
         return {
@@ -190,8 +201,20 @@ class ReconciliationEngine:
                 continue
             if self._check_timeout():
                 break
+            proc_name = str(row.get('crm_processor_name', '')).strip().lower()
+            print(f"🧪 CRM idx={idx} processor_name: '{proc_name}'")
+
             try:
-                match, diag = self._match_crm_row(row, proc_dict, last4_map, used_proc)
+                result = self._match_crm_row(row, proc_dict, last4_map, used_proc)
+                if str(row.get("crm_processor_name", "")).strip().lower() == "zotapay_paymentasia":
+                    self.logger.debug(
+                        f"[DEBUG] Trying to match Zota+PA row: TP={row.get('crm_tp')}, Email={row.get('crm_email')}, Amount={row.get('crm_amount')}")
+
+                if result is None or not isinstance(result, tuple) or len(result) != 2:
+                    raise ValueError(f"_match_crm_row() returned invalid result: {result}")
+
+                match, diag = result
+
             except Exception as e:
                 self.logger.error(f"Error processing row {idx}: {e}")
                 match, diag = None, {'failure_reason': str(e)}
@@ -312,7 +335,8 @@ class ReconciliationEngine:
           • PayPal: paypal logic
           • Shift4: shift4 logic
           • Skrill/Neteller: skrill_neteller logic
-          • Bitpay:bitpay logic
+          • Bitpay: bitpay logic
+          • Zotapay/PaymentAsia combined: zotapay_paymentasia logic
         """
         proc = (crm_row.get('crm_processor_name') or '').strip().lower()
 
@@ -321,26 +345,39 @@ class ReconciliationEngine:
             proc = 'safecharge'
 
         if proc == 'paypal':
-            return self._match_paypal_row(crm_row, proc_dict, last4_map, used,
-                                          self.get_processor_config('paypal'))
+            return self._match_paypal_row(
+                crm_row, proc_dict, last4_map, used,
+                self.get_processor_config('paypal')
+            )
 
         if proc == 'shift4':
-            return self._match_shift4_row(crm_row, proc_dict, last4_map, used,
-                                          self.get_processor_config('shift4'))
-        if proc in ("skrill", "neteller"):
-            # pass proc (“skrill” or “neteller”) into the matcher so we tag the right name
+            return self._match_shift4_row(
+                crm_row, proc_dict, last4_map, used,
+                self.get_processor_config('shift4')
+            )
+
+        if proc in ('skrill', 'neteller'):
             return self._match_skrill_neteller_row(
                 crm_row, proc_dict, last4_map, used,
                 self.get_processor_config(proc),
                 processor_name=proc
             )
-        if proc == 'bitpay':
-            return self._match_bitpay_row(crm_row, proc_dict, last4_map, used,
-                                          self.get_processor_config('bitpay'))
 
-        # everything else uses the standard (SafeCharge/PowerCash) logic
-        return self._match_standard_row(crm_row, proc_dict, last4_map, used,
-                                        self.get_processor_config(proc))
+        if proc == 'bitpay':
+            return self._match_bitpay_row(
+                crm_row, proc_dict, last4_map, used,
+                self.get_processor_config('bitpay')
+            )
+
+        if proc == "zotapay_paymentasia":
+            print(f"Routing to _match_zotapay_paymentasia_row for CRM TP: {crm_row.get('crm_tp')}")
+            return self._match_zotapay_paymentasia_row(crm_row, proc_dict, last4_map, used)
+
+        # Fallback to default standard matcher
+        return self._match_standard_row(
+            crm_row, proc_dict, last4_map, used,
+            self.get_processor_config(proc)
+        )
 
     def _match_standard_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
@@ -506,6 +543,59 @@ class ReconciliationEngine:
                 'matched_proc_indices': [r['index'] for r in c]
             }, {'best_combo': best_combo}
 
+    def _match_zotapay_paymentasia_row(self, crm_row, proc_dict, last4_map, used):
+        crm_tp = str(crm_row.get('crm_tp', '')).strip()
+        crm_amt = abs(crm_row['crm_amount'])
+        crm_cur = str(crm_row['crm_currency']).strip().upper()
+        crm_email = str(crm_row['crm_email']).strip().lower()
+        crm_last4 = str(crm_row.get('crm_last4', '')).strip()
+
+        for idx, row in proc_dict.items():
+            if idx in used:
+                continue
+
+            proc_tp = str(row.get('proc_tp', '')).strip()
+            proc_amt = abs(row.get('proc_total_amount', 0))
+            proc_cur = str(row.get('proc_currency', '')).strip().upper()
+            proc_email = str(row.get('proc_emails', '')).strip().lower()
+
+            # Match only by TP
+            if proc_tp == crm_tp:
+                payment_status = int(proc_amt == crm_amt and proc_cur == crm_cur)
+                comment = "" if payment_status else f"TP matched, but amount/currency mismatch"
+                return {
+                    'crm_date': crm_row.get('crm_date'),
+                    'crm_email': crm_email,
+                    'crm_firstname': crm_row.get('crm_firstname', ''),
+                    'crm_lastname': crm_row.get('crm_lastname', ''),
+                    'crm_last4': crm_last4,
+                    'crm_currency': crm_cur,
+                    'crm_amount': crm_amt,
+                    'crm_processor_name': crm_row.get('crm_processor_name', 'zotapay_paymentasia'),
+                    'proc_dates': [row.get('proc_date')],
+                    'proc_emails': [proc_email],
+                    'proc_firstnames': [row.get('proc_firstname', '')],
+                    'proc_lastnames': [row.get('proc_lastname', '')],
+                    'proc_last4_digits': [row.get('proc_last4_digits')],
+                    'proc_currencies': [proc_cur],
+                    'proc_total_amounts': [proc_amt],
+                    'proc_processor_name': row.get('proc_processor_name', 'zotapay_paymentasia'),
+                    'converted_amount_total': proc_amt,
+                    'exchange_rates': [1.0],
+                    'email_similarity_avg': 1.0,
+                    'last4_match': False,
+                    'name_fallback_used': False,
+                    'exact_match_used': True,
+                    'converted': False,
+                    'combo_len': 1,
+                    'match_status': 1,
+                    'payment_status': payment_status,
+                    'comment': comment,
+                    'matched_proc_indices': [idx]
+                }, {}
+
+        return None, {'failure_reason': 'No zotapay_paymentasia match'}
+
     def _match_bitpay_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_cur = crm_row['crm_currency']
         crm_amt = crm_row['crm_amount']
@@ -611,7 +701,6 @@ class ReconciliationEngine:
             'matched_proc_indices': [r['index'] for r in c]
         }, {'bitpay_combo': best}
 
-        return None, {'failure_reason': 'No valid combination found'}
 
     def _create_unmatched_crm_record(self, crm_row):
         return {

@@ -61,7 +61,6 @@ else:
 
 # --- Load processed files ---
 crm_dfs, proc_dfs = [], []
-
 seen_combined_crm = False
 
 for proc in processors:
@@ -96,8 +95,13 @@ for proc in processors:
         crm_df['crm_last4'] = ''
 
     psp_map = {
-        'netteler': 'neteller', 'skrilll': 'skrill', 'skrill ': 'skrill', 'skrll': 'skrill',
-        'paypal ': 'paypal', 'safecharge ': 'safecharge', 'powercash ': 'powercash', 'shift4 ': 'shift4'
+        'netteler': 'neteller', 'skrilll': 'skrill', 'skrill ': 'skrill',
+        'skrll': 'skrill', 'paypal ': 'paypal', 'safecharge ': 'safecharge',
+        'powercash ': 'powercash', 'shift4 ': 'shift4',
+        'zotapay': 'zotapay_paymentasia',
+        'paymentasia': 'zotapay_paymentasia',
+        'pamy' : 'zotapay_paymentasia'
+
     }
     crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
 

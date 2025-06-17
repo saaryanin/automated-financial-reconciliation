@@ -143,6 +143,7 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             "Merchant Order ID": "tp"
         })
 
+
         df["full_name"] = df["full_name"].astype(str).str.strip()
         df["first_name"] = df["full_name"].str[:2]
         df["last_name"] = df["full_name"].str[2:]

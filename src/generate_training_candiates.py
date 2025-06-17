@@ -61,9 +61,18 @@ else:
 
 # --- Load processed files ---
 crm_dfs, proc_dfs = [], []
+seen_combined_crm = False
 
 for proc in processors:
-    folder_name = "zotapay_paymentasia" if proc in ["zotapay", "paymentasia"] else proc
+    # Only load zotapay_paymentasia CRM once
+    if proc in ["zotapay", "paymentasia"]:
+        if seen_combined_crm:
+            continue
+        folder_name = "zotapay_paymentasia"
+        seen_combined_crm = True
+    else:
+        folder_name = proc
+
     crm_file = PROCESSED_CRM_DIR / folder_name / date / f"{folder_name}_withdrawals.xlsx"
     proc_file = PROCESSED_PROCESSOR_DIR / folder_name / date / f"{folder_name}_withdrawals.xlsx"
 
@@ -86,8 +95,13 @@ for proc in processors:
         crm_df['crm_last4'] = ''
 
     psp_map = {
-        'netteler': 'neteller', 'skrilll': 'skrill', 'skrill ': 'skrill', 'skrll': 'skrill',
-        'paypal ': 'paypal', 'safecharge ': 'safecharge', 'powercash ': 'powercash', 'shift4 ': 'shift4'
+        'netteler': 'neteller', 'skrilll': 'skrill', 'skrill ': 'skrill',
+        'skrll': 'skrill', 'paypal ': 'paypal', 'safecharge ': 'safecharge',
+        'powercash ': 'powercash', 'shift4 ': 'shift4',
+        'zotapay': 'zotapay_paymentasia',
+        'paymentasia': 'zotapay_paymentasia',
+        'pamy' : 'zotapay_paymentasia'
+
     }
     crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
 

@@ -86,6 +86,16 @@ PROCESSOR_CONFIGS = {
         tolerance=0.05,
         matching_logic="bitpay"
     ),
+'   zotapay_paymentasia': ProcessorConfig(  # Add this new configuration
+        email_threshold=0.75,  # Not critical since we're matching by TP
+        require_last4=False,
+        require_email=False,
+        enable_name_fallback=False,
+        enable_exact_match=True,
+        max_combo=1,  # Since we're doing 1:1 matching
+        tolerance=0.02,  # 2% tolerance
+        matching_logic="zotapay_paymentasia"
+    ),
 
     # ... other processors ...
 }
@@ -544,58 +554,108 @@ class ReconciliationEngine:
             }, {'best_combo': best_combo}
 
     def _match_zotapay_paymentasia_row(self, crm_row, proc_dict, last4_map, used):
+        # Get processor-specific configuration
+        proc_config = self.get_processor_config("zotapay_paymentasia")
+
         crm_tp = str(crm_row.get('crm_tp', '')).strip()
         crm_amt = abs(crm_row['crm_amount'])
         crm_cur = str(crm_row['crm_currency']).strip().upper()
-        crm_email = str(crm_row['crm_email']).strip().lower()
-        crm_last4 = str(crm_row.get('crm_last4', '')).strip()
+
+        # If CRM TP is missing, skip matching
+        if not crm_tp:
+            return None, {'failure_reason': 'Missing CRM TP'}
+
+        # Tolerance settings
+        abs_tol = 0.1  # Absolute tolerance for same currency
+        rel_tol = proc_config.tolerance * crm_amt  # Relative tolerance for converted amounts
 
         for idx, row in proc_dict.items():
             if idx in used:
                 continue
 
             proc_tp = str(row.get('proc_tp', '')).strip()
+            if proc_tp != crm_tp:
+                continue
+
+            # Get processor values
             proc_amt = abs(row.get('proc_total_amount', 0))
             proc_cur = str(row.get('proc_currency', '')).strip().upper()
-            proc_email = str(row.get('proc_emails', '')).strip().lower()
 
-            # Match only by TP
-            if proc_tp == crm_tp:
-                payment_status = int(proc_amt == crm_amt and proc_cur == crm_cur)
-                comment = "" if payment_status else f"TP matched, but amount/currency mismatch"
-                return {
-                    'crm_date': crm_row.get('crm_date'),
-                    'crm_email': crm_email,
-                    'crm_firstname': crm_row.get('crm_firstname', ''),
-                    'crm_lastname': crm_row.get('crm_lastname', ''),
-                    'crm_last4': crm_last4,
-                    'crm_currency': crm_cur,
-                    'crm_amount': crm_amt,
-                    'crm_processor_name': crm_row.get('crm_processor_name', 'zotapay_paymentasia'),
-                    'proc_dates': [row.get('proc_date')],
-                    'proc_emails': [proc_email],
-                    'proc_firstnames': [row.get('proc_firstname', '')],
-                    'proc_lastnames': [row.get('proc_lastname', '')],
-                    'proc_last4_digits': [row.get('proc_last4_digits')],
-                    'proc_currencies': [proc_cur],
-                    'proc_total_amounts': [proc_amt],
-                    'proc_processor_name': row.get('proc_processor_name', 'zotapay_paymentasia'),
-                    'converted_amount_total': proc_amt,
-                    'exchange_rates': [1.0],
-                    'email_similarity_avg': 1.0,
-                    'last4_match': False,
-                    'name_fallback_used': False,
-                    'exact_match_used': True,
-                    'converted': False,
-                    'combo_len': 1,
-                    'match_status': 1,
-                    'payment_status': payment_status,
-                    'comment': comment,
-                    'matched_proc_indices': [idx]
-                }, {}
+            # Convert amount if currencies differ
+            if proc_cur == crm_cur:
+                converted_amt = proc_amt
+                rate = 1.0
+                converted = False
+                tolerance = abs_tol
+            else:
+                converted_amt, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
+                if converted_amt is None:
+                    # Conversion failed - proceed with direct comparison
+                    converted_amt = proc_amt
+                    rate = 1.0
+                    converted = False
+                    tolerance = abs_tol
+                else:
+                    converted = True
+                    tolerance = rel_tol
 
-        return None, {'failure_reason': 'No zotapay_paymentasia match'}
+            # Check if amounts match with tolerance
+            diff = converted_amt - crm_amt
+            abs_diff = abs(diff)
+            amount_match = abs_diff <= tolerance
+            payment_status = 1 if amount_match else 0
 
+            # Generate comment
+            if amount_match:
+                comment = ""
+            else:
+                if diff < 0:
+                    comment = f"Client received less {abs_diff:.2f} {crm_cur}"
+                else:
+                    comment = f"Client received more {abs_diff:.2f} {crm_cur}"
+
+                if converted:
+                    comment += f" (Converted: {proc_amt:.2f} {proc_cur} → {converted_amt:.2f} {crm_cur})"
+                elif proc_cur != crm_cur:
+                    comment += " (No conversion rate available)"
+
+            return {
+                # CRM data
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': str(crm_row.get('crm_email', '')).strip().lower(),
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': str(crm_row.get('crm_last4', '')).strip(),
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': crm_row.get('crm_processor_name', 'zotapay_paymentasia'),
+
+                # Processor data
+                'proc_dates': [row.get('proc_date')],
+                'proc_emails': [str(row.get('proc_emails', '')).strip().lower()],
+                'proc_firstnames': [row.get('proc_firstname', '')],
+                'proc_lastnames': [row.get('proc_lastname', '')],
+                'proc_last4_digits': [row.get('proc_last4_digits')],
+                'proc_currencies': [proc_cur],
+                'proc_total_amounts': [proc_amt],
+                'proc_processor_name': row.get('proc_processor_name', 'zotapay_paymentasia'),
+
+                # Matching details
+                'converted_amount_total': converted_amt,
+                'exchange_rates': [rate],
+                'email_similarity_avg': 1.0,
+                'last4_match': False,
+                'name_fallback_used': False,
+                'exact_match_used': True,
+                'converted': converted,
+                'combo_len': 1,
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [idx]
+            }, {}
+
+        return None, {'failure_reason': f'No zotapay_paymentasia match for TP: {crm_tp}'}
     def _match_bitpay_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_cur = crm_row['crm_currency']
         crm_amt = crm_row['crm_amount']

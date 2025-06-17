@@ -114,9 +114,9 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
 
 def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
     import pandas as pd
+    import re
 
-    processor_tag = processor.lower()  # 🔄 Change: Save files under their actual name, not combined tag
-
+    processor_tag = processor.lower()
     df.columns = df.columns.str.strip().str.replace(u'\xa0', ' ', regex=False)
 
     # Handle Zotapay
@@ -143,12 +143,18 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             "Merchant Order ID": "tp"
         })
 
+        # Robust TP extraction
+        df["tp"] = df["tp"].astype(str).apply(lambda x: re.search(r'\d{7,8}', x).group(0)
+        if re.search(r'\d{7,8}', x) else "")
+
+        # Standardize date format
+        df["date"] = pd.to_datetime(df["date"], errors='coerce', utc=True)
+        df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
         df["full_name"] = df["full_name"].astype(str).str.strip()
         df["first_name"] = df["full_name"].str[:2]
         df["last_name"] = df["full_name"].str[2:]
         df["email"] = df["email"].fillna("")
-        df["tp"] = df["tp"].fillna("")
 
     # Handle PaymentAsia
     elif processor.lower() == "paymentasia":
@@ -172,15 +178,25 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             "Request Reference": "tp"
         })
 
+        # Robust TP extraction
+        df["tp"] = df["tp"].astype(str).apply(lambda x: re.search(r'\d{7,8}', x).group(0)
+        if re.search(r'\d{7,8}', x) else "")
+
+        # Standardize date format
+        df["date"] = pd.to_datetime(df["date"], errors='coerce', infer_datetime_format=True)
+        df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
         df["full_name"] = df["full_name"].astype(str).str.strip()
         full_split = df["full_name"].str.split(n=2, expand=True)
         df["first_name"] = full_split[0].fillna("") + " " + full_split[1].fillna("")
         df["last_name"] = full_split[2].fillna("")
         df["email"] = ""
-        df["tp"] = df["tp"].fillna("")
 
     # Final clean-up
-    df["amount"] = df["amount"].astype(str).str.replace(",", "", regex=False)
+    df["amount"] = pd.to_numeric(
+        df["amount"].astype(str).str.replace(",", "", regex=False),
+        errors='coerce'
+    )
     df["last_4cc"] = ""
     df["processor_name"] = processor_tag
 
@@ -188,8 +204,6 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
         "amount", "currency", "date", "last_4cc",
         "email", "first_name", "last_name", "processor_name", "tp"
     ]]
-
-
 
 
 def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:

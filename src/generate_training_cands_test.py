@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('TrainingGenerator')
 
 # --- Configuration ---
-date = "2025-02-10"
+date = "2025-04-10"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia"

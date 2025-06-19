@@ -7,6 +7,23 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 import logging
 
 
+def clean_amount(val):
+    """
+    Convert accounting-style amounts like '(100.00)' to -100.00,
+    and plain '100.00' or '-100.00' to numbers.
+    """
+    s = str(val).replace(',', '').strip()
+    # Parentheses denote negative numbers
+    if re.match(r'^\(\s*-?[\d,\.]+\s*\)$', s):
+        s = s.strip('()')
+        try:
+            return -float(s)
+        except Exception:
+            return None
+    try:
+        return float(s)
+    except Exception:
+        return None
 # ----------------------------
 # Processor Handling
 # ----------------------------
@@ -348,7 +365,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df = df[
             (df["Operation Type"].str.lower() == "referral credit") &
             (df["Response"].str.lower() == "completed successfully")
-        ]
+            ]
         if df.empty:
             print("No Shift4 withdrawals found after filtering.")
             return pd.DataFrame()
@@ -370,6 +387,9 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "Amount": "amount",
             "Cardholder Email": "email"
         })
+
+        # --- FIX: Make sure amount is numeric even if in (100.00) form
+        df["amount"] = df["amount"].apply(clean_amount)
 
         # 4) extract last-4 digits from the card number
         df["last_4cc"] = df["Card Number"].astype(str).str.extract(r"(\d{4})$").fillna("")
@@ -394,6 +414,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "last_name",
             "processor_name"
         ]]
+
     elif processor.lower() in ("skrill", "neteller"):
         df.columns = df.columns.str.strip()
 

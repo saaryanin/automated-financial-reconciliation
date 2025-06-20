@@ -520,6 +520,45 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
     return pd.DataFrame()
 
 
+def handle_withdrawal_cancellations(df):
+    print("Running handle_withdrawal_cancellations!")
+    if "Name" not in df.columns:
+        return df
+
+    mask_cancel = df["Name"].str.lower().str.replace(' ', '') == "withdrawalcancelled"
+    mask_withdrawal = df["Name"].str.lower() == "withdrawal"
+    cancels = df[mask_cancel].copy()
+    withdrawals = df[mask_withdrawal].copy()
+
+    print("---- CANCELLATION DEBUGGING ----")
+    print("CANCEL ROWS:")
+    print(cancels[["Name", "Amount", "tp", "Email (Account) (Account)"]])
+    print("WITHDRAWAL ROWS:")
+    print(withdrawals[["Name", "Amount", "tp", "Email (Account) (Account)"]])
+    print("---- END DEBUG ----")
+
+    to_drop = set()
+
+    for idx_cancel, row_cancel in cancels.iterrows():
+        # Match withdrawals by 'tp'
+        matched = withdrawals[withdrawals["tp"] == row_cancel["tp"]]
+        if matched.empty:
+            print(f"No match for cancelled withdrawal tp={row_cancel['tp']}")
+            continue
+        # Find a row where the amounts cancel out
+        for idx_withdrawal, row_withdrawal in matched.iterrows():
+            amt_cancel = pd.to_numeric(row_cancel["Amount"], errors='coerce')
+            amt_withdrawal = pd.to_numeric(row_withdrawal["Amount"], errors='coerce')
+            # If they cancel each other out
+            if abs(amt_cancel + amt_withdrawal) < 1e-6:
+                print(
+                    f"Cancelling withdrawal (idx={idx_withdrawal}) and cancel row (idx={idx_cancel}) for tp={row_cancel['tp']}")
+                to_drop.update([idx_cancel, idx_withdrawal])
+                break
+
+    df = df.drop(index=list(to_drop))
+    return df
+
 
 # ----------------------------
 # CRM Handling
@@ -562,17 +601,19 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
                 df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
                 df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
         )
-
         # Filter by known indicators
         name_col_match = df["Name"].str.lower() == "withdrawal"
         psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
         method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup", case=False, na=False)
-
         full_mask = name_col_match & (psp_match | method_match)
         df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
-        df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
+        if transaction_type == "withdrawal":
+            df = df[df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"]) & psp_mask].reset_index(
+                drop=True)
+        else:
+            df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
 
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({
@@ -580,36 +621,47 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             "US Dollar": "USD"
         })
 
+
+    # Drop 'transaction_id' column AFTER handling cancellations
+    if "transaction_id" in df.columns:
+        df = df.drop(columns=["transaction_id"])
+
+    # --- Only keep needed columns for withdrawal output ---
+    if transaction_type == "withdrawal":
+        print(f"After filtering, unique 'Name' values: {df['Name'].unique().tolist()}")
+        print(f"Counts:\n{df['Name'].value_counts()}")
+        print("First few rows before handle_withdrawal_cancellations:")
+        print(df.head(10))
+        df = handle_withdrawal_cancellations(df)
+        print("First few rows after handle_withdrawal_cancellations:")
+        print(df.head(10))
+        needed_columns = [
+            "Created On",
+            "First Name (Account) (Account)",
+            "Last Name (Account) (Account)",
+            "Email (Account) (Account)",
+            "tp",
+            "Amount",
+            "Currency",
+            "Method of Payment",
+            "PSP name",
+            "CC Last 4 Digits",
+            "Name"  # 🟢 Optional: keep 'Name' for traceability (remove if not wanted)
+        ]
+        # Only keep columns that exist in the df
+        df = df[[col for col in needed_columns if col in df.columns]]
+
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay",
-                                                                        "paymentasia"] else normalized_processor
+        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
         folder = f"{folder_name}_{transaction_type}s.xlsx"
         out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
-
         out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if transaction_type == "withdrawal" and "transaction_id" in df.columns:
-            needed_columns = [
-                "Created On",
-                "First Name (Account) (Account)",
-                "Last Name (Account) (Account)",
-                "Email (Account) (Account)",
-                "tp",
-                "Amount",
-                "Currency",
-                "Method of Payment",
-                "PSP name",
-                "CC Last 4 Digits"
-            ]
-            if "transaction_id" in df.columns:
-                df = df.drop(columns=["transaction_id"])
-            df = df[[col for col in needed_columns if col in df.columns]]
-
         df.to_excel(out_path, index=False)
         print(f"✅ Saved cleaned CRM {processor_name} {transaction_type}s to {out_path}")
 
     return df.reset_index(drop=True)
+
 
 
 

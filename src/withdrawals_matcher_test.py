@@ -35,7 +35,14 @@ PROCESSOR_CONFIGS = {
     'safecharge': ProcessorConfig(
         email_threshold=0.75,
         require_last4=True,
-        require_email=True
+        require_email=True,
+        tolerance=0.01,
+    ),
+    'powercash': ProcessorConfig(
+        email_threshold=0.75,
+        require_last4=True,
+        require_email=True,
+        tolerance=0.01,
     ),
     'paypal': ProcessorConfig(
         email_threshold=0.8,
@@ -53,7 +60,7 @@ PROCESSOR_CONFIGS = {
         enable_name_fallback=True,
         enable_exact_match=True,
         max_combo=20,
-        tolerance=0.02,
+        tolerance=0.01,
         matching_logic="shift4"
     ),
     'skrill': ProcessorConfig(
@@ -63,7 +70,7 @@ PROCESSOR_CONFIGS = {
         enable_name_fallback=False,
         enable_exact_match=False,
         max_combo=5,
-        tolerance=0.05,
+        tolerance=0.02,
         matching_logic="skrill"
     ),
     'neteller': ProcessorConfig(
@@ -73,7 +80,7 @@ PROCESSOR_CONFIGS = {
         enable_name_fallback=False,
         enable_exact_match=False,
         max_combo=5,
-        tolerance=0.05,
+        tolerance=0.02,
         matching_logic="skrill"   # we'll just reuse the Skrill logic
     ),
     'bitpay': ProcessorConfig(
@@ -83,7 +90,7 @@ PROCESSOR_CONFIGS = {
         enable_name_fallback=True,
         enable_exact_match=False,
         max_combo=5,
-        tolerance=0.05,
+        tolerance=0.02,
         matching_logic="bitpay"
     ),
 '   zotapay_paymentasia': ProcessorConfig(  # Add this new configuration

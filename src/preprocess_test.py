@@ -521,7 +521,6 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
 
 
 def handle_withdrawal_cancellations(df):
-    print("Running handle_withdrawal_cancellations!")
     if "Name" not in df.columns:
         return df
 
@@ -530,20 +529,12 @@ def handle_withdrawal_cancellations(df):
     cancels = df[mask_cancel].copy()
     withdrawals = df[mask_withdrawal].copy()
 
-    print("---- CANCELLATION DEBUGGING ----")
-    print("CANCEL ROWS:")
-    print(cancels[["Name", "Amount", "tp", "Email (Account) (Account)"]])
-    print("WITHDRAWAL ROWS:")
-    print(withdrawals[["Name", "Amount", "tp", "Email (Account) (Account)"]])
-    print("---- END DEBUG ----")
-
     to_drop = set()
 
     for idx_cancel, row_cancel in cancels.iterrows():
         # Match withdrawals by 'tp'
         matched = withdrawals[withdrawals["tp"] == row_cancel["tp"]]
         if matched.empty:
-            print(f"No match for cancelled withdrawal tp={row_cancel['tp']}")
             continue
         # Find a row where the amounts cancel out
         for idx_withdrawal, row_withdrawal in matched.iterrows():
@@ -604,7 +595,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         # Filter by known indicators
         name_col_match = df["Name"].str.lower() == "withdrawal"
         psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
-        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup", case=False, na=False)
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
         full_mask = name_col_match & (psp_match | method_match)
         df = df[full_mask].reset_index(drop=True)
     else:
@@ -628,13 +619,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 
     # --- Only keep needed columns for withdrawal output ---
     if transaction_type == "withdrawal":
-        print(f"After filtering, unique 'Name' values: {df['Name'].unique().tolist()}")
-        print(f"Counts:\n{df['Name'].value_counts()}")
-        print("First few rows before handle_withdrawal_cancellations:")
-        print(df.head(10))
         df = handle_withdrawal_cancellations(df)
-        print("First few rows after handle_withdrawal_cancellations:")
-        print(df.head(10))
         needed_columns = [
             "Created On",
             "First Name (Account) (Account)",

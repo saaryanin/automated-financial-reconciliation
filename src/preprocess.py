@@ -7,6 +7,23 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 import logging
 
 
+def clean_amount(val):
+    """
+    Convert accounting-style amounts like '(100.00)' to -100.00,
+    and plain '100.00' or '-100.00' to numbers.
+    """
+    s = str(val).replace(',', '').strip()
+    # Parentheses denote negative numbers
+    if re.match(r'^\(\s*-?[\d,\.]+\s*\)$', s):
+        s = s.strip('()')
+        try:
+            return -float(s)
+        except Exception:
+            return None
+    try:
+        return float(s)
+    except Exception:
+        return None
 # ----------------------------
 # Processor Handling
 # ----------------------------
@@ -114,9 +131,9 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
 
 def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
     import pandas as pd
+    import re
 
-    processor_tag = processor.lower()  # 🔄 Change: Save files under their actual name, not combined tag
-
+    processor_tag = processor.lower()
     df.columns = df.columns.str.strip().str.replace(u'\xa0', ' ', regex=False)
 
     # Handle Zotapay
@@ -143,12 +160,18 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             "Merchant Order ID": "tp"
         })
 
+        # Robust TP extraction
+        df["tp"] = df["tp"].astype(str).apply(lambda x: re.search(r'\d{7,8}', x).group(0)
+        if re.search(r'\d{7,8}', x) else "")
+
+        # Standardize date format
+        df["date"] = pd.to_datetime(df["date"], errors='coerce', utc=True)
+        df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
         df["full_name"] = df["full_name"].astype(str).str.strip()
         df["first_name"] = df["full_name"].str[:2]
         df["last_name"] = df["full_name"].str[2:]
         df["email"] = df["email"].fillna("")
-        df["tp"] = df["tp"].fillna("")
 
     # Handle PaymentAsia
     elif processor.lower() == "paymentasia":
@@ -172,15 +195,25 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             "Request Reference": "tp"
         })
 
+        # Robust TP extraction
+        df["tp"] = df["tp"].astype(str).apply(lambda x: re.search(r'\d{7,8}', x).group(0)
+        if re.search(r'\d{7,8}', x) else "")
+
+        # Standardize date format
+        df["date"] = pd.to_datetime(df["date"], errors='coerce', infer_datetime_format=True)
+        df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
         df["full_name"] = df["full_name"].astype(str).str.strip()
         full_split = df["full_name"].str.split(n=2, expand=True)
         df["first_name"] = full_split[0].fillna("") + " " + full_split[1].fillna("")
         df["last_name"] = full_split[2].fillna("")
         df["email"] = ""
-        df["tp"] = df["tp"].fillna("")
 
     # Final clean-up
-    df["amount"] = df["amount"].astype(str).str.replace(",", "", regex=False)
+    df["amount"] = pd.to_numeric(
+        df["amount"].astype(str).str.replace(",", "", regex=False),
+        errors='coerce'
+    )
     df["last_4cc"] = ""
     df["processor_name"] = processor_tag
 
@@ -188,8 +221,6 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
         "amount", "currency", "date", "last_4cc",
         "email", "first_name", "last_name", "processor_name", "tp"
     ]]
-
-
 
 
 def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:
@@ -334,7 +365,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df = df[
             (df["Operation Type"].str.lower() == "referral credit") &
             (df["Response"].str.lower() == "completed successfully")
-        ]
+            ]
         if df.empty:
             print("No Shift4 withdrawals found after filtering.")
             return pd.DataFrame()
@@ -356,6 +387,9 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "Amount": "amount",
             "Cardholder Email": "email"
         })
+
+        # --- FIX: Make sure amount is numeric even if in (100.00) form
+        df["amount"] = df["amount"].apply(clean_amount)
 
         # 4) extract last-4 digits from the card number
         df["last_4cc"] = df["Card Number"].astype(str).str.extract(r"(\d{4})$").fillna("")
@@ -380,6 +414,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "last_name",
             "processor_name"
         ]]
+
     elif processor.lower() in ("skrill", "neteller"):
         df.columns = df.columns.str.strip()
 
@@ -485,6 +520,36 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
     return pd.DataFrame()
 
 
+def handle_withdrawal_cancellations(df):
+    if "Name" not in df.columns:
+        return df
+
+    mask_cancel = df["Name"].str.lower().str.replace(' ', '') == "withdrawalcancelled"
+    mask_withdrawal = df["Name"].str.lower() == "withdrawal"
+    cancels = df[mask_cancel].copy()
+    withdrawals = df[mask_withdrawal].copy()
+
+    to_drop = set()
+
+    for idx_cancel, row_cancel in cancels.iterrows():
+        # Match withdrawals by 'tp'
+        matched = withdrawals[withdrawals["tp"] == row_cancel["tp"]]
+        if matched.empty:
+            continue
+        # Find a row where the amounts cancel out
+        for idx_withdrawal, row_withdrawal in matched.iterrows():
+            amt_cancel = pd.to_numeric(row_cancel["Amount"], errors='coerce')
+            amt_withdrawal = pd.to_numeric(row_withdrawal["Amount"], errors='coerce')
+            # If they cancel each other out
+            if abs(amt_cancel + amt_withdrawal) < 1e-6:
+                print(
+                    f"Cancelling withdrawal (idx={idx_withdrawal}) and cancel row (idx={idx_cancel}) for tp={row_cancel['tp']}")
+                to_drop.update([idx_cancel, idx_withdrawal])
+                break
+
+    df = df.drop(index=list(to_drop))
+    return df
+
 
 # ----------------------------
 # CRM Handling
@@ -527,17 +592,19 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
                 df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
                 df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
         )
-
         # Filter by known indicators
         name_col_match = df["Name"].str.lower() == "withdrawal"
         psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
-        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup", case=False, na=False)
-
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
         full_mask = name_col_match & (psp_match | method_match)
         df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
-        df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
+        if transaction_type == "withdrawal":
+            df = df[df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"]) & psp_mask].reset_index(
+                drop=True)
+        else:
+            df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
 
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({
@@ -545,36 +612,41 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             "US Dollar": "USD"
         })
 
+
+    # Drop 'transaction_id' column AFTER handling cancellations
+    if "transaction_id" in df.columns:
+        df = df.drop(columns=["transaction_id"])
+
+    # --- Only keep needed columns for withdrawal output ---
+    if transaction_type == "withdrawal":
+        df = handle_withdrawal_cancellations(df)
+        needed_columns = [
+            "Created On",
+            "First Name (Account) (Account)",
+            "Last Name (Account) (Account)",
+            "Email (Account) (Account)",
+            "tp",
+            "Amount",
+            "Currency",
+            "Method of Payment",
+            "PSP name",
+            "CC Last 4 Digits",
+            "Name"  # 🟢 Optional: keep 'Name' for traceability (remove if not wanted)
+        ]
+        # Only keep columns that exist in the df
+        df = df[[col for col in needed_columns if col in df.columns]]
+
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay",
-                                                                        "paymentasia"] else normalized_processor
+        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
         folder = f"{folder_name}_{transaction_type}s.xlsx"
         out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
-
         out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if transaction_type == "withdrawal" and "transaction_id" in df.columns:
-            needed_columns = [
-                "Created On",
-                "First Name (Account) (Account)",
-                "Last Name (Account) (Account)",
-                "Email (Account) (Account)",
-                "tp",
-                "Amount",
-                "Currency",
-                "Method of Payment",
-                "PSP name",
-                "CC Last 4 Digits"
-            ]
-            if "transaction_id" in df.columns:
-                df = df.drop(columns=["transaction_id"])
-            df = df[[col for col in needed_columns if col in df.columns]]
-
         df.to_excel(out_path, index=False)
         print(f"✅ Saved cleaned CRM {processor_name} {transaction_type}s to {out_path}")
 
     return df.reset_index(drop=True)
+
 
 
 

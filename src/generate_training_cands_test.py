@@ -100,7 +100,9 @@ for proc in processors:
         'powercash ': 'powercash', 'shift4 ': 'shift4',
         'zotapay': 'zotapay_paymentasia',
         'paymentasia': 'zotapay_paymentasia',
-        'pamy' : 'zotapay_paymentasia'
+        'pamy' : 'zotapay_paymentasia',
+        'payment asia': 'zotapay_paymentasia',
+
 
     }
     crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
@@ -158,8 +160,12 @@ engine = ReconciliationEngine(exchange_rate_map, config={
 })
 
 logger.info(f"Starting reconciliation for {len(crm_df)} CRM rows and {len(processor_df)} processor rows...")
-matches = engine.match_withdrawals(crm_df, processor_df)
+# Remove cancelled withdrawals from crm_df before reconciliation
+non_cancelled_mask = crm_df['Name'].str.lower() != 'withdrawal cancelled'
+crm_df_non_cancelled = crm_df[non_cancelled_mask]
 
+logger.info(f"Starting reconciliation for {len(crm_df_non_cancelled)} CRM rows and {len(processor_df)} processor rows...")
+matches = engine.match_withdrawals(crm_df_non_cancelled, processor_df)
 report = engine.generate_report()
 print("\n" + "="*80)
 print(report)
@@ -169,7 +175,55 @@ output_path = DATA_DIR / "training_dataset" / f"training_dataset_{date}.csv"
 output_path.parent.mkdir(parents=True, exist_ok=True)
 
 matches_df = pd.DataFrame(matches)
+
+# ==========================
+# ADD THIS BLOCK HERE:
+# ==========================
+cancelled_mask = crm_df['Name'].str.lower() == 'withdrawal cancelled'
+cancelled_rows = crm_df[cancelled_mask]
+
+cancelled_outputs = []
+for _, row in cancelled_rows.iterrows():
+    out_row = {
+        'crm_date': row['Created On'],
+        'crm_email': row['Email (Account) (Account)'],
+        'crm_firstname': row.get('First Name (Account) (Account)', ''),
+        'crm_lastname': row.get('Last Name (Account) (Account)', ''),
+        'crm_tp': row.get('tp', ''),
+        'crm_last4': str(row.get('CC Last 4 Digits', '')).zfill(4),
+        'crm_currency': row.get('Currency', ''),
+        'crm_amount': -abs(float(row['Amount'])),
+        'crm_processor_name': row.get('PSP name', ''),
+        'proc_dates': [],
+        'proc_emails': [],
+        'proc_firstnames': [],
+        'proc_lastnames': [],
+        'proc_last4_digits': [],
+        'proc_currencies': [],
+        'proc_total_amounts': [],
+        'proc_processor_name': '',
+        'converted_amount_total': None,
+        'exchange_rates': [],
+        'email_similarity_avg': None,
+        'last4_match': False,
+        'name_fallback_used': False,
+        'exact_match_used': False,
+        'converted': False,
+        'combo_len': 0,
+        'match_status': 0,
+        'payment_status': 0,
+        'comment': "Withdrawal Cancellation",
+    }
+    cancelled_outputs.append(out_row)
+
+if cancelled_outputs:
+    matches_df = pd.concat([matches_df, pd.DataFrame(cancelled_outputs)], ignore_index=True)
+# ==========================
+# END OF BLOCK
+# ==========================
+
 matches_df.drop(columns=['matched_proc_indices'], errors='ignore').to_csv(output_path, index=False)
+
 
 if engine.diagnostics:
     diag_path = output_path.with_name(f"diagnostics_{date}.json")

@@ -9,7 +9,7 @@ from src.utils import (
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-05-09"
+date = "2025-05-20"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",
@@ -94,19 +94,8 @@ for proc in processors:
     else:
         crm_df['crm_last4'] = ''
 
-    psp_map = {
-        'netteler': 'neteller', 'skrilll': 'skrill', 'skrill ': 'skrill',
-        'skrll': 'skrill', 'paypal ': 'paypal', 'safecharge ': 'safecharge',
-        'powercash ': 'powercash', 'shift4 ': 'shift4',
-        'zotapay': 'zotapay_paymentasia',
-        'paymentasia': 'zotapay_paymentasia',
-        'pamy' : 'zotapay_paymentasia',
-        'payment asia': 'zotapay_paymentasia',
-        'acquiringcom':'trustpayments',
-        'acquiring com':'trustpayments',
-        'trust payments': 'trustpayments',
-    }
-    crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
+
+    crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower()
 
     crm_dfs.append(crm_df)
 

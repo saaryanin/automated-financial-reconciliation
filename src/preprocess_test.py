@@ -6,7 +6,24 @@ from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 import logging
 
-
+PSP_NAME_MAP = {
+    'netteler': 'neteller',
+    'skrilll': 'skrill',
+    'skrill ': 'skrill',
+    'skrll': 'skrill',
+    'paypal ': 'paypal',
+    'safecharge ': 'safecharge',
+    'powercash ': 'powercash',
+    'shift4 ': 'shift4',
+    'zotapay': 'zotapay_paymentasia',
+    'paymentasia': 'zotapay_paymentasia',
+    'pamy': 'zotapay_paymentasia',
+    'payment asia': 'zotapay_paymentasia',
+    'acquiringcom': 'trustpayments',
+    'acquiring com': 'trustpayments',
+    'trust payments': 'trustpayments',
+    # Add any other known aliases as needed
+}
 def clean_amount(val):
     """
     Convert accounting-style amounts like '(100.00)' to -100.00,
@@ -596,7 +613,13 @@ def handle_withdrawal_cancellations(df):
 def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
-    df["PSP name"] = df["PSP name"].str.strip().str.lower()
+    df["PSP name"] = (
+        df["PSP name"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .replace(PSP_NAME_MAP)
+    )
     df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
     normalized_processor = processor_name.lower()
 
@@ -639,16 +662,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
-        psp_masks = {
-            # Map processor_name: lambda to create mask
-            "trustpayments": lambda df: df["PSP name"].str.contains("acquiringcom", case=False, na=False),
-            # add more custom processors here if needed
-        }
-        # Use the custom lambda if processor in mapping, otherwise use equality check
-        if normalized_processor in psp_masks:
-            psp_mask = psp_masks[normalized_processor](df)
-        else:
-            psp_mask = df["PSP name"] == normalized_processor
 
         if transaction_type == "withdrawal":
             name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])

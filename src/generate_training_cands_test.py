@@ -102,6 +102,9 @@ for proc in processors:
         'paymentasia': 'zotapay_paymentasia',
         'pamy' : 'zotapay_paymentasia',
         'payment asia': 'zotapay_paymentasia',
+        'acquiringcom':'trustpayments',
+        'acquiring com':'trustpayments',
+        'trust payments': 'trustpayments',
     }
     crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower().replace(psp_map)
 

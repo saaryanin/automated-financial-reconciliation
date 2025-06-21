@@ -93,7 +93,7 @@ PROCESSOR_CONFIGS = {
         tolerance=0.02,
         matching_logic="bitpay"
     ),
-'   zotapay_paymentasia': ProcessorConfig(  # Add this new configuration
+    'zotapay_paymentasia': ProcessorConfig(  # Add this new configuration
         email_threshold=0.75,  # Not critical since we're matching by TP
         require_last4=False,
         require_email=False,
@@ -103,7 +103,17 @@ PROCESSOR_CONFIGS = {
         tolerance=0.02,  # 2% tolerance
         matching_logic="zotapay_paymentasia"
     ),
-
+    "trustpayments": ProcessorConfig(
+        email_threshold=0.75,
+        name_match_threshold=0.75,
+        require_last4=False,
+        require_email=False,
+        enable_name_fallback=False,
+        enable_exact_match=False,
+        max_combo=5,
+        tolerance=0.02,
+        matching_logic="trustpayments"
+    ),
     # ... other processors ...
 }
 
@@ -389,6 +399,12 @@ class ReconciliationEngine:
         if proc == "zotapay_paymentasia":
             print(f"Routing to _match_zotapay_paymentasia_row for CRM TP: {crm_row.get('crm_tp')}")
             return self._match_zotapay_paymentasia_row(crm_row, proc_dict, last4_map, used)
+
+        if proc == "trustpayments":
+            return self._match_trustpayments_row(
+                crm_row, proc_dict, last4_map, used,
+                self.get_processor_config("trustpayments")
+            )
 
         # Fallback to default standard matcher
         return self._match_standard_row(
@@ -1249,6 +1265,110 @@ class ReconciliationEngine:
             'comment': comment,
             'matched_proc_indices': [c['index'] for c in combo]
         }, {'strict': strict, 'chosen_error': chosen['error']}
+
+    def _match_trustpayments_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        crm_tp = str(crm_row.get("crm_tp", "")).strip()
+        crm_last4 = str(crm_row.get("crm_last4", "")).strip()
+        crm_email = str(crm_row.get("crm_email", "")).strip().lower()
+        crm_first = str(crm_row.get("crm_firstname", "")).strip().lower()
+        crm_last = str(crm_row.get("crm_lastname", "")).strip().lower()
+        crm_amt = float(crm_row.get("crm_amount", 0))
+        crm_cur = str(crm_row.get("crm_currency", "")).strip().upper()
+        abs_tol = 0.1
+        rel_tol = proc_config.tolerance * crm_amt
+
+        # Collect processor rows by tiers
+        tier_candidates = {1: [], 2: [], 3: [], 4: []}
+        for i, proc_row in proc_dict.items():
+            if i in used:
+                continue
+            proc_tp = str(proc_row.get("proc_tp", "")).strip()
+            proc_last4 = str(proc_row.get("proc_last4_digits", "")).strip()
+            proc_email = str(proc_row.get("proc_emails", "")).strip().lower()
+            proc_first = str(proc_row.get("proc_firstname", "")).strip().lower()
+            proc_last = str(proc_row.get("proc_lastname", "")).strip().lower()
+            proc_amt = float(proc_row.get("proc_total_amount", 0))
+            proc_cur = str(proc_row.get("proc_currency", "")).strip().upper()
+
+            conv_amt, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
+            if conv_amt is None:
+                continue
+
+            email_sim = self.enhanced_email_similarity(crm_email, proc_email)
+            full_name_match = (crm_first == proc_first and crm_last == proc_last)
+
+            if crm_tp and proc_tp and crm_tp == proc_tp and crm_last4 and proc_last4 and crm_last4 == proc_last4:
+                tier_candidates[1].append((i, proc_row, conv_amt, rate, email_sim))
+            elif crm_tp and proc_tp and crm_tp == proc_tp and email_sim > 0.75:
+                tier_candidates[2].append((i, proc_row, conv_amt, rate, email_sim))
+            elif crm_last4 and proc_last4 and crm_last4 == proc_last4 and email_sim > 0.75:
+                tier_candidates[3].append((i, proc_row, conv_amt, rate, email_sim))
+            elif email_sim > 0.75 and full_name_match:
+                tier_candidates[4].append((i, proc_row, conv_amt, rate, email_sim))
+
+        # Try each tier in order of priority
+        for tier in range(1, 5):
+            candidates = tier_candidates[tier]
+            if not candidates:
+                continue
+            n = len(candidates)
+            best_combo = None
+            best_err = float('inf')
+            best_combo_idxs = []
+
+            # Try all combos up to max_combo
+            for k in range(1, min(proc_config.max_combo, n) + 1):
+                for combo in combinations(candidates, k):
+                    indices, proc_rows, amounts, rates, sims = zip(*combo)
+                    total_amt = sum(amounts)
+                    err = abs(total_amt - crm_amt)
+                    tol = abs_tol if crm_cur == proc_rows[0].get("proc_currency", "").strip().upper() else rel_tol
+                    if err <= tol and err < best_err:
+                        best_combo = (indices, proc_rows, amounts, rates, sims)
+                        best_err = err
+                if best_combo:
+                    break  # Prefer smaller combos if they work
+
+            if best_combo:
+                indices, proc_rows, amounts, rates, sims = best_combo
+                received = round(sum(amounts), 4)
+                payment_status = int(abs(received - crm_amt) <= tol)
+                comment = ""
+                if payment_status == 0:
+                    comment = f"Amount {'under' if received < crm_amt else 'over'} by {abs(received - crm_amt):.2f} {crm_cur}"
+                return {
+                    'crm_date': crm_row.get('crm_date'),
+                    'crm_email': crm_email,
+                    'crm_firstname': crm_first,
+                    'crm_lastname': crm_last,
+                    'crm_last4': crm_last4,
+                    'crm_currency': crm_cur,
+                    'crm_amount': crm_amt,
+                    'crm_processor_name': "trustpayments",
+                    'proc_dates': [r.get('proc_date') for r in proc_rows],
+                    'proc_emails': [r.get('proc_emails') for r in proc_rows],
+                    'proc_firstnames': [r.get('proc_firstname') for r in proc_rows],
+                    'proc_lastnames': [r.get('proc_lastname') for r in proc_rows],
+                    'proc_last4_digits': [r.get('proc_last4_digits') for r in proc_rows],
+                    'proc_currencies': [r.get('proc_currency') for r in proc_rows],
+                    'proc_total_amounts': [r.get('proc_total_amount') for r in proc_rows],
+                    'proc_processor_name': "trustpayments",
+                    'converted_amount_total': received,
+                    'exchange_rates': list(rates),
+                    'email_similarity_avg': round(sum(sims) / len(sims), 4),
+                    'last4_match': tier in [1, 3],
+                    'name_fallback_used': (tier == 4),
+                    'exact_match_used': (tier == 1),
+                    'converted': False,
+                    'combo_len': len(proc_rows),
+                    'match_status': 1,
+                    'payment_status': payment_status,
+                    'comment': f"Matched by trustpayments tier {tier}. " + comment,
+                    'matched_proc_indices': list(indices)
+                }, {'trustpayments_combo': best_combo}
+
+        # If nothing matched, fallback to unmatched
+        return None, {'failure_reason': 'No TrustPayments combo match'}
 
     def _estimate_runtime(self, crm_df, proc_dict, last4_map):
         samples = list(crm_df.iterrows())[:min(5, len(crm_df))]

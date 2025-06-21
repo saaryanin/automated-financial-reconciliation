@@ -511,11 +511,50 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         ]]
         return df
 
-
-
-
     elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
         return patch_standardize_zotapay_paymentasia_withdrawals(df, processor)
+
+    elif processor.lower() == "trustpayments":
+        # Filter to only REFUND type and errorcode == 0
+        df = df[
+            (df["requesttypedescription"].str.upper() == "REFUND") &
+            (df["errorcode"] == 0)
+            ].copy()
+        if df.empty:
+            print("No TrustPayments withdrawals found after filtering.")
+            return pd.DataFrame()
+
+        # Split billingfullname into first and last names
+        def split_billingfullname(name):
+            if pd.isna(name):
+                return "", ""
+            parts = str(name).strip().split(" ", 1)
+            first = parts[0]
+            last = parts[1] if len(parts) > 1 else ""
+            return first, last
+
+        df["first_name"], df["last_name"] = zip(*df["billingfullname"].apply(split_billingfullname))
+        # Standardize date
+        df["date"] = pd.to_datetime(df["transactionstartedtimestamp"], errors="coerce")
+        # Last 4 card digits
+        df["last_4cc"] = df["maskedpan"].astype(str).str[-4:]
+        # Currency
+        df["currency"] = df["currencyiso3a"]
+        # Amount
+        df["amount"] = pd.to_numeric(df["mainamount"], errors="coerce")
+        # TP
+        df["tp"] = df["orderreference"].astype(str).str.split("-").str[0]
+        # Email blank (no email in processor file)
+        df["email"] = ""
+        # Processor name
+        df["processor_name"] = "trustpayments"
+
+        # Reorder columns
+        keep = [
+            "amount", "currency", "date", "last_4cc", "email",
+            "first_name", "last_name", "processor_name", "tp"
+        ]
+        return df[keep]
 
     return pd.DataFrame()
 
@@ -600,9 +639,20 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
+        psp_masks = {
+            # Map processor_name: lambda to create mask
+            "trustpayments": lambda df: df["PSP name"].str.contains("acquiringcom", case=False, na=False),
+            # add more custom processors here if needed
+        }
+        # Use the custom lambda if processor in mapping, otherwise use equality check
+        if normalized_processor in psp_masks:
+            psp_mask = psp_masks[normalized_processor](df)
+        else:
+            psp_mask = df["PSP name"] == normalized_processor
+
         if transaction_type == "withdrawal":
-            df = df[df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"]) & psp_mask].reset_index(
-                drop=True)
+            name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])
+            df = df[name_mask & psp_mask].reset_index(drop=True)
         else:
             df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
 

@@ -219,7 +219,9 @@ class ReconciliationEngine:
         used_proc, used_crm, matches = set(), set(), []
         last4_map = processor_df.groupby('proc_last4_digits').indices
         proc_dict = processor_df.to_dict('index')
-
+        matches = []
+        used_proc = set()
+        used_crm = set()
         self._estimate_runtime(crm_df, proc_dict, last4_map)
 
         # match CRM rows
@@ -811,14 +813,16 @@ class ReconciliationEngine:
         crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
         crm_cur = crm_row['crm_currency']
         crm_amt = crm_row['crm_amount']
+        crm_amt = crm_row['crm_amount']
         crm_email = (crm_row.get('crm_email') or '').lower()
         crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
         crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
 
         # --- Candidate indices by last4 only ---
-        indices = [i for i in proc_dict if i not in used]
         if crm_last4 and crm_last4 in last4_map and proc_config.require_last4:
-            indices = last4_map[crm_last4]
+            indices = [i for i in last4_map[crm_last4] if i not in used]
+        else:
+            indices = [i for i in proc_dict if i not in used]
 
         candidates = []
         for i in indices:

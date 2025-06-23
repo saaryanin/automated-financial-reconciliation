@@ -243,33 +243,65 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
 def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     if processor.lower() == "paypal":
         df.columns = df.columns.str.strip()
+        df["Type"] = df["Type"].astype(str).str.strip()
+        df["Status"] = df["Status"].astype(str).str.strip()
+        df["To Email Address"] = df["To Email Address"].astype(str).str.strip().str.lower()
+        df["Gross"] = df["Gross"].astype(str).str.replace(",", "", regex=False)
+        df["Currency"] = df["Currency"].astype(str).str.strip()
 
-        # Filter by Type and Status
-        allowed_types = ["Mass Payment", "Payment Refund"]
+        # Pull all types: withdrawals, refunds, reversals
+        allowed_types = ["Mass Payment", "Payment Refund", "Mass Pay Reversal"]
         allowed_status = ["Completed", "Unclaimed"]
         df = df[
             df["Type"].isin(allowed_types) &
             df["Status"].isin(allowed_status) &
             (df["Currency"] != "GBP")
-            ]
+            ].copy()
         if df.empty:
-            print(f"No PayPal Withdrawals found after filtering.")
+            print("No PayPal Withdrawals found after filtering.")
             return pd.DataFrame()
 
-        # Rename for consistency
+        # Remove both 'Mass Pay Reversal' and its matching 'Mass Payment' or 'Payment Refund'
+        to_remove = set()
+        mpr_rows = df[df["Type"] == "Mass Pay Reversal"]
+        for idx_mpr, row_mpr in mpr_rows.iterrows():
+            email = row_mpr["To Email Address"]
+            try:
+                amount = float(row_mpr["Gross"])
+            except Exception:
+                continue
+            currency = row_mpr["Currency"]
+            # Find matching Mass Payment or Payment Refund
+            mask = (
+                    df["Type"].isin(["Mass Payment", "Payment Refund"]) &
+                    (df["To Email Address"] == email) &
+                    (df["Currency"] == currency) &
+                    (df["Gross"].astype(float) == amount)
+            )
+            matches = df[mask]
+            for idx_match in matches.index:
+                to_remove.add(idx_mpr)
+                to_remove.add(idx_match)
+                break  # Only remove first found
+
+        df = df.drop(index=list(to_remove))
+
+        # Only keep real withdrawals (Mass Payment, Payment Refund)
+        keep_mask = df["Type"].isin(["Mass Payment", "Payment Refund"])
+        df = df[keep_mask]
+        if df.empty:
+            print("No valid PayPal withdrawals after reversal-cancellation.")
+            return pd.DataFrame()
+
+        # Standardize schema
         df = df.rename(columns={
             "Date": "date",
             "Gross": "amount",
             "Currency": "currency",
             "To Email Address": "email"
         })
-        # Remove comma separators in amount (e.g., "3,000.00" -> "3000.00")
-        df["amount"] = df["amount"].astype(str).str.replace(",", "", regex=False)
-
-        df["last_4cc"] = ""  # PayPal doesn't provide card digits
+        df["last_4cc"] = ""
         df["processor_name"] = "paypal"
-
-        # Handle names
         if "Name" in df.columns and not df["Name"].isna().all():
             name_split = df["Name"].astype(str).str.strip().str.split(n=1, expand=True)
             if isinstance(name_split, pd.DataFrame) and name_split.shape[1] >= 1:
@@ -281,58 +313,109 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         else:
             df["first_name"] = ""
             df["last_name"] = ""
-
-        # Final column order
-        df = df[[
+        return df[[
             "amount", "currency", "date", "last_4cc",
             "email", "first_name", "last_name", "processor_name"
         ]]
-        return df
+
+
 
 
     elif processor.lower() == "safecharge":
-        # Check if Safecharge-specific pattern exists
-        processor_name_value = "safecharge"
-        if "Acquiring Bank" in df.columns and df["Acquiring Bank"].astype(str).str.contains("Nuvei", case=False).any():
-            processor_name_value = "safecharge"
 
-        df = df[(df["Transaction Type"].isin(["Credit", "Voidcheque"])) & (df["Transaction Result"] == "Approved")]
-        cancel_indexes = df[df["Transaction Type"] == "Voidcheque"].index
-        remove_indexes = set(cancel_indexes) | set(cancel_indexes - 1)
-        df = df.drop(remove_indexes, errors='ignore')
-        df = df.rename(columns={
-            "Amount": "amount",
-            "Currency": "currency",
-            "Date": "date",
-            "Email Address": "email",
-            "PAN": "last_4cc"
-        })
-        df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$")
-        df["currency"] = df["currency"].replace({
-            "Euro": "EUR",
-            "US Dollar": "USD"
-        })
-        df["processor_name"] = processor_name_value
-        df = df[["amount", "currency", "date", "last_4cc", "email", "processor_name"]]
-        return df
+        df.columns = df.columns.str.strip()
+        colmap = {col.lower().replace(" ", ""): col for col in df.columns}
 
-        cancel_indexes = df[df["Transaction Type"] == "Voidcheque"].index
-        remove_indexes = set(cancel_indexes) | set(cancel_indexes - 1)
-        df = df.drop(remove_indexes, errors='ignore')
+        if 'transactiontype' not in colmap or 'transactionresult' not in colmap:
+            print("SafeCharge: Required columns not found.")
+            return pd.DataFrame()
+
+        credit_type = "Credit"
+        void_type = "VoidCredit"
+        email_col = colmap.get('emailaddress', None)
+        pan_col = colmap.get('pan', None)
+
+        # 1. Pull all Credit and VoidCredit rows, status Approved
+        df = df[
+            df[colmap['transactionresult']].str.strip().str.lower() == "approved"
+            ].copy()
+        df = df[
+            df[colmap['transactiontype']].isin([credit_type, void_type])
+        ].copy()
+
+        if df.empty:
+            print("No SafeCharge withdrawals found after filtering.")
+            return pd.DataFrame()
+
+        # 2. Cancel both VoidCredit and its paired Credit row (search up and down)
+        to_remove = set()
+        df = df.reset_index(drop=True)  # Ensures index is 0...N
+        void_rows = df[df[colmap['transactiontype']] == "VoidCredit"]
+
+        # ... the rest of your logic ...
+        for void_idx, void_row in void_rows.iterrows():
+            void_email = str(void_row[email_col]).strip().lower() if email_col else ""
+            void_last4 = str(void_row[pan_col])[-4:] if pan_col else ""
+            void_amount = float(void_row[colmap['amount']])
+            void_currency = str(void_row[colmap['currency']]).upper()
+
+            found = None
+            # Search above first (older rows)
+            for i in range(void_idx - 1, -1, -1):
+                credit_row = df.iloc[i]
+                if (
+                        credit_row[colmap['transactiontype']] == "Credit" and
+                        str(credit_row[email_col]).strip().lower() == void_email and
+                        str(credit_row[pan_col])[-4:] == void_last4 and
+                        float(credit_row[colmap['amount']]) == void_amount and
+                        str(credit_row[colmap['currency']]).upper() == void_currency and
+                        i not in to_remove
+                ):
+                    found = i
+                    break
+            # If not found above, search below
+            if found is None:
+                for i in range(void_idx + 1, len(df)):
+                    credit_row = df.iloc[i]
+                    if (
+                            credit_row[colmap['transactiontype']] == "Credit" and
+                            str(credit_row[email_col]).strip().lower() == void_email and
+                            str(credit_row[pan_col])[-4:] == void_last4 and
+                            float(credit_row[colmap['amount']]) == void_amount and
+                            str(credit_row[colmap['currency']]).upper() == void_currency and
+                            i not in to_remove
+                    ):
+                        found = i
+                        break
+            to_remove.add(void_idx)
+            if found is not None:
+                to_remove.add(found)
+
+        df = df.drop(index=list(to_remove))
+
+        # 3. Now filter to just "Credit" for final withdrawals output
+        df = df[df[colmap['transactiontype']] == credit_type]
+
+        # --- Standardize columns as before ---
         df = df.rename(columns={
-            "Amount": "amount",
-            "Currency": "currency",
-            "Date": "date",
-            "Email Address": "email",
-            "PAN": "last_4cc"
+            colmap['amount']: "amount",
+            colmap['currency']: "currency",
+            colmap['date']: "date",
+            email_col: "email" if email_col else "email",
+            pan_col: "last_4cc" if pan_col else "last_4cc"
         })
-        df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$")
-        df = df[["amount", "currency", "date", "last_4cc", "email"]]
-        df["currency"] = df["currency"].replace({
-            "Euro": "EUR",
-            "US Dollar": "USD"
-        })
-        return df
+        df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$") if pan_col else ""
+        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD"})
+        df["processor_name"] = "safecharge"
+        df["first_name"] = ""
+        df["last_name"] = ""
+        return df[[
+            "amount", "currency", "date", "last_4cc", "email",
+            "first_name", "last_name", "processor_name"
+        ]]
+
+
+
 
     elif processor.lower() == "powercash":
         # — filter to only refunds or CFTs, successful EUR/USD rows
@@ -376,28 +459,62 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         ]]
 
         return df
+
+
     elif processor.lower() == "shift4":
-        # 1) strip headers & filter to only Referral Credit + Completed Successfully
         df.columns = df.columns.str.strip()
-        df = df[
-            (df["Operation Type"].str.lower() == "referral credit") &
-            (df["Response"].str.lower() == "completed successfully")
-            ]
+        df["Operation Type"] = df["Operation Type"].astype(str).str.strip().str.lower()
+        df["Response"] = df["Response"].astype(str).str.strip().str.lower()
+        df["Cardholder Email"] = df["Cardholder Email"].astype(str).str.strip().str.lower()
+        df["Card Number"] = df["Card Number"].astype(str).str.strip()
+
+        # Pull all withdrawals and voids first
+        relevant_mask = df["Operation Type"].isin(["referral credit", "sale void", "refund void"]) & (
+                    df["Response"] == "completed successfully")
+        df = df[relevant_mask].copy()
+
         if df.empty:
             print("No Shift4 withdrawals found after filtering.")
             return pd.DataFrame()
 
-        # 2) select only the needed columns
-        df = df[[
-            "Transaction Date",
-            "Card Number",
-            "Currency",
-            "Amount",
-            "Cardholder Name",
-            "Cardholder Email"
-        ]]
+        # Remove both 'refund void' and its matching 'referral credit' (same email+amount+currency)
+        to_remove = set()
+        refund_voids = df[df["Operation Type"] == "refund void"]
 
-        # 3) rename into our unified schema
+        for idx_rv, refund_row in refund_voids.iterrows():
+            email = refund_row["Cardholder Email"]
+            amount = clean_amount(refund_row["Amount"])
+            currency = refund_row["Currency"]
+
+            # Scan for matching referral credit rows (above/below), same email/amount/currency
+            mask = (
+                    (df["Operation Type"] == "referral credit") &
+                    (df["Cardholder Email"] == email) &
+                    (df["Currency"] == currency) &
+                    (df["Amount"].apply(clean_amount) == amount)
+            )
+            possible_matches = df[mask]
+
+            # Remove first match (if any)
+            for idx_ref in possible_matches.index:
+                to_remove.add(idx_rv)
+                to_remove.add(idx_ref)
+                break
+        df = df.drop(index=list(to_remove))
+
+        # Only keep real withdrawals ("referral credit" or "sale void")
+        keep_mask = df["Operation Type"].isin(["referral credit", "sale void"])
+        df = df[keep_mask]
+
+        if df.empty:
+            print("No valid Shift4 withdrawals after void-cancellation.")
+            return pd.DataFrame()
+
+        # Standardize schema
+        df = df[[
+            "Transaction Date", "Card Number", "Currency", "Amount", "Cardholder Name", "Cardholder Email"
+        ]].copy()
+
         df = df.rename(columns={
             "Transaction Date": "date",
             "Currency": "currency",
@@ -405,32 +522,20 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "Cardholder Email": "email"
         })
 
-        # --- FIX: Make sure amount is numeric even if in (100.00) form
         df["amount"] = df["amount"].apply(clean_amount)
-
-        # 4) extract last-4 digits from the card number
         df["last_4cc"] = df["Card Number"].astype(str).str.extract(r"(\d{4})$").fillna("")
-
-        # 5) split the masked Cardholder Name (e.g. "Lui* Lor***")
         name_split = df["Cardholder Name"].astype(str).str.split(n=1, expand=True)
         df["first_name"] = name_split[0].str.rstrip("*")
-        df["last_name"] = (
-            name_split[1].str.rstrip("*")
-            if name_split.shape[1] > 1 else ""
-        )
-
-        # 6) tag the processor and reorder
+        df["last_name"] = name_split[1].str.rstrip("*") if name_split.shape[1] > 1 else ""
         df["processor_name"] = "shift4"
         return df[[
-            "amount",
-            "currency",
-            "date",
-            "last_4cc",
-            "email",
-            "first_name",
-            "last_name",
-            "processor_name"
+            "amount", "currency", "date", "last_4cc", "email",
+
+            "first_name", "last_name", "processor_name"
+
         ]]
+
+
 
     elif processor.lower() in ("skrill", "neteller"):
         df.columns = df.columns.str.strip()
@@ -526,6 +631,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "amount", "currency", "date", "last_4cc",
             "email", "first_name", "last_name", "processor_name"
         ]]
+
         return df
 
     elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:

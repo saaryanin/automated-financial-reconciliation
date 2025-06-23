@@ -213,15 +213,48 @@ class ReconciliationEngine:
             'parameters_adjusted': self.parameter_adjusted
         }
 
+    def _cross_processor_last_chance(self, crm_df, processor_df, used_crm, used_proc, matches):
+        # Step 1: Find relevant processors
+        cross_processors = {"shift4", "safecharge", "powercash", "paypal", "trustpayments"}
+        # Step 2: Unmatched CRM rows for these processors
+        unmatched_key_crm = [
+            (idx, row)
+            for idx, row in crm_df.iterrows()
+            if str(row.get('crm_processor_name', '')).strip().lower() in cross_processors and idx not in used_crm
+        ]
+        if not unmatched_key_crm:
+            return
+        # Step 3: Unused processor rows in these processors
+        cross_proc_rows = processor_df[
+            processor_df['proc_processor_name'].str.lower().str.strip().isin(cross_processors)
+            & (~processor_df.index.isin(used_proc))
+            ]
+        if cross_proc_rows.empty:
+            return
+        cross_proc_dict = cross_proc_rows.to_dict('index')
+        cross_proc_last4_map = cross_proc_rows.groupby('proc_last4_digits').indices
+
+        for idx, crm_row in unmatched_key_crm:
+            # Use standard matching logic (last resort)
+            result = self._match_standard_row(
+                crm_row, cross_proc_dict, cross_proc_last4_map, used_proc, self.get_processor_config('safecharge')
+            )
+            if result and result[0]:
+                match, diag = result
+                match['comment'] = (match.get('comment', '') + " [Cross-processor fallback]").strip()
+                match['cross_processor_fallback'] = True
+                matches.append(match)
+                used_crm.add(idx)
+                used_proc.update(match['matched_proc_indices'])
+                self.metrics['matched_fallback'] += 1
+
     def match_withdrawals(self, crm_df, processor_df):
         self.start_time = datetime.now()
         self.metrics['total_crm'] = len(crm_df)
         used_proc, used_crm, matches = set(), set(), []
         last4_map = processor_df.groupby('proc_last4_digits').indices
         proc_dict = processor_df.to_dict('index')
-        matches = []
-        used_proc = set()
-        used_crm = set()
+
         self._estimate_runtime(crm_df, proc_dict, last4_map)
 
         # match CRM rows
@@ -310,7 +343,8 @@ class ReconciliationEngine:
                     'failure_reason': 'No processor data found for this CRM processor'
                 })
                 continue
-
+            # --- LAST-CHANCE CROSS-PROCESSOR MATCHING ---
+        self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
         # unmatched processor‐only rows
         for idx, row in processor_df.iterrows():
             if idx not in used_proc:

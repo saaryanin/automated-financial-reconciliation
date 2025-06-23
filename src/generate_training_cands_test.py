@@ -9,7 +9,7 @@ from src.utils import (
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-04-10"
+date = "2025-06-18"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",

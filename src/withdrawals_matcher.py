@@ -389,6 +389,7 @@ class ReconciliationEngine:
 
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
+        self.merge_crm_batch_payments(matches, tolerance=0.01)  # or whatever tolerance you use
         return matches
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
@@ -820,6 +821,85 @@ class ReconciliationEngine:
             'matched_proc_indices': [r['index'] for r in c]
         }, {'bitpay_combo': best}
 
+    def merge_crm_batch_payments(self, matches, tolerance=0.01):
+        """
+        Merge CRM withdrawals paid together as a batch (post-process).
+        - Combines CRM rows into one batched row if they match to the same processor row(s).
+        - Removes original CRM rows from matches.
+        """
+        from collections import defaultdict
+        from itertools import combinations
+
+        # Step 1: Gather all candidate CRM rows for batching
+        unmatched_by_client = defaultdict(list)
+        for idx, row in enumerate(matches):
+            if (
+                    row.get('crm_email')
+                    and row.get('match_status', 0) == 0
+                    and row.get('crm_currency')
+                    and isinstance(row.get('crm_amount'), (int, float))
+            ):
+                key = (row['crm_email'], row['crm_currency'])
+                unmatched_by_client[key].append((idx, row))
+
+        # Step 2: Find all CRM rows for batching
+        batched_indices = set()
+        new_rows = []
+
+        for client_key, unmatched_group in unmatched_by_client.items():
+            email, currency = client_key
+
+            # Find all matched CRM rows for this client+currency
+            matched_rows = [
+                (idx, row) for idx, row in enumerate(matches)
+                if (
+                        row.get('crm_email') == email
+                        and row.get('crm_currency') == currency
+                        and row.get('match_status', 0) == 1
+                        and isinstance(row.get('converted_amount_total'), (int, float))
+                        and row.get('matched_proc_indices')
+                )
+            ]
+            if not matched_rows:
+                continue
+
+            # Batch: try all combos of unmatched + this matched one
+            for matched_idx, matched_row in matched_rows:
+                proc_indices = matched_row['matched_proc_indices']
+                proc_total = matched_row['converted_amount_total']
+
+                crm_candidates = [matched_row] + [row for _, row in unmatched_group]
+                for k in range(2, len(crm_candidates) + 1):
+                    for combo in combinations(crm_candidates, k):
+                        crm_sum = sum(r['crm_amount'] for r in combo)
+                        abs_tol = tolerance * crm_sum
+                        if abs(proc_total - crm_sum) <= abs_tol:
+                            # Only keep the batch; don't duplicate individuals
+                            batched_indices.update(
+                                matches.index(r) for r in combo if r in matches
+                            )
+                            # Build a new batch row
+                            new_row = combo[0].copy()  # base from first row
+                            new_row['crm_amount'] = crm_sum
+                            new_row['combo_len'] = max(len(combo), len(proc_indices))
+                            new_row['crm_count'] = len(combo)
+                            new_row['proc_count'] = len(proc_indices)
+                            new_row['comment'] = (
+                                f"Batched: {len(combo)} CRM withdrawals merged (sum={crm_sum:.2f} {currency}) "
+                                f"to {proc_total:.2f} {currency} across {len(proc_indices)} proc rows."
+                            )
+                            # (Optional: for full clarity, maybe join client names, TPs, etc.)
+                            new_rows.append(new_row)
+                            print(
+                                f"[BatchMerge] {email}: Batched {len(combo)} CRM rows → {len(proc_indices)} proc rows.")
+                            break  # Only one batch per matched processor for now
+                    else:
+                        continue
+                    break
+
+        # Remove original CRM rows that were merged into batches
+        matches[:] = [r for idx, r in enumerate(matches) if idx not in batched_indices]
+        matches.extend(new_rows)
 
     def _create_unmatched_crm_record(self, crm_row):
         return {

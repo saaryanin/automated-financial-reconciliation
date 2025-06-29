@@ -5,6 +5,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 import logging
+from collections import Counter
 
 PSP_NAME_MAP = {
     'netteler': 'neteller',
@@ -908,8 +909,7 @@ def combine_processed_files(
     transaction_type="withdrawal",
     exchange_rate_map=None
 ):
-    import pandas as pd
-    from collections import Counter
+
 
     if out_crm_dir is None:
         out_crm_dir = processed_crm_dir / "combined"

@@ -87,8 +87,6 @@ combine_processed_files(
     exchange_rate_map=exchange_rate_map
 )
 
-
-
 # --- Load your fully combined files for matching ---
 combined_crm_path = PROCESSED_CRM_DIR / "combined" / date / "combined_crm_withdrawals.xlsx"
 combined_proc_path = PROCESSED_PROCESSOR_DIR / "combined" / date / "combined_processor_withdrawals.xlsx"
@@ -96,7 +94,7 @@ combined_proc_path = PROCESSED_PROCESSOR_DIR / "combined" / date / "combined_pro
 crm_df = load_excel_if_exists(combined_crm_path)
 processor_df = load_excel_if_exists(combined_proc_path)
 
-# --- PATCH CRM COMBINED COLUMNS ---
+# --- PATCH Combined CRM Columns ---
 if 'Currency' in crm_df.columns:
     crm_df['crm_currency'] = crm_df['Currency'].map(normalize_currency)
 elif 'crm_currency' not in crm_df.columns:
@@ -137,12 +135,46 @@ if 'PSP name' in crm_df.columns:
 elif 'crm_processor_name' not in crm_df.columns:
     crm_df['crm_processor_name'] = ''
 
+# --- PATCH Processor Combined Columns ---
+if 'date' in processor_df.columns:
+    processor_df['proc_date'] = pd.to_datetime(processor_df['date'], errors='coerce').dt.date
+elif 'proc_date' not in processor_df.columns:
+    processor_df['proc_date'] = pd.NaT
+
+if 'last_4cc' in processor_df.columns:
+    processor_df['proc_last4_digits'] = (
+        processor_df['last_4cc'].fillna(0).astype(int).astype(str).str.zfill(4)
+    )
+elif 'proc_last4_digits' not in processor_df.columns:
+    processor_df['proc_last4_digits'] = ''
+
+if 'email' in processor_df.columns:
+    processor_df['proc_emails'] = processor_df['email'].fillna('').astype(str)
+elif 'proc_emails' not in processor_df.columns:
+    processor_df['proc_emails'] = ''
+
+if 'currency' in processor_df.columns:
+    processor_df['proc_currency'] = processor_df['currency']
+elif 'proc_currency' not in processor_df.columns:
+    processor_df['proc_currency'] = ''
+
+if 'amount' in processor_df.columns:
+    processor_df['proc_total_amount'] = pd.to_numeric(processor_df['amount'], errors='coerce').abs()
+elif 'proc_total_amount' not in processor_df.columns:
+    processor_df['proc_total_amount'] = 0.0
+
+if 'processor_name' in processor_df.columns:
+    processor_df['proc_processor_name'] = processor_df['processor_name'].str.strip().str.lower()
+elif 'proc_processor_name' not in processor_df.columns:
+    processor_df['proc_processor_name'] = ''
+
+
 
 if crm_df is None or processor_df is None:
     logger.error("No valid combined CRM or processor files found. Exiting.")
     exit(1)
 
-# --- All following code (rates, matching, output) stays the same! ---
+# --- The rest is unchanged! ---
 
 logger.info("Configuring reconciliation engine...")
 engine = ReconciliationEngine(exchange_rate_map, config={

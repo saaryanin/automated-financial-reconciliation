@@ -908,11 +908,6 @@ def combine_processed_files(
     transaction_type="withdrawal",
     exchange_rate_map=None
 ):
-    """
-    Combine all processed CRM and processor withdrawal files for the given date
-    into single combined files for matching. CRM and processor side are both grouped/summed.
-    """
-
     import pandas as pd
     from collections import Counter
 
@@ -927,23 +922,15 @@ def combine_processed_files(
 
     for proc in processors:
         crm_f = processed_crm_dir / proc / date / crm_file_template.format(proc)
-        if proc == "trustpayments":
-            print(f"[DEBUG] CRM trustpayments file path: {crm_f}, exists: {crm_f.exists()}")
         if crm_f.exists():
             df = pd.read_excel(crm_f)
-            if proc == "trustpayments":
-                print(f"[DEBUG] Loaded CRM trustpayments shape: {df.shape}, columns: {df.columns.tolist()}")
             crm_dfs.append(df)
         else:
             print(f"⚠️ CRM processed file not found for {proc}: {crm_f}")
 
         proc_f = processed_proc_dir / proc / date / proc_file_template.format(proc)
-        if proc == "trustpayments":
-            print(f"[DEBUG] Processor trustpayments file path: {proc_f}, exists: {proc_f.exists()}")
         if proc_f.exists():
             df = pd.read_excel(proc_f)
-            if proc == "trustpayments":
-                print(f"[DEBUG] Loaded processor trustpayments shape: {df.shape}, columns: {df.columns.tolist()}")
             proc_dfs.append(df)
         else:
             print(f"⚠️ Processor processed file not found for {proc}: {proc_f}")
@@ -958,17 +945,26 @@ def combine_processed_files(
             return Counter(currencies).most_common(1)[0][0]
 
     def group_crm_withdrawals(df, exchange_rate_map):
-        group_cols = [
-            'First Name (Account) (Account)', 'Last Name (Account) (Account)', 'PSP name'
-        ]
         df = df.copy()
-        for col in group_cols:
+        # Always clean
+        for col in ['CC Last 4 Digits', 'PSP name', 'Email (Account) (Account)',
+                    'First Name (Account) (Account)', 'Last Name (Account) (Account)']:
             if col not in df.columns:
                 df[col] = ''
+            df[col] = df[col].astype(str).fillna('').str.strip()
         if 'Currency' not in df.columns:
             df['Currency'] = 'USD'
         if 'Amount' not in df.columns:
             df['Amount'] = 0.0
+
+        # Decide group key: use last 4 if present, fallback to names
+        last4_nonblank = (df['CC Last 4 Digits'].astype(str).str.strip() != '').any()
+        if last4_nonblank:
+            group_cols = ['CC Last 4 Digits', 'PSP name', 'Email (Account) (Account)']
+            print(f"[DEBUG] CRM: Grouping by {group_cols}")
+        else:
+            group_cols = ['First Name (Account) (Account)', 'Last Name (Account) (Account)', 'PSP name']
+            print(f"[DEBUG] CRM: Grouping by {group_cols}")
 
         grouped_rows = []
         for keys, group in df.groupby(group_cols):
@@ -999,23 +995,25 @@ def combine_processed_files(
         out_df = pd.DataFrame(grouped_rows)
         return out_df
 
-    def is_all_email_blank(df):
-        # Handles blank, empty, and NaN emails robustly!
-        return ((df['email'].isna()) | (df['email'].astype(str).str.strip() == '')).all()
-
     def group_processor_withdrawals(df, exchange_rate_map):
         df = df.copy()
-        # Clean up string columns
-        for col in ['processor_name', 'first_name', 'last_name', 'email']:
+        for col in ['processor_name', 'first_name', 'last_name', 'email', 'last_4cc']:
             if col not in df.columns:
                 df[col] = ''
-            df[col] = df[col].astype(str).str.strip().fillna('')
+            df[col] = df[col].astype(str).fillna('').str.strip()
 
         out_dfs = []
-
         for pname, group in df.groupby('processor_name'):
-            if pname.lower() == 'trustpayments':
-                group_cols = ['processor_name', 'first_name', 'last_name']
+            pname_lower = pname.lower()
+            has_last4 = (group['last_4cc'].astype(str).str.strip() != '').any()
+            if pname_lower == "trustpayments":
+                if has_last4:
+                    group_cols = ['processor_name', 'first_name', 'last_name', 'last_4cc']
+                else:
+                    group_cols = ['processor_name', 'first_name', 'last_name']
+                print(f"[DEBUG] Grouping {pname} by: {group_cols}")
+            elif has_last4:
+                group_cols = ['processor_name', 'email', 'last_4cc']
                 print(f"[DEBUG] Grouping {pname} by: {group_cols}")
             else:
                 group_cols = ['processor_name', 'email']
@@ -1047,16 +1045,18 @@ def combine_processed_files(
                 row0['amount'] = total_amt
                 row0['currency'] = tgt_cur
                 grouped_rows.append(row0)
-            out_dfs.append(pd.DataFrame(grouped_rows))
-
-        out_df = pd.concat(out_dfs, ignore_index=True)
+            if grouped_rows:
+                out_dfs.append(pd.DataFrame(grouped_rows))
+        if out_dfs:
+            out_df = pd.concat(out_dfs, ignore_index=True)
+        else:
+            out_df = pd.DataFrame()
         return out_df
 
     # Combine and save
     if crm_dfs:
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
-        if exchange_rate_map is not None:
-            combined_crm = group_crm_withdrawals(combined_crm, exchange_rate_map)
+        combined_crm = group_crm_withdrawals(combined_crm, exchange_rate_map)
         out_crm_date_dir = out_crm_dir / date
         out_crm_date_dir.mkdir(parents=True, exist_ok=True)
         combined_crm_path = out_crm_date_dir / f"combined_crm_{transaction_type}s.xlsx"
@@ -1067,10 +1067,7 @@ def combine_processed_files(
 
     if proc_dfs:
         combined_proc = pd.concat(proc_dfs, ignore_index=True)
-        if exchange_rate_map is not None:
-            combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map)
-        else:
-            combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map=None)
+        combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map)
         out_proc_date_dir = out_proc_dir / date
         out_proc_date_dir.mkdir(parents=True, exist_ok=True)
         combined_proc_path = out_proc_date_dir / f"combined_processor_{transaction_type}s.xlsx"
@@ -1078,4 +1075,5 @@ def combine_processed_files(
         print(f"✅ Combined processor withdrawals saved to {combined_proc_path}")
     else:
         print("⚠️ No processor files found to combine.")
+
 

@@ -392,7 +392,7 @@ class ReconciliationEngine:
 
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
-        self.merge_crm_batch_payments(matches, tolerance=0.01)  # or whatever tolerance you use
+        self.merge_crm_batch_payments(matches, tolerance=0.01)
         return matches
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
@@ -827,84 +827,128 @@ class ReconciliationEngine:
             'matched_proc_indices': [r['index'] for r in c]
         }, {'bitpay_combo': best}
 
-    def merge_crm_batch_payments(self, matches, tolerance=0.01):
+    def merge_crm_batch_payments(self, matches, tolerance=0.01, max_proc_combo=6):
         """
-        Enhanced: Merge CRM withdrawals paid together as a batch, **even if processor paid more or less**.
-        For a client+currency+processor, if a matched row has payment_status==0 (not paid exactly),
-        combine with all unmatched CRM rows of same client, currency, and processor, recalculate, and update.
+        Robustly batch CRM and processor rows for same client+processor+currency.
+        For any group with unmatched CRM, try *all* combinations of processor rows
+        for that processor+currency to best explain all CRM rows as a batch.
+        - Avoids batching rows that are exact 1:1 matches.
+        - Leaves unmatched rows as usual.
         """
+        import numpy as np
         from collections import defaultdict
+        from itertools import combinations
 
-        # Step 1: Index unmatched CRM rows by (email, currency, processor)
-        unmatched_by_key = defaultdict(list)
+        # Build CRM groups
+        crm_group_map = defaultdict(list)
         for idx, row in enumerate(matches):
-            if (
-                    row.get('crm_email')
-                    and row.get('match_status', 0) == 0
-                    and row.get('crm_currency')
-                    and isinstance(row.get('crm_amount'), (int, float))
-                    and row.get('crm_processor_name')
-            ):
-                key = (row['crm_email'], row['crm_currency'], row['crm_processor_name'])
-                unmatched_by_key[key].append((idx, row))
+            fname = (str(row.get('crm_firstname', '') or '')).strip().lower()
+            lname = (str(row.get('crm_lastname', '') or '')).strip().lower()
+            proc = (str(row.get('crm_processor_name', '') or '')).strip().lower()
+            currency = (str(row.get('crm_currency', '') or '')).strip().upper()
+            if fname or lname:
+                crm_group_map[(fname, lname, proc, currency)].append((idx, row))
 
-        batched_indices = set()
-        new_rows = []
+        # Build processor row list (simulate processor_df in-memory for this phase)
+        processor_rows = []
+        for idx, row in enumerate(matches):
+            # Any row with at least processor-side info and amount
+            if row.get('proc_total_amounts') and len(row['proc_total_amounts']) == 1:
+                proc_amt = row['proc_total_amounts'][0]
+                if isinstance(proc_amt, (int, float)):
+                    processor_rows.append((idx, row))
 
-        # Step 2: For each matched (incorrectly paid) row, try batch with unmatched
-        for idx, matched_row in enumerate(matches):
-            if (
-                    matched_row.get('crm_email')
-                    and matched_row.get('crm_currency')
-                    and matched_row.get('crm_processor_name')
-                    and matched_row.get('match_status', 0) == 1
-                    and matched_row.get('payment_status', 0) == 0  # Not paid exactly
-                    and isinstance(matched_row.get('converted_amount_total'), (int, float))
-                    and matched_row.get('matched_proc_indices')
-            ):
-                key = (matched_row['crm_email'], matched_row['crm_currency'], matched_row['crm_processor_name'])
-                unmatched_group = unmatched_by_key.get(key, [])
-                if not unmatched_group:
-                    continue
+        used_crm = set()
+        used_proc = set()
+        new_matches = []
 
-                # Batch: combine all unmatched CRM rows with this matched row
-                crm_rows = [matched_row] + [r for _, r in unmatched_group]
-                crm_sum = sum(r['crm_amount'] for r in crm_rows)
-                proc_total = matched_row['converted_amount_total']
-                proc_indices = matched_row['matched_proc_indices']
+        for group_key, group_rows in crm_group_map.items():
+            if not group_rows:
+                continue
+            fname, lname, proc, currency = group_key
+            group_crm_indices = [idx for idx, _ in group_rows]
+            group_crm_rows = [r for _, r in group_rows]
+            any_unmatched = any(r.get('match_status', 0) == 0 for r in group_crm_rows)
+            if not any_unmatched:
+                continue
 
-                abs_tol = tolerance * crm_sum
-                abs_diff = abs(proc_total - crm_sum)
-                pay_status = int(abs_diff <= abs_tol)
+            # --- Find all candidate processor rows for this group ---
+            proc_candidates = [
+                (idx, row)
+                for idx, row in processor_rows
+                if (str(row.get('proc_processor_name', '') or '').strip().lower() == proc and
+                    str(row.get('proc_currencies', [''])[0]).strip().upper() == currency and
+                    idx not in used_proc)
+            ]
 
-                # Copy and update batch row
-                new_row = matched_row.copy()
-                new_row['crm_amount'] = crm_sum
-                new_row['crm_combo_len'] = len(crm_rows)
-                # Keep proc_combo_len, matched_proc_indices, etc
-                new_row['payment_status'] = pay_status
-                new_row['match_status'] = 1
+            # If there are more processor rows than max_proc_combo, take the most recent ones
+            if len(proc_candidates) > max_proc_combo:
+                proc_candidates = proc_candidates[-max_proc_combo:]
 
-                if pay_status:
-                    new_row['comment'] = (
-                        f"Batched (retry): {len(crm_rows)} CRM withdrawals merged (sum={crm_sum:.2f} {matched_row['crm_currency']}) "
-                        f"to {proc_total:.2f} {matched_row['crm_currency']} across {len(proc_indices)} proc rows. Payment correct after batch."
-                    )
-                else:
-                    new_row['comment'] = (
-                        f"Batched (retry): {len(crm_rows)} CRM withdrawals merged (sum={crm_sum:.2f} {matched_row['crm_currency']}) "
-                        f"to {proc_total:.2f} {matched_row['crm_currency']} across {len(proc_indices)} proc rows. "
-                        f"Amount mismatch: {abs_diff:.2f} {matched_row['crm_currency']}"
-                    )
+            crm_sum = sum((r.get('crm_amount', 0) or 0) for r in group_crm_rows)
+            crm_n = len(group_crm_rows)
+            proc_amounts = [row['proc_total_amounts'][0] for _, row in proc_candidates]
 
-                new_rows.append(new_row)
-                # Mark originals for removal
-                batched_indices.add(idx)
-                batched_indices.update(i for i, _ in unmatched_group)
+            # --- Now, try all processor row combinations ---
+            best_combo = None
+            best_error = float('inf')
+            for k in range(1, min(len(proc_candidates), crm_n * 2) + 1):
+                for combo in combinations(proc_candidates, k):
+                    indices = [idx for idx, _ in combo]
+                    total = sum(row['proc_total_amounts'][0] for _, row in combo)
+                    diff = abs(total - crm_sum)
+                    if diff <= tolerance * max(abs(crm_sum), abs(total), 1):
+                        if diff < best_error:
+                            best_combo = combo
+                            best_error = diff
+                if best_combo and best_error <= tolerance * max(abs(crm_sum),
+                                                                abs(best_combo[0][1]['proc_total_amounts'][0]), 1):
+                    break
 
-        # Remove original CRM rows that were merged into batches
-        matches[:] = [r for idx, r in enumerate(matches) if idx not in batched_indices]
-        matches.extend(new_rows)
+            if not best_combo:
+                continue  # Can't batch; fallback to original logic
+
+            # --- If any CRM row can be perfectly explained by a single processor row, treat it as 1:1 ---
+            skip_batch = False
+            for idx_crm, crm_row in group_rows:
+                amt_crm = crm_row.get('crm_amount', 0) or 0
+                for idx_proc, proc_row in proc_candidates:
+                    amt_proc = proc_row['proc_total_amounts'][0]
+                    if abs(amt_crm - amt_proc) <= tolerance * max(abs(amt_crm), abs(amt_proc), 1):
+                        # 1:1 match exists; don't batch these, let normal logic handle them
+                        skip_batch = True
+                        break
+                if skip_batch:
+                    break
+            if skip_batch:
+                continue  # Let those be handled by standard logic, don't batch
+
+            # Otherwise, create batched result
+            batch_crm_indices = [idx for idx, _ in group_rows]
+            batch_proc_indices = [idx for idx, _ in best_combo]
+            batch_proc_amounts = [row['proc_total_amounts'][0] for _, row in best_combo]
+
+            base_row = group_crm_rows[0].copy()
+            base_row['crm_amount'] = crm_sum
+            base_row['crm_combo_len'] = crm_n
+            base_row['proc_combo_len'] = len(batch_proc_indices)
+            base_row['converted_amount_total'] = sum(batch_proc_amounts)
+            base_row['matched_proc_indices'] = batch_proc_indices
+            base_row['payment_status'] = int(best_error <= tolerance * abs(crm_sum))
+            base_row['match_status'] = 1
+            base_row['comment'] = (
+                    f"Batched: {crm_n} CRM withdrawals merged (sum={crm_sum:.2f} {currency}) "
+                    f"to {sum(batch_proc_amounts):.2f} {currency} across {len(batch_proc_indices)} proc rows."
+                    + (f" Amount mismatch: {best_error:.2f} {currency}" if best_error > 0 else "")
+            )
+
+            new_matches.append(base_row)
+            used_crm.update(batch_crm_indices)
+            used_proc.update(batch_proc_indices)
+
+        # Final list: remove any merged CRM/processor rows, append new batches
+        matches[:] = [r for idx, r in enumerate(matches) if idx not in used_crm and idx not in used_proc]
+        matches.extend(new_matches)
 
     def _create_unmatched_crm_record(self, crm_row):
         return {

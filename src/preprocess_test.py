@@ -637,17 +637,19 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
     elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
         return patch_standardize_zotapay_paymentasia_withdrawals(df, processor)
 
+
+
     elif processor.lower() == "trustpayments":
         # Filter to only REFUND type and errorcode == 0
         df = df[
             (df["requesttypedescription"].str.upper() == "REFUND") &
             (df["errorcode"] == 0)
             ].copy()
+
         if df.empty:
             print("No TrustPayments withdrawals found after filtering.")
             return pd.DataFrame()
 
-        # Split billingfullname into first and last names
         def split_billingfullname(name):
             if pd.isna(name):
                 return "", ""
@@ -655,24 +657,18 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             first = parts[0]
             last = parts[1] if len(parts) > 1 else ""
             return first, last
-
         df["first_name"], df["last_name"] = zip(*df["billingfullname"].apply(split_billingfullname))
-        # Standardize date
         df["date"] = pd.to_datetime(df["transactionstartedtimestamp"], errors="coerce")
-        # Last 4 card digits
         df["last_4cc"] = df["maskedpan"].astype(str).str[-4:]
-        # Currency
         df["currency"] = df["currencyiso3a"]
-        # Amount
         df["amount"] = pd.to_numeric(df["mainamount"], errors="coerce")
-        # TP
-        df["tp"] = df["orderreference"].astype(str).str.split("-").str[0]
-        # Email blank (no email in processor file)
+        # --- Robustly clean TP as str, remove decimals, strip spaces ---
+        df["tp"] = df["orderreference"].astype(str).str.split("-").str[0].str.strip().str.replace(r"\.0$", "",
+                                                                                                  regex=True)
+        # Remove any accidental non-digit chars, just in case
+        df["tp"] = df["tp"].str.replace(r"[^\d]", "", regex=True)
         df["email"] = ""
-        # Processor name
         df["processor_name"] = "trustpayments"
-
-        # Reorder columns
         keep = [
             "amount", "currency", "date", "last_4cc", "email",
             "first_name", "last_name", "processor_name", "tp"
@@ -902,4 +898,184 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
             print(f"⚠️ Not saving empty {processor_name} {transaction_type}s")
 
     return df_clean
+
+def combine_processed_files(
+    date, processors,
+    processed_crm_dir=PROCESSED_CRM_DIR,
+    processed_proc_dir=PROCESSED_PROCESSOR_DIR,
+    out_crm_dir=None,
+    out_proc_dir=None,
+    transaction_type="withdrawal",
+    exchange_rate_map=None
+):
+    """
+    Combine all processed CRM and processor withdrawal files for the given date
+    into single combined files for matching. CRM and processor side are both grouped/summed.
+    """
+
+    import pandas as pd
+    from collections import Counter
+
+    if out_crm_dir is None:
+        out_crm_dir = processed_crm_dir / "combined"
+    if out_proc_dir is None:
+        out_proc_dir = processed_proc_dir / "combined"
+
+    crm_dfs, proc_dfs = [], []
+    crm_file_template = f"{{}}_{transaction_type}s.xlsx"
+    proc_file_template = f"{{}}_{transaction_type}s.xlsx"
+
+    for proc in processors:
+        crm_f = processed_crm_dir / proc / date / crm_file_template.format(proc)
+        if proc == "trustpayments":
+            print(f"[DEBUG] CRM trustpayments file path: {crm_f}, exists: {crm_f.exists()}")
+        if crm_f.exists():
+            df = pd.read_excel(crm_f)
+            if proc == "trustpayments":
+                print(f"[DEBUG] Loaded CRM trustpayments shape: {df.shape}, columns: {df.columns.tolist()}")
+            crm_dfs.append(df)
+        else:
+            print(f"⚠️ CRM processed file not found for {proc}: {crm_f}")
+
+        proc_f = processed_proc_dir / proc / date / proc_file_template.format(proc)
+        if proc == "trustpayments":
+            print(f"[DEBUG] Processor trustpayments file path: {proc_f}, exists: {proc_f.exists()}")
+        if proc_f.exists():
+            df = pd.read_excel(proc_f)
+            if proc == "trustpayments":
+                print(f"[DEBUG] Loaded processor trustpayments shape: {df.shape}, columns: {df.columns.tolist()}")
+            proc_dfs.append(df)
+        else:
+            print(f"⚠️ Processor processed file not found for {proc}: {proc_f}")
+
+    def choose_target_currency(currencies):
+        cur_set = set(currencies)
+        if 'USD' in cur_set:
+            return 'USD'
+        elif 'EUR' in cur_set:
+            return 'EUR'
+        else:
+            return Counter(currencies).most_common(1)[0][0]
+
+    def group_crm_withdrawals(df, exchange_rate_map):
+        group_cols = [
+            'First Name (Account) (Account)', 'Last Name (Account) (Account)', 'PSP name'
+        ]
+        df = df.copy()
+        for col in group_cols:
+            if col not in df.columns:
+                df[col] = ''
+        if 'Currency' not in df.columns:
+            df['Currency'] = 'USD'
+        if 'Amount' not in df.columns:
+            df['Amount'] = 0.0
+
+        grouped_rows = []
+        for keys, group in df.groupby(group_cols):
+            group = group[group['Amount'].notna() & group['Currency'].notna()]
+            if group.empty:
+                continue
+            currencies = group['Currency'].tolist()
+            tgt_cur = choose_target_currency(currencies)
+            amounts = []
+            for _, row in group.iterrows():
+                amt = float(row['Amount'])
+                src_cur = row['Currency']
+                if src_cur == tgt_cur:
+                    converted = amt
+                else:
+                    key = (src_cur, tgt_cur)
+                    if exchange_rate_map and key in exchange_rate_map:
+                        converted = amt * exchange_rate_map[key]
+                    else:
+                        print(f"⚠️ No exchange rate for {key}, leaving amount as is.")
+                        converted = amt
+                amounts.append(converted)
+            total_amt = sum(amounts)
+            row0 = group.iloc[0].copy()
+            row0['Amount'] = total_amt
+            row0['Currency'] = tgt_cur
+            grouped_rows.append(row0)
+        out_df = pd.DataFrame(grouped_rows)
+        return out_df
+
+    def is_all_email_blank(df):
+        # Handles blank, empty, and NaN emails robustly!
+        return ((df['email'].isna()) | (df['email'].astype(str).str.strip() == '')).all()
+
+    def group_processor_withdrawals(df, exchange_rate_map):
+        df = df.copy()
+        # Clean up string columns
+        for col in ['processor_name', 'first_name', 'last_name', 'email']:
+            if col not in df.columns:
+                df[col] = ''
+            df[col] = df[col].astype(str).str.strip().fillna('')
+
+        out_dfs = []
+
+        for pname, group in df.groupby('processor_name'):
+            if pname.lower() == 'trustpayments':
+                group_cols = ['processor_name', 'first_name', 'last_name']
+                print(f"[DEBUG] Grouping {pname} by: {group_cols}")
+            else:
+                group_cols = ['processor_name', 'email']
+                print(f"[DEBUG] Grouping {pname} by: {group_cols}")
+
+            grouped_rows = []
+            for keys, subg in group.groupby(group_cols, dropna=False):
+                subg = subg[subg['amount'].notna() & subg['currency'].notna()]
+                if subg.empty:
+                    continue
+                currencies = subg['currency'].tolist()
+                tgt_cur = choose_target_currency(currencies)
+                amounts = []
+                for _, row in subg.iterrows():
+                    amt = float(row['amount'])
+                    src_cur = row['currency']
+                    if src_cur == tgt_cur:
+                        converted = amt
+                    else:
+                        key = (src_cur, tgt_cur)
+                        if exchange_rate_map and key in exchange_rate_map:
+                            converted = amt * exchange_rate_map[key]
+                        else:
+                            print(f"⚠️ No exchange rate for {key}, leaving amount as is.")
+                            converted = amt
+                    amounts.append(converted)
+                total_amt = sum(amounts)
+                row0 = subg.iloc[0].copy()
+                row0['amount'] = total_amt
+                row0['currency'] = tgt_cur
+                grouped_rows.append(row0)
+            out_dfs.append(pd.DataFrame(grouped_rows))
+
+        out_df = pd.concat(out_dfs, ignore_index=True)
+        return out_df
+
+    # Combine and save
+    if crm_dfs:
+        combined_crm = pd.concat(crm_dfs, ignore_index=True)
+        if exchange_rate_map is not None:
+            combined_crm = group_crm_withdrawals(combined_crm, exchange_rate_map)
+        out_crm_date_dir = out_crm_dir / date
+        out_crm_date_dir.mkdir(parents=True, exist_ok=True)
+        combined_crm_path = out_crm_date_dir / f"combined_crm_{transaction_type}s.xlsx"
+        combined_crm.to_excel(combined_crm_path, index=False)
+        print(f"✅ Combined CRM withdrawals saved to {combined_crm_path}")
+    else:
+        print("⚠️ No CRM files found to combine.")
+
+    if proc_dfs:
+        combined_proc = pd.concat(proc_dfs, ignore_index=True)
+        if exchange_rate_map is not None:
+            combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map)
+        else:
+            combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map=None)
+        out_proc_date_dir = out_proc_dir / date
+        out_proc_date_dir.mkdir(parents=True, exist_ok=True)
+        combined_proc_path = out_proc_date_dir / f"combined_processor_{transaction_type}s.xlsx"
+        combined_proc.to_excel(combined_proc_path, index=False)
+        print(f"✅ Combined processor withdrawals saved to {combined_proc_path}")
+    else:
+        print("⚠️ No processor files found to combine.")
 

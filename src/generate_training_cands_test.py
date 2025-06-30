@@ -94,87 +94,9 @@ combined_proc_path = PROCESSED_PROCESSOR_DIR / "combined" / date / "combined_pro
 crm_df = load_excel_if_exists(combined_crm_path)
 processor_df = load_excel_if_exists(combined_proc_path)
 
-# --- PATCH Combined CRM Columns ---
-if 'Currency' in crm_df.columns:
-    crm_df['crm_currency'] = crm_df['Currency'].map(normalize_currency)
-elif 'crm_currency' not in crm_df.columns:
-    crm_df['crm_currency'] = ''
-
-if 'Amount' in crm_df.columns:
-    crm_df['crm_amount'] = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
-elif 'crm_amount' not in crm_df.columns:
-    crm_df['crm_amount'] = 0.0
-
-if 'CC Last 4 Digits' in crm_df.columns:
-    crm_df['crm_last4'] = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
-elif 'crm_last4' not in crm_df.columns:
-    crm_df['crm_last4'] = ''
-
-if 'Email (Account) (Account)' in crm_df.columns:
-    crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
-elif 'crm_email' not in crm_df.columns:
-    crm_df['crm_email'] = ''
-
-if 'First Name (Account) (Account)' in crm_df.columns:
-    crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
-elif 'crm_firstname' not in crm_df.columns:
-    crm_df['crm_firstname'] = ''
-
-if 'Last Name (Account) (Account)' in crm_df.columns:
-    crm_df['crm_lastname'] = crm_df['Last Name (Account) (Account)'].fillna('')
-elif 'crm_lastname' not in crm_df.columns:
-    crm_df['crm_lastname'] = ''
-
-if 'tp' in crm_df.columns:
-    crm_df['crm_tp'] = crm_df['tp'].fillna('')
-elif 'crm_tp' not in crm_df.columns:
-    crm_df['crm_tp'] = ''
-
-if 'PSP name' in crm_df.columns:
-    crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower()
-elif 'crm_processor_name' not in crm_df.columns:
-    crm_df['crm_processor_name'] = ''
-
-# --- PATCH Processor Combined Columns ---
-if 'date' in processor_df.columns:
-    processor_df['proc_date'] = pd.to_datetime(processor_df['date'], errors='coerce').dt.date
-elif 'proc_date' not in processor_df.columns:
-    processor_df['proc_date'] = pd.NaT
-
-if 'last_4cc' in processor_df.columns:
-    processor_df['proc_last4_digits'] = (
-        processor_df['last_4cc'].fillna(0).astype(int).astype(str).str.zfill(4)
-    )
-elif 'proc_last4_digits' not in processor_df.columns:
-    processor_df['proc_last4_digits'] = ''
-
-if 'email' in processor_df.columns:
-    processor_df['proc_emails'] = processor_df['email'].fillna('').astype(str)
-elif 'proc_emails' not in processor_df.columns:
-    processor_df['proc_emails'] = ''
-
-if 'currency' in processor_df.columns:
-    processor_df['proc_currency'] = processor_df['currency']
-elif 'proc_currency' not in processor_df.columns:
-    processor_df['proc_currency'] = ''
-
-if 'amount' in processor_df.columns:
-    processor_df['proc_total_amount'] = pd.to_numeric(processor_df['amount'], errors='coerce').abs()
-elif 'proc_total_amount' not in processor_df.columns:
-    processor_df['proc_total_amount'] = 0.0
-
-if 'processor_name' in processor_df.columns:
-    processor_df['proc_processor_name'] = processor_df['processor_name'].str.strip().str.lower()
-elif 'proc_processor_name' not in processor_df.columns:
-    processor_df['proc_processor_name'] = ''
-
-
-
 if crm_df is None or processor_df is None:
     logger.error("No valid combined CRM or processor files found. Exiting.")
     exit(1)
-
-# --- The rest is unchanged! ---
 
 logger.info("Configuring reconciliation engine...")
 engine = ReconciliationEngine(exchange_rate_map, config={
@@ -185,7 +107,7 @@ engine = ReconciliationEngine(exchange_rate_map, config={
     'log_level': logging.DEBUG
 })
 
-non_cancelled_mask = crm_df['Name'].str.lower() != 'withdrawal cancelled'
+non_cancelled_mask = crm_df['crm_type'].str.lower() != 'withdrawal cancelled'
 crm_df_non_cancelled = crm_df[non_cancelled_mask]
 
 logger.info(f"Starting reconciliation for {len(crm_df_non_cancelled)} CRM rows and {len(processor_df)} processor rows...")
@@ -200,8 +122,19 @@ output_path.parent.mkdir(parents=True, exist_ok=True)
 
 matches_df = pd.DataFrame(matches)
 
+
+desired_columns = [
+    'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount', 'crm_processor_name',
+    'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
+    'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status', 'payment_status', 'comment'
+]
+
+
+existing_columns = [col for col in desired_columns if col in matches_df.columns]
+matches_df = matches_df[existing_columns]
+
 # Add 'Withdrawal Cancelled' CRM rows
-cancelled_mask = crm_df['Name'].str.lower() == 'withdrawal cancelled'
+cancelled_mask = crm_df['crm_type'].str.lower() == 'withdrawal cancelled'
 cancelled_rows = crm_df[cancelled_mask]
 cancelled_outputs = [create_cancelled_row(row) for _, row in cancelled_rows.iterrows()]
 

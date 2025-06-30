@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 import logging
 from collections import Counter
+from dateutil import parser
 
 PSP_NAME_MAP = {
     'netteler': 'neteller',
@@ -995,12 +996,25 @@ def combine_processed_files(
         out_df = pd.DataFrame(grouped_rows)
         return out_df
 
+    import dateutil.parser
+
     def group_processor_withdrawals(df, exchange_rate_map):
         df = df.copy()
+
+        # Clean string columns used in grouping to avoid issues
         for col in ['processor_name', 'first_name', 'last_name', 'email', 'last_4cc']:
             if col not in df.columns:
                 df[col] = ''
             df[col] = df[col].astype(str).fillna('').str.strip()
+
+        # Normalize last_4cc here: remove '.0' if present before grouping
+        def clean_last4(val):
+            val_str = str(val)
+            if val_str.endswith('.0'):
+                val_str = val_str[:-2]
+            return val_str.strip()
+
+        df['last_4cc'] = df['last_4cc'].apply(clean_last4)
 
         out_dfs = []
         for pname, group in df.groupby('processor_name'):
@@ -1057,6 +1071,31 @@ def combine_processed_files(
     if crm_dfs:
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
         combined_crm = group_crm_withdrawals(combined_crm, exchange_rate_map)
+
+        # Rename and format CRM columns as requested
+        rename_map = {
+            'Created On': 'crm_date',
+            'First Name (Account) (Account)': 'crm_firstname',
+            'Last Name (Account) (Account)': 'crm_lastname',
+            'Email (Account) (Account)': 'crm_email',
+            'tp': 'crm_tp',
+            'Amount': 'crm_amount',
+            'Currency': 'crm_currency',
+            'PSP name': 'crm_processor_name',
+            'CC Last 4 Digits': 'crm_last4',
+            'Name': 'crm_type',
+        }
+
+        for old_col, new_col in rename_map.items():
+            if old_col in combined_crm.columns:
+                combined_crm.rename(columns={old_col: new_col}, inplace=True)
+
+        if 'crm_date' in combined_crm.columns:
+            combined_crm['crm_date'] = pd.to_datetime(combined_crm['crm_date'], errors='coerce').dt.date
+
+        if 'crm_last4' in combined_crm.columns:
+            combined_crm['crm_last4'] = combined_crm['crm_last4'].astype(str).str.zfill(4)
+
         out_crm_date_dir = out_crm_dir / date
         out_crm_date_dir.mkdir(parents=True, exist_ok=True)
         combined_crm_path = out_crm_date_dir / f"combined_crm_{transaction_type}s.xlsx"
@@ -1068,6 +1107,75 @@ def combine_processed_files(
     if proc_dfs:
         combined_proc = pd.concat(proc_dfs, ignore_index=True)
         combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map)
+
+        # Rename columns for processor
+        rename_map_proc = {
+            'amount': 'proc_amount',
+            'currency': 'proc_currency',
+            'date': 'proc_date',
+            'last_4cc': 'proc_last4',
+            'email': 'proc_email',
+            'first_name': 'proc_firstname',
+            'last_name': 'proc_lastname',
+            'processor_name': 'proc_processor_name',
+            'tp': 'proc_tp',
+        }
+
+        for old_col, new_col in rename_map_proc.items():
+            if old_col in combined_proc.columns:
+                combined_proc.rename(columns={old_col: new_col}, inplace=True)
+
+        # Robust date parsing for proc_date using dateutil.parser to handle all formats
+        import dateutil.parser
+
+        def parse_mixed_date(date_str):
+            if pd.isna(date_str) or str(date_str).strip() == '':
+                return pd.NaT
+            try:
+                dt = dateutil.parser.parse(str(date_str), dayfirst=True)
+                return dt.date()
+            except Exception:
+                return pd.NaT
+
+        if 'proc_date' in combined_proc.columns:
+            combined_proc['proc_date'] = combined_proc['proc_date'].apply(parse_mixed_date)
+
+        # Normalize proc_amount to numeric absolute
+        if 'proc_amount' in combined_proc.columns:
+            combined_proc['proc_amount'] = pd.to_numeric(combined_proc['proc_amount'], errors='coerce').abs()
+
+        # Clean proc_last4: remove trailing '.0', zero-pad to 4 digits
+        def clean_proc_last4(val):
+            val_str = str(val)
+            if val_str.endswith('.0'):
+                val_str = val_str[:-2]
+            return val_str.zfill(4)[-4:]
+
+        if 'proc_last4' in combined_proc.columns:
+            combined_proc['proc_last4'] = combined_proc['proc_last4'].apply(clean_proc_last4)
+
+        # Clean proc_tp to remove trailing '.0' if present and strip spaces
+        def clean_proc_tp(val):
+            if pd.isna(val):
+                return ''
+            val_str = str(val).strip()
+            if val_str.endswith('.0'):
+                val_str = val_str[:-2]
+            return val_str
+
+        if 'proc_tp' in combined_proc.columns:
+            combined_proc['proc_tp'] = combined_proc['proc_tp'].apply(clean_proc_tp)
+
+        # Clean and strip other string columns
+        str_cols_proc = [
+            'proc_email', 'proc_firstname', 'proc_lastname', 'proc_processor_name'
+        ]
+        for col in str_cols_proc:
+            if col in combined_proc.columns:
+                combined_proc[col] = combined_proc[col].fillna('').astype(str).str.strip()
+            else:
+                combined_proc[col] = ''
+
         out_proc_date_dir = out_proc_dir / date
         out_proc_date_dir.mkdir(parents=True, exist_ok=True)
         combined_proc_path = out_proc_date_dir / f"combined_processor_{transaction_type}s.xlsx"
@@ -1075,5 +1183,8 @@ def combine_processed_files(
         print(f"✅ Combined processor withdrawals saved to {combined_proc_path}")
     else:
         print("⚠️ No processor files found to combine.")
+
+
+
 
 

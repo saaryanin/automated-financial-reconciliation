@@ -1,15 +1,19 @@
 from config import CRM_DIR, PROCESSOR_DIR, DATA_DIR
 from pathlib import Path
 import pandas as pd
-from src.preprocess_test import process_files_in_parallel, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
+from src.preprocess_test import (
+    process_files_in_parallel,
+    PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR,
+    combine_processed_files
+)
 from src.withdrawals_matcher_test import ReconciliationEngine
 from src.utils import (
-    logging,setup_logger, load_excel_if_exists, safe_concat, create_cancelled_row, drop_cols, normalize_currency
+    logging, setup_logger, load_excel_if_exists, safe_concat, create_cancelled_row, drop_cols, normalize_currency
 )
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-06-18"
+date = "2025-03-20"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",
@@ -43,7 +47,7 @@ for proc in processors:
     else:
         logger.warning(f"Processor file for {proc} not found.")
 
-# --- Combine Zotapay and PaymentAsia processor files ---
+# --- Combine Zotapay and PaymentAsia files into the special subfolder ---
 zotapay_file = PROCESSED_PROCESSOR_DIR / "zotapay" / date / "zotapay_withdrawals.xlsx"
 paymentasia_file = PROCESSED_PROCESSOR_DIR / "paymentasia" / date / "paymentasia_withdrawals.xlsx"
 combined_out_dir = PROCESSED_PROCESSOR_DIR / "zotapay_paymentasia" / date
@@ -60,69 +64,7 @@ if safe_concat(zota_pa_dfs).shape[0]:
 else:
     print("⚠️ No Zotapay or PaymentAsia files found to combine.")
 
-# --- Load processed files ---
-crm_dfs, proc_dfs = [], []
-seen_combined_crm = False
-
-for proc in processors:
-    if proc in ["zotapay", "paymentasia"]:
-        if seen_combined_crm:
-            continue
-        folder_name = "zotapay_paymentasia"
-        seen_combined_crm = True
-    else:
-        folder_name = proc
-
-    crm_file = PROCESSED_CRM_DIR / folder_name / date / f"{folder_name}_withdrawals.xlsx"
-    proc_file = PROCESSED_PROCESSOR_DIR / folder_name / date / f"{folder_name}_withdrawals.xlsx"
-
-    crm_df = load_excel_if_exists(crm_file)
-    if crm_df is None:
-        logger.warning(f"Skipping {proc} - CRM file not found")
-        continue
-
-    crm_df['crm_date'] = pd.to_datetime(crm_df['Created On'], errors='coerce').dt.date
-    crm_df['crm_email'] = crm_df['Email (Account) (Account)'].fillna('').astype(str)
-    crm_df['crm_firstname'] = crm_df['First Name (Account) (Account)'].fillna('')
-    crm_df['crm_lastname'] = crm_df['Last Name (Account) (Account)'].fillna('')
-    crm_df['crm_tp'] = crm_df['tp'].fillna('')
-    crm_df['crm_currency'] = crm_df['Currency'].map(normalize_currency)
-    crm_df['crm_amount'] = pd.to_numeric(crm_df['Amount'], errors='coerce').abs()
-
-    if 'CC Last 4 Digits' in crm_df.columns:
-        crm_df['crm_last4'] = crm_df['CC Last 4 Digits'].fillna(0).astype(int).astype(str).str.zfill(4)
-    else:
-        crm_df['crm_last4'] = ''
-
-
-    crm_df['crm_processor_name'] = crm_df['PSP name'].str.strip().str.lower()
-
-    crm_dfs.append(crm_df)
-
-    proc_df = load_excel_if_exists(proc_file) if proc_file.suffix != ".csv" else pd.read_csv(proc_file) if proc_file.exists() else None
-    if proc_df is None:
-        logger.warning(f"Processor file for {proc} not found. Continuing with CRM only.")
-        continue
-
-    proc_df['proc_date'] = pd.to_datetime(proc_df['date'], errors='coerce').dt.date
-    proc_df['proc_emails'] = proc_df['email'].fillna('').astype(str)
-    proc_df['proc_tp'] = proc_df['tp'].astype(str).fillna('') if 'tp' in proc_df.columns else ''
-    proc_df['proc_last4_digits'] = proc_df['last_4cc'].astype(str).str.zfill(4).str[-4:]
-    proc_df['proc_currency'] = proc_df['currency']
-    proc_df['proc_total_amount'] = pd.to_numeric(proc_df['amount'], errors='coerce').abs()
-    proc_df['proc_processor_name'] = proc_df.get('processor_name', proc)
-    proc_df['proc_firstname'] = proc_df['first_name'].fillna('').astype(str) if 'first_name' in proc_df else ''
-    proc_df['proc_lastname'] = proc_df['last_name'].fillna('').astype(str) if 'last_name' in proc_df else ''
-
-    proc_dfs.append(proc_df)
-
-if not crm_dfs or not proc_dfs:
-    logger.error("No valid CRM or processor files found. Exiting.")
-    exit(1)
-
-crm_df = safe_concat(crm_dfs, ignore_index=True)
-processor_df = safe_concat(proc_dfs, ignore_index=True)
-
+# --- Load exchange rates BEFORE combining processed files ---
 rates_path = DATA_DIR / "rates" / f"rates_{date}.csv"
 if rates_path.exists():
     rates_df = pd.read_csv(rates_path)
@@ -133,8 +75,28 @@ if rates_path.exists():
         for _, row in rates_df.iterrows()
     }
 else:
-    logger.warning(f"Exchange rates file not found: {rates_path}")
     exchange_rate_map = {}
+
+# --- NOW combine everything from all subfolders (including zotapay_paymentasia) ---
+combine_processed_files(
+    date=date,
+    processors=processors,
+    processed_crm_dir=PROCESSED_CRM_DIR,
+    processed_proc_dir=PROCESSED_PROCESSOR_DIR,
+    transaction_type="withdrawal",
+    exchange_rate_map=exchange_rate_map
+)
+
+# --- Load your fully combined files for matching ---
+combined_crm_path = PROCESSED_CRM_DIR / "combined" / date / "combined_crm_withdrawals.xlsx"
+combined_proc_path = PROCESSED_PROCESSOR_DIR / "combined" / date / "combined_processor_withdrawals.xlsx"
+
+crm_df = load_excel_if_exists(combined_crm_path)
+processor_df = load_excel_if_exists(combined_proc_path)
+
+if crm_df is None or processor_df is None:
+    logger.error("No valid combined CRM or processor files found. Exiting.")
+    exit(1)
 
 logger.info("Configuring reconciliation engine...")
 engine = ReconciliationEngine(exchange_rate_map, config={
@@ -145,7 +107,7 @@ engine = ReconciliationEngine(exchange_rate_map, config={
     'log_level': logging.DEBUG
 })
 
-non_cancelled_mask = crm_df['Name'].str.lower() != 'withdrawal cancelled'
+non_cancelled_mask = crm_df['crm_type'].str.lower() != 'withdrawal cancelled'
 crm_df_non_cancelled = crm_df[non_cancelled_mask]
 
 logger.info(f"Starting reconciliation for {len(crm_df_non_cancelled)} CRM rows and {len(processor_df)} processor rows...")
@@ -160,8 +122,19 @@ output_path.parent.mkdir(parents=True, exist_ok=True)
 
 matches_df = pd.DataFrame(matches)
 
+
+desired_columns = [
+    'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount', 'crm_processor_name',
+    'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
+    'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status', 'payment_status', 'comment'
+]
+
+
+existing_columns = [col for col in desired_columns if col in matches_df.columns]
+matches_df = matches_df[existing_columns]
+
 # Add 'Withdrawal Cancelled' CRM rows
-cancelled_mask = crm_df['Name'].str.lower() == 'withdrawal cancelled'
+cancelled_mask = crm_df['crm_type'].str.lower() == 'withdrawal cancelled'
 cancelled_rows = crm_df[cancelled_mask]
 cancelled_outputs = [create_cancelled_row(row) for _, row in cancelled_rows.iterrows()]
 

@@ -815,9 +815,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     return df.reset_index(drop=True)
 
 
-
-
-
 # ----------------------------
 # Utility
 # ----------------------------
@@ -908,9 +905,13 @@ def combine_processed_files(
     out_crm_dir=None,
     out_proc_dir=None,
     transaction_type="withdrawal",
-    exchange_rate_map=None
+    exchange_rate_map=None,
+    extra_processors=None
 ):
+    if extra_processors is None:
+        extra_processors = []
 
+    all_processors = list(processors) + list(extra_processors)
 
     if out_crm_dir is None:
         out_crm_dir = processed_crm_dir / "combined"
@@ -921,7 +922,7 @@ def combine_processed_files(
     crm_file_template = f"{{}}_{transaction_type}s.xlsx"
     proc_file_template = f"{{}}_{transaction_type}s.xlsx"
 
-    for proc in processors:
+    for proc in all_processors:
         crm_f = processed_crm_dir / proc / date / crm_file_template.format(proc)
         if crm_f.exists():
             df = pd.read_excel(crm_f)

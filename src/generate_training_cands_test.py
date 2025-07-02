@@ -13,7 +13,7 @@ from src.utils import (
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-03-20"
+date = "2025-05-05"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",
@@ -81,6 +81,7 @@ else:
 combine_processed_files(
     date=date,
     processors=processors,
+    extra_processors=["zotapay_paymentasia"],
     processed_crm_dir=PROCESSED_CRM_DIR,
     processed_proc_dir=PROCESSED_PROCESSOR_DIR,
     transaction_type="withdrawal",

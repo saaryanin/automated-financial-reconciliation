@@ -39,37 +39,34 @@ def normalize_currency(cur):
     return cur
 
 def create_cancelled_row(row):
-    """Build output dict for a 'Withdrawal Cancelled' CRM row."""
     return {
-        'crm_date': row['Created On'],
-        'crm_email': row['Email (Account) (Account)'],
-        'crm_firstname': row.get('First Name (Account) (Account)', ''),
-        'crm_lastname': row.get('Last Name (Account) (Account)', ''),
-        'crm_tp': row.get('tp', ''),
-        'crm_last4': str(row.get('CC Last 4 Digits', '')).zfill(4),
-        'crm_currency': row.get('Currency', ''),
-        'crm_amount': -abs(float(row['Amount'])),
-        'crm_processor_name': row.get('PSP name', ''),
-        'proc_dates': [],
-        'proc_emails': [],
-        'proc_firstnames': [],
-        'proc_lastnames': [],
-        'proc_last4_digits': [],
-        'proc_currencies': [],
-        'proc_total_amounts': [],
-        'proc_processor_name': '',
-        'converted_amount_total': None,
-        'exchange_rates': [],
-        'email_similarity_avg': None,
+        'crm_date': row.get('crm_date', None),
+        'crm_email': row.get('crm_email', ''),
+        'crm_firstname': row.get('crm_firstname', ''),
+        'crm_lastname': row.get('crm_lastname', ''),
+        'crm_last4': row.get('crm_last4', ''),
+        'crm_currency': row.get('crm_currency', ''),
+        'crm_amount': row.get('crm_amount', 0),
+        'crm_processor_name': row.get('crm_processor_name', ''),
+        'proc_date': None,
+        'proc_email': None,
+        'proc_firstname': None,
+        'proc_lastname': None,
+        'proc_last4': None,
+        'proc_currency': None,
+        'proc_amount': None,
+        'proc_amount_crm_currency': None,
+        'proc_processor_name': None,
+        'email_similarity_avg': 0,
         'last4_match': False,
         'name_fallback_used': False,
         'exact_match_used': False,
-        'converted': False,
-        'combo_len': 0,
         'match_status': 0,
         'payment_status': 0,
-        'comment': "Withdrawal Cancellation",
+        'comment': 'Withdrawal cancelled with no matching withdrawal found',
+        'matched_proc_indices': []
     }
+
 
 def drop_cols(df, cols):
     """Drop columns from df if they exist."""

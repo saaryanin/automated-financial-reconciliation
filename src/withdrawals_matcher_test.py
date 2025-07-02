@@ -32,19 +32,19 @@ class ProcessorConfig:
 # Processor-specific configurations
 PROCESSOR_CONFIGS = {
     'safecharge': ProcessorConfig(
-        email_threshold=0.75,
+        email_threshold=0.15,
         require_last4=True,
         require_email=True,
         tolerance=0.1,
     ),
     'powercash': ProcessorConfig(
-        email_threshold=0.75,
+        email_threshold=0.6,
         require_last4=True,
         require_email=True,
         tolerance=0.1,
     ),
     'paypal': ProcessorConfig(
-        email_threshold=0.8,
+        email_threshold=0.6,
         name_match_threshold=0.75,
         require_last4=False,
         require_email=False,
@@ -53,7 +53,7 @@ PROCESSOR_CONFIGS = {
         matching_logic="paypal"
     ),
     'shift4': ProcessorConfig(
-        email_threshold=0.75,
+        email_threshold=0.6,
         name_match_threshold=0.70,
         require_last4=True,
         require_email=True,
@@ -64,7 +64,7 @@ PROCESSOR_CONFIGS = {
         matching_logic="shift4"
     ),
     'skrill': ProcessorConfig(
-        email_threshold=0.75,
+        email_threshold=0.6,
         require_last4=False,
         require_email=True,
         enable_name_fallback=False,
@@ -74,7 +74,7 @@ PROCESSOR_CONFIGS = {
         matching_logic="skrill"
     ),
     'neteller': ProcessorConfig(
-        email_threshold=0.75,
+        email_threshold=0.6,
         require_last4=False,
         require_email=True,
         enable_name_fallback=False,
@@ -84,7 +84,7 @@ PROCESSOR_CONFIGS = {
         matching_logic="skrill"   # we'll just reuse the Skrill logic
     ),
     'bitpay': ProcessorConfig(
-        email_threshold=0.75,
+        email_threshold=0.6,
         require_last4=False,
         require_email=True,
         enable_name_fallback=True,
@@ -94,7 +94,7 @@ PROCESSOR_CONFIGS = {
         matching_logic="bitpay"
     ),
     'zotapay_paymentasia': ProcessorConfig(  # Add this new configuration
-        email_threshold=0.75,  # Not critical since we're matching by TP
+        email_threshold=1,
         require_last4=False,
         require_email=False,
         enable_name_fallback=False,
@@ -104,7 +104,7 @@ PROCESSOR_CONFIGS = {
         matching_logic="zotapay_paymentasia"
     ),
     "trustpayments": ProcessorConfig(
-        email_threshold=0.75,
+        email_threshold=0.65,
         name_match_threshold=0.75,
         require_last4=False,
         require_email=False,
@@ -225,40 +225,143 @@ class ReconciliationEngine:
             'parameters_adjusted': self.parameter_adjusted
         }
 
-    def _cross_processor_last_chance(self, crm_df, processor_df, used_crm, used_proc, matches):
-        # Step 1: Find relevant processors
-        cross_processors = {"shift4", "safecharge", "powercash", "paypal", "trustpayments"}
-        # Step 2: Unmatched CRM rows for these processors
-        unmatched_key_crm = [
-            (idx, row)
-            for idx, row in crm_df.iterrows()
-            if str(row.get('crm_processor_name', '')).strip().lower() in cross_processors and idx not in used_crm
-        ]
-        if not unmatched_key_crm:
-            return
-        # Step 3: Unused processor rows in these processors
-        cross_proc_rows = processor_df[
-            processor_df['proc_processor_name'].str.lower().str.strip().isin(cross_processors)
-            & (~processor_df.index.isin(used_proc))
-            ]
-        if cross_proc_rows.empty:
-            return
-        cross_proc_dict = cross_proc_rows.to_dict('index')
-        cross_proc_last4_map = cross_proc_rows.groupby('proc_last4').indices
 
-        for idx, crm_row in unmatched_key_crm:
-            # Use standard matching logic (last resort)
-            result = self._match_standard_row(
-                crm_row, cross_proc_dict, cross_proc_last4_map, used_proc, self.get_processor_config('safecharge')
-            )
-            if result and result[0]:
-                match, diag = result
-                match['comment'] = (match.get('comment', '') + " [Cross-processor fallback]").strip()
-                match['cross_processor_fallback'] = True
-                matches.append(match)
-                used_crm.add(idx)
-                used_proc.update(match['matched_proc_indices'])
-                self.metrics['matched_fallback'] += 1
+    def _match_processor_to_crm_row(self, proc_row, crm_row, proc_config):
+        def safe_lower_strip(value):
+            if pd.isna(value):
+                return ''
+            return str(value).lower().strip()
+        """
+        Try to match one processor row to one CRM row.
+
+        Return (match_dict, diagnostics_dict) or None if no match.
+        """
+        # Extract relevant fields
+        proc_amount = proc_row.get('proc_amount')
+        proc_currency = proc_row.get('proc_currency')
+        proc_email = safe_lower_strip(proc_row.get('proc_email'))
+        proc_last4 = str(proc_row.get('proc_last4') or '').strip()
+        proc_tp = str(proc_row.get('proc_tp') or '').strip()
+
+        crm_amount = crm_row.get('crm_amount')
+        crm_currency = crm_row.get('crm_currency')
+        crm_email = safe_lower_strip(crm_row.get('crm_email'))
+        crm_last4 = str(crm_row.get('crm_last4') or '').strip()
+        crm_tp = str(crm_row.get('crm_tp') or '').strip()
+
+        # Convert processor amount to CRM currency
+        proc_amount_conv, rate = self.convert_amount(proc_amount, proc_currency, crm_currency)
+        if proc_amount_conv is None:
+            return None
+
+        # Compare amounts with tolerance
+        abs_tol = 0.1
+        rel_tol = proc_config.tolerance * abs(crm_amount)
+        tol = abs_tol if proc_currency == crm_currency else rel_tol
+        if abs(proc_amount_conv - crm_amount) > tol:
+            return None
+
+        # Check last4 match or email similarity
+        last4_valid = crm_last4 not in ("0", "0000", "", "nan")
+        last4_match = last4_valid and crm_last4 == proc_last4
+
+        # Email similarity using your function
+        email_sim = self.enhanced_email_similarity(crm_email, proc_email)
+        if proc_config.require_email and email_sim < proc_config.email_threshold and not last4_match:
+            return None
+
+        # If required last4 and no match, fail
+        if proc_config.require_last4 and not last4_match and email_sim < 0.75:
+            return None
+
+        # Build match dict (similar to other match_*_row methods)
+        match = {
+            'crm_date': crm_row.get('crm_date'),
+            'crm_email': crm_email,
+            'crm_firstname': crm_row.get('crm_firstname', ''),
+            'crm_lastname': crm_row.get('crm_lastname', ''),
+            'crm_last4': crm_last4,
+            'crm_currency': crm_currency,
+            'crm_amount': crm_amount,
+            'crm_processor_name': crm_row.get('crm_processor_name'),
+
+            'proc_date': proc_row.get('proc_date'),
+            'proc_email': proc_email,
+            'proc_firstname': proc_row.get('proc_firstname', ''),
+            'proc_lastname': proc_row.get('proc_lastname', ''),
+            'proc_last4': proc_last4,
+            'proc_currency': proc_currency,
+            'proc_amount': proc_amount,
+            'proc_amount_crm_currency': proc_amount_conv,
+            'proc_processor_name': proc_row.get('proc_processor_name'),
+
+            'email_similarity_avg': round(email_sim, 4),
+            'last4_match': last4_match,
+            'name_fallback_used': False,  # you can add fallback logic if you want
+            'exact_match_used': last4_match and abs(proc_amount_conv - crm_amount) <= tol,
+            'converted': proc_currency != crm_currency,
+            'proc_combo_len': 1,
+            'crm_combo_len': 1,
+            'match_status': 1,
+            'payment_status': 1,
+            'comment': "Cross-processor fallback match",
+            'matched_proc_indices': [proc_row.name],  # proc_row.name is index in DataFrame
+            'crm_row_index': crm_row.name  # track CRM index to mark used_crm
+        }
+
+        return match, {}
+
+    def _cross_processor_last_chance(self, crm_df, processor_df, used_crm, used_proc, matches):
+        cross_processors = {"shift4", "safecharge", "powercash", "paypal", "trustpayments"}
+
+        # Filter unmatched processor rows from allowed processors
+        unmatched_proc_rows = processor_df[
+            processor_df['proc_processor_name'].str.lower().isin(cross_processors) &
+            (~processor_df.index.isin(used_proc))
+            ]
+
+        if unmatched_proc_rows.empty:
+            return
+
+        proc_dict = processor_df.to_dict('index')
+        crm_dict = crm_df.to_dict('index')
+        crm_last4_map = crm_df.groupby('crm_last4').indices  # for quick filtering by last4 if needed
+
+        for proc_idx, proc_row in unmatched_proc_rows.iterrows():
+            # Try to find matching CRM rows that are not used yet
+            candidate_crm_indices = [i for i in crm_df.index if i not in used_crm]
+
+            best_match = None
+            best_diag = None
+
+            # Attempt match for each candidate CRM row
+            for crm_idx in candidate_crm_indices:
+                crm_row = crm_dict[crm_idx]
+                # Get the matching function based on CRM processor name
+                crm_proc_name = (crm_row.get('crm_processor_name') or '').lower()
+                proc_config = self.get_processor_config(crm_proc_name)
+
+                # Call appropriate match function with CRM row and current processor row only
+                # Note: You might want to write a "_match_processor_row_to_crm" or reuse existing with slight tweak
+                match_result = self._match_processor_to_crm_row(
+                    proc_row, crm_row, proc_config
+                )
+
+                if match_result is not None:
+                    match, diag = match_result
+                    if match and (best_match is None or self._is_better_match(match, best_match)):
+                        best_match = match
+                        best_diag = diag
+
+            if best_match:
+                # Mark both as used
+                used_proc.add(proc_idx)
+                used_crm.add(best_match['crm_row_index'])  # You will need to add this index inside match
+
+                best_match['comment'] = (best_match.get('comment', '') + " [Cross-processor fallback]").strip()
+                best_match['cross_processor_fallback'] = True
+
+                matches.append(best_match)
 
     def match_withdrawals(self, crm_df, processor_df):
         self.start_time = datetime.now()
@@ -353,7 +456,7 @@ class ReconciliationEngine:
                 })
                 continue
             # --- LAST-CHANCE CROSS-PROCESSOR MATCHING ---
-        # self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
+        self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
         # unmatched processor‐only rows
         for idx, row in processor_df.iterrows():
             if idx not in used_proc:

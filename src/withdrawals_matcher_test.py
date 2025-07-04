@@ -217,6 +217,15 @@ class ReconciliationEngine:
             'parameters_adjusted': self.parameter_adjusted
         }
 
+    def normalize_last4(self,val):
+        s = str(val).strip()
+        if s.endswith('.0'):
+            s = s[:-2]
+        # Ensure zero-padded 4 digits (optional)
+        if s.isdigit():
+            s = s.zfill(4)
+        return s
+
 
     def _match_processor_to_crm_row(self, proc_row, crm_row, proc_config):
         def safe_lower_strip(value):
@@ -256,6 +265,9 @@ class ReconciliationEngine:
         # Check last4 match or email similarity
         last4_valid = crm_last4 not in ("0", "0000", "", "nan")
         last4_match = last4_valid and crm_last4 == proc_last4
+        if last4_valid and crm_last4 != proc_last4:
+            print(
+                f"[DEBUG] Fallback match rejected for proc idx={proc_row.name} due to last4 mismatch: crm_last4='{crm_last4}' proc_last4='{proc_last4}'")
 
         # Email similarity using your function
         email_sim = self.enhanced_email_similarity(crm_email, proc_email)
@@ -550,6 +562,7 @@ class ReconciliationEngine:
 
     def _match_standard_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
+        crm_last4_normalized = self.normalize_last4(crm_last4)
         crm_cur = crm_row['crm_currency']
         crm_amt = crm_row['crm_amount']
         crm_email = crm_row['crm_email']
@@ -574,14 +587,17 @@ class ReconciliationEngine:
             if proc_amt is None or proc_cur is None:
                 continue
 
-            # Convert amount dynamically to CRM currency
             proc_amt_crm_cur, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
             if proc_amt_crm_cur is None:
-                continue  # conversion failed, skip
+                continue
 
             email_sim = self.enhanced_email_similarity(crm_email, row.get('proc_email', ''))
-            proc_last4_str = str(row.get('proc_last4', ''))
-            last4_match = (crm_last4 == proc_last4_str) and (crm_last4 not in ("0", "0000", "", "nan"))
+            proc_last4_str = self.normalize_last4(row.get('proc_last4', ''))
+            valid_last4 = crm_last4 not in ("", "0", "0000", "nan")
+            last4_match = crm_last4_normalized == proc_last4_str and valid_last4
+
+            if proc_config.require_last4 and valid_last4 and not last4_match:
+                continue
 
             name_fallback = False
             if proc_config.enable_name_fallback:
@@ -590,20 +606,12 @@ class ReconciliationEngine:
                 if not name_fallback and crm_last:
                     name_fallback = self.name_in_email(crm_last, row.get('proc_email', ''))
 
-            valid_last4 = crm_last4 not in ("", "0", "0000", "nan")
-
-            # STRICT matching rules:
-            # If require_last4 and valid CRM last4, last4 MUST match or reject candidate
             if proc_config.require_last4 and valid_last4:
                 if not last4_match:
-                    continue  # reject if last4 mismatch
-
-                # Also require email similarity threshold or name fallback
+                    continue
                 if proc_config.require_email and email_sim < proc_config.email_threshold and not name_fallback:
                     continue
-
             else:
-                # last4 not required or invalid, rely on email similarity threshold or fallback
                 if proc_config.require_email and email_sim < proc_config.email_threshold and not name_fallback:
                     continue
 
@@ -621,7 +629,6 @@ class ReconciliationEngine:
         if not candidates:
             return None, {'failure_reason': 'No candidates found'}
 
-        # Pick best candidate by email similarity, last4 match, fallback
         candidates.sort(key=lambda c: (
             -c['email_score'],
             -int(c['last4_match']),
@@ -640,10 +647,7 @@ class ReconciliationEngine:
         payment_status = 1 if abs_diff <= tolerance else 0
         comment = ""
         if payment_status == 0:
-            if diff < 0:
-                comment = f"Client received less {abs_diff:.2f} {crm_cur}"
-            else:
-                comment = f"Client received more {abs_diff:.2f} {crm_cur}"
+            comment = f"Client received {'less' if diff < 0 else 'more'} {abs_diff:.2f} {crm_cur}"
 
         proc_date_raw = best['row_data'].get('proc_date')
         proc_date_ts = pd.to_datetime(proc_date_raw, errors='coerce')
@@ -903,7 +907,8 @@ class ReconciliationEngine:
         return match, {}
 
     def _match_shift4_row(self, crm_row, proc_dict, last4_map, used, proc_config):
-        crm_last4 = str(crm_row.get('crm_last4', '')).strip()
+        crm_last4_raw = str(crm_row.get('crm_last4', '')).strip()
+        crm_last4 = self.normalize_last4(crm_last4_raw)
         crm_cur = crm_row['crm_currency']
         crm_amt = abs(crm_row['crm_amount'])
         crm_email = (crm_row.get('crm_email') or '').lower()
@@ -911,7 +916,8 @@ class ReconciliationEngine:
         crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
 
         if crm_last4 and crm_last4 in last4_map and proc_config.require_last4:
-            indices = [i for i in last4_map[crm_last4] if i not in used]
+            # Normalize keys in last4_map? (Assuming last4_map keys already normalized)
+            indices = [i for i in last4_map.get(crm_last4_raw, []) if i not in used]
         else:
             indices = [i for i in proc_dict if i not in used]
 
@@ -928,12 +934,13 @@ class ReconciliationEngine:
             if proc_amt_raw is None or proc_cur is None:
                 continue
 
-            # Convert processor amount to CRM currency
             proc_amt_crm, rate = self.convert_amount(proc_amt_raw, proc_cur, crm_cur)
             if proc_amt_crm is None:
                 continue
 
-            proc_last4 = str(row.get('proc_last4', '')).strip()
+            proc_last4_raw = str(row.get('proc_last4', '')).strip()
+            proc_last4 = self.normalize_last4(proc_last4_raw)
+
             if proc_config.require_last4 and proc_last4 != crm_last4:
                 continue
 
@@ -986,7 +993,7 @@ class ReconciliationEngine:
             'crm_email': crm_email,
             'crm_firstname': crm_row.get('crm_firstname', ''),
             'crm_lastname': crm_row.get('crm_lastname', ''),
-            'crm_last4': crm_last4,
+            'crm_last4': crm_last4_raw,
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
             'crm_processor_name': 'shift4',
@@ -1299,7 +1306,8 @@ class ReconciliationEngine:
             return tp_str
 
         crm_tp = normalize_tp(crm_row.get("crm_tp", ""))
-        crm_last4 = str(crm_row.get("crm_last4", "")).strip()
+        crm_last4_raw = str(crm_row.get("crm_last4", "")).strip()
+        crm_last4 = self.normalize_last4(crm_last4_raw)
         crm_email = str(crm_row.get("crm_email", "")).strip().lower()
         crm_first = str(crm_row.get("crm_firstname", "")).strip().lower()
         crm_last = str(crm_row.get("crm_lastname", "")).strip().lower()
@@ -1315,7 +1323,8 @@ class ReconciliationEngine:
                 continue
 
             proc_tp = normalize_tp(proc_row.get("proc_tp", ""))
-            proc_last4 = str(proc_row.get("proc_last4", "")).strip()
+            proc_last4_raw = str(proc_row.get("proc_last4", "")).strip()
+            proc_last4 = self.normalize_last4(proc_last4_raw)
             proc_email = str(proc_row.get("proc_email", "")).strip().lower()
             proc_first = str(proc_row.get("proc_firstname", "")).strip().lower()
             proc_last = str(proc_row.get("proc_lastname", "")).strip().lower()
@@ -1374,7 +1383,6 @@ class ReconciliationEngine:
                 if not payment_status:
                     comment = f"Amount {'under' if received < crm_amt else 'over'} by {abs(received - crm_amt):.2f} {crm_cur}"
 
-                # Mark name fallback used if tier 4 or 5
                 name_fallback_used = (tier in [4, 5])
 
                 return {
@@ -1382,7 +1390,7 @@ class ReconciliationEngine:
                     'crm_email': crm_email,
                     'crm_firstname': crm_first,
                     'crm_lastname': crm_last,
-                    'crm_last4': crm_last4,
+                    'crm_last4': crm_last4_raw,
                     'crm_currency': crm_cur,
                     'crm_amount': crm_amt,
                     'crm_processor_name': "trustpayments",

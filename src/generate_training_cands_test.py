@@ -13,7 +13,7 @@ from src.utils import (
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-05-27"
+date = "2025-03-20"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",
@@ -81,7 +81,6 @@ else:
 combine_processed_files(
     date=date,
     processors=processors,
-    extra_processors=["zotapay_paymentasia"],
     processed_crm_dir=PROCESSED_CRM_DIR,
     processed_proc_dir=PROCESSED_PROCESSOR_DIR,
     transaction_type="withdrawal",
@@ -100,7 +99,13 @@ if crm_df is None or processor_df is None:
     exit(1)
 
 logger.info("Configuring reconciliation engine...")
-engine = ReconciliationEngine(exchange_rate_map)
+engine = ReconciliationEngine(exchange_rate_map, config={
+    'max_combo': 20,
+    'tolerance': 0.02,
+    'email_threshold': 0.5,
+    'enable_diagnostics': True,
+    'log_level': logging.DEBUG
+})
 
 non_cancelled_mask = crm_df['crm_type'].str.lower() != 'withdrawal cancelled'
 crm_df_non_cancelled = crm_df[non_cancelled_mask]

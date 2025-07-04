@@ -9,14 +9,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class ProcessorConfig:
     def __init__(self,
-                 email_threshold=0.65,
-                 name_match_threshold=0.7,
+                 email_threshold=0.0,
+                 name_match_threshold=0.0,
                  require_last4=True,
                  require_email=True,
                  enable_name_fallback=True,
                  enable_exact_match=True,
-                 max_combo=20,
-                 tolerance=0.05,
+                 tolerance=0.0,
                  matching_logic="standard"):
         self.email_threshold = email_threshold
         self.name_match_threshold = name_match_threshold
@@ -24,9 +23,8 @@ class ProcessorConfig:
         self.require_email = require_email
         self.enable_name_fallback = enable_name_fallback
         self.enable_exact_match = enable_exact_match
-        self.max_combo = max_combo
         self.tolerance = tolerance
-        self.matching_logic = matching_logic  # "standard" or "paypal"
+        self.matching_logic = matching_logic
 
 
 # Processor-specific configurations
@@ -59,7 +57,6 @@ PROCESSOR_CONFIGS = {
         require_email=True,
         enable_name_fallback=True,
         enable_exact_match=True,
-        max_combo=20,
         tolerance=0.1,
         matching_logic="shift4"
     ),
@@ -69,7 +66,6 @@ PROCESSOR_CONFIGS = {
         require_email=True,
         enable_name_fallback=False,
         enable_exact_match=False,
-        max_combo=5,
         tolerance=0.1,
         matching_logic="skrill"
     ),
@@ -79,7 +75,6 @@ PROCESSOR_CONFIGS = {
         require_email=True,
         enable_name_fallback=False,
         enable_exact_match=False,
-        max_combo=5,
         tolerance=0.1,
         matching_logic="skrill"   # we'll just reuse the Skrill logic
     ),
@@ -89,7 +84,6 @@ PROCESSOR_CONFIGS = {
         require_email=True,
         enable_name_fallback=True,
         enable_exact_match=False,
-        max_combo=5,
         tolerance=0.1,
         matching_logic="bitpay"
     ),
@@ -99,7 +93,6 @@ PROCESSOR_CONFIGS = {
         require_email=False,
         enable_name_fallback=False,
         enable_exact_match=True,
-        max_combo=1,  # Since we're doing 1:1 matching
         tolerance=0.1,  # 2% tolerance
         matching_logic="zotapay_paymentasia"
     ),
@@ -110,7 +103,6 @@ PROCESSOR_CONFIGS = {
         require_email=False,
         enable_name_fallback=False,
         enable_exact_match=False,
-        max_combo=5,
         tolerance=0.1,
         matching_logic="trustpayments"
     ),
@@ -585,11 +577,11 @@ class ReconciliationEngine:
             # Convert amount dynamically to CRM currency
             proc_amt_crm_cur, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
             if proc_amt_crm_cur is None:
-                # conversion failed, skip this candidate
-                continue
+                continue  # conversion failed, skip
 
             email_sim = self.enhanced_email_similarity(crm_email, row.get('proc_email', ''))
-            last4_match = (crm_last4 == str(row.get('proc_last4', ''))) and (crm_last4 not in ("0", "0000", "", "nan"))
+            proc_last4_str = str(row.get('proc_last4', ''))
+            last4_match = (crm_last4 == proc_last4_str) and (crm_last4 not in ("0", "0000", "", "nan"))
 
             name_fallback = False
             if proc_config.enable_name_fallback:
@@ -598,10 +590,21 @@ class ReconciliationEngine:
                 if not name_fallback and crm_last:
                     name_fallback = self.name_in_email(crm_last, row.get('proc_email', ''))
 
-            if proc_config.require_email and email_sim < proc_config.email_threshold and not name_fallback:
-                continue
-            if proc_config.require_last4 and not last4_match:
-                if email_sim < 0.75:
+            valid_last4 = crm_last4 not in ("", "0", "0000", "nan")
+
+            # STRICT matching rules:
+            # If require_last4 and valid CRM last4, last4 MUST match or reject candidate
+            if proc_config.require_last4 and valid_last4:
+                if not last4_match:
+                    continue  # reject if last4 mismatch
+
+                # Also require email similarity threshold or name fallback
+                if proc_config.require_email and email_sim < proc_config.email_threshold and not name_fallback:
+                    continue
+
+            else:
+                # last4 not required or invalid, rely on email similarity threshold or fallback
+                if proc_config.require_email and email_sim < proc_config.email_threshold and not name_fallback:
                     continue
 
             candidates.append({
@@ -626,22 +629,13 @@ class ReconciliationEngine:
         ))
         best = candidates[0]
 
-        # Normalize amounts for comparison:
         proc_amt = best['proc_amount_crm_currency']
         crm_amt_abs = abs(crm_amt)
         proc_amt_abs = abs(proc_amt)
 
         diff = proc_amt_abs - crm_amt_abs
         abs_diff = abs(diff)
-        tolerance = max(0.1, proc_config.tolerance * crm_amt_abs)  # Use absolute crm_amt here
-
-        payment_status = 1 if abs_diff <= tolerance else 0
-        comment = ""
-        if payment_status == 0:
-            if diff < 0:
-                comment = f"Client received less {abs_diff:.2f} {crm_cur}"
-            else:
-                comment = f"Client received more {abs_diff:.2f} {crm_cur}"
+        tolerance = max(0.1, proc_config.tolerance * crm_amt_abs)
 
         payment_status = 1 if abs_diff <= tolerance else 0
         comment = ""
@@ -1102,7 +1096,8 @@ class ReconciliationEngine:
         if best['name_fallback']:
             comment += "Matched by name fallback."
 
-        payment_status = 1 if best['exact_match'] else 0
+        payment_status = 1 if abs(best['proc_amount_crm_currency'] - crm_amt) <= (abs_tol if best['currency'] == crm_cur else rel_tol) else 0
+
 
         return {
             'crm_date': crm_row.get('crm_date'),
@@ -1294,7 +1289,6 @@ class ReconciliationEngine:
 
     def _match_trustpayments_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         def normalize_tp(tp):
-            # Convert float-like strings or floats like 12345.0 to '12345'
             if pd.isna(tp):
                 return ''
             if isinstance(tp, float) and tp.is_integer():
@@ -1314,7 +1308,7 @@ class ReconciliationEngine:
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
 
-        tier_candidates = {1: [], 2: [], 3: [], 4: []}
+        tier_candidates = {1: [], 2: [], 3: [], 4: [], 5: []}  # added tier 5
 
         for idx, proc_row in proc_dict.items():
             if idx in used:
@@ -1337,18 +1331,27 @@ class ReconciliationEngine:
 
             email_sim = self.enhanced_email_similarity(crm_email, proc_email)
             full_name_match = (crm_first == proc_first and crm_last == proc_last)
+            first_or_last_name_match = (crm_first == proc_first or crm_last == proc_last)
 
-            # Match tiers logic
+            # Match tiers logic:
             if crm_tp and proc_tp and crm_tp == proc_tp and crm_last4 and proc_last4 and crm_last4 == proc_last4:
+                # TP + last4 exact
                 tier_candidates[1].append((idx, proc_row, proc_amt_crm_cur, email_sim))
             elif crm_tp and proc_tp and crm_tp == proc_tp and email_sim > 0.75:
+                # TP + email similarity
                 tier_candidates[2].append((idx, proc_row, proc_amt_crm_cur, email_sim))
             elif crm_last4 and proc_last4 and crm_last4 == proc_last4 and email_sim > 0.75:
+                # last4 + email similarity
                 tier_candidates[3].append((idx, proc_row, proc_amt_crm_cur, email_sim))
-            elif email_sim > 0.75 and full_name_match:
+            elif crm_last4 and proc_last4 and crm_last4 == proc_last4 and first_or_last_name_match:
+                # last4 + (first or last name) match, even if TP differs
                 tier_candidates[4].append((idx, proc_row, proc_amt_crm_cur, email_sim))
+            elif email_sim > 0.75 and full_name_match:
+                # email similarity + full name match
+                tier_candidates[5].append((idx, proc_row, proc_amt_crm_cur, email_sim))
 
-        for tier in range(1, 5):
+        # Iterate tiers in order of priority
+        for tier in range(1, 6):
             candidates = tier_candidates[tier]
             if not candidates:
                 continue
@@ -1371,9 +1374,8 @@ class ReconciliationEngine:
                 if not payment_status:
                     comment = f"Amount {'under' if received < crm_amt else 'over'} by {abs(received - crm_amt):.2f} {crm_cur}"
 
-                # Fix for swapped/missing names: double-check keys existence and correct assignment
-                proc_firstname = proc_row.get('proc_firstname', '')
-                proc_lastname = proc_row.get('proc_lastname', '')
+                # Mark name fallback used if tier 4 or 5
+                name_fallback_used = (tier in [4, 5])
 
                 return {
                     'crm_date': crm_row.get('crm_date'),
@@ -1386,16 +1388,16 @@ class ReconciliationEngine:
                     'crm_processor_name': "trustpayments",
                     'proc_date': proc_row.get('proc_date'),
                     'proc_email': proc_row.get('proc_email'),
-                    'proc_firstname': proc_firstname,
-                    'proc_lastname': proc_lastname,
+                    'proc_firstname': proc_row.get('proc_firstname', ''),
+                    'proc_lastname': proc_row.get('proc_lastname', ''),
                     'proc_last4': proc_row.get('proc_last4'),
                     'proc_currency': proc_row.get('proc_currency'),
                     'proc_amount': proc_row.get('proc_amount'),
                     'proc_amount_crm_currency': proc_amt_crm_cur,
                     'proc_processor_name': proc_row.get('proc_processor_name'),
                     'email_similarity_avg': round(email_sim, 4),
-                    'last4_match': tier in [1, 3],
-                    'name_fallback_used': (tier == 4),
+                    'last4_match': tier in [1, 3, 4],
+                    'name_fallback_used': name_fallback_used,
                     'exact_match_used': (tier == 1),
                     'proc_combo_len': 1,
                     'crm_combo_len': 1,

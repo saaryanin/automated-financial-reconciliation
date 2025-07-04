@@ -43,6 +43,20 @@ def clean_amount(val):
         return float(s)
     except Exception:
         return None
+
+def clean_crm_last4(val):
+    val_str = str(val).strip()
+    if val_str.endswith('.0'):
+        val_str = val_str[:-2]
+    match = re.search(r'(\d{1,4})$', val_str)
+    return match.group(1).zfill(4) if match else ""
+def clean_proc_last4(val):
+    val_str = str(val).strip()
+    if val_str.endswith('.0'):
+        val_str = val_str[:-2]
+    match = re.search(r'(\d{1,4})$', val_str)
+    return match.group(1).zfill(4) if match else ""
+
 # ----------------------------
 # Processor Handling
 # ----------------------------
@@ -1095,7 +1109,7 @@ def combine_processed_files(
             combined_crm['crm_date'] = pd.to_datetime(combined_crm['crm_date'], errors='coerce').dt.date
 
         if 'crm_last4' in combined_crm.columns:
-            combined_crm['crm_last4'] = combined_crm['crm_last4'].astype(str).str.zfill(4)
+            combined_crm['crm_last4'] = combined_crm['crm_last4'].apply(clean_crm_last4)
 
         out_crm_date_dir = out_crm_dir / date
         out_crm_date_dir.mkdir(parents=True, exist_ok=True)
@@ -1145,12 +1159,6 @@ def combine_processed_files(
         if 'proc_amount' in combined_proc.columns:
             combined_proc['proc_amount'] = pd.to_numeric(combined_proc['proc_amount'], errors='coerce').abs()
 
-        # Clean proc_last4: remove trailing '.0', zero-pad to 4 digits
-        def clean_proc_last4(val):
-            val_str = str(val)
-            if val_str.endswith('.0'):
-                val_str = val_str[:-2]
-            return val_str.zfill(4)[-4:]
 
         if 'proc_last4' in combined_proc.columns:
             combined_proc['proc_last4'] = combined_proc['proc_last4'].apply(clean_proc_last4)

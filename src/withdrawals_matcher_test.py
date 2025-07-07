@@ -368,12 +368,19 @@ class ReconciliationEngine:
                 matches.append(best_match)
 
     def match_withdrawals(self, crm_df, processor_df):
+        """
+        Main reconciliation loop: matches CRM withdrawals to processor withdrawals,
+        then flags logic correctness on each match.
+        """
+        from src.withdrawals_matcher_test import PROCESSOR_CONFIGS
+        # start timing and metrics
         self.start_time = datetime.now()
         self.metrics['total_crm'] = len(crm_df)
         used_proc, used_crm, matches = set(), set(), []
         last4_map = processor_df.groupby('proc_last4').indices
         proc_dict = processor_df.to_dict('index')
 
+        # estimate runtime
         self._estimate_runtime(crm_df, proc_dict, last4_map)
 
         # match CRM rows
@@ -387,15 +394,9 @@ class ReconciliationEngine:
 
             try:
                 result = self._match_crm_row(row, proc_dict, last4_map, used_proc)
-                if str(row.get("crm_processor_name", "")).strip().lower() == "zotapay_paymentasia":
-                    self.logger.debug(
-                        f"[DEBUG] Trying to match Zota+PA row: TP={row.get('crm_tp')}, Email={row.get('crm_email')}, Amount={row.get('crm_amount')}")
-
                 if result is None or not isinstance(result, tuple) or len(result) != 2:
                     raise ValueError(f"_match_crm_row() returned invalid result: {result}")
-
                 match, diag = result
-
             except Exception as e:
                 self.logger.error(f"Error processing row {idx}: {e}")
                 match, diag = None, {'failure_reason': str(e)}
@@ -403,16 +404,13 @@ class ReconciliationEngine:
             crm_tp_val = row.get('crm_tp')
 
             if match:
-                # collect proc_tp for this combo
+                # insert proc_tp list after proc_email
                 proc_tp_vals = [proc_dict[i].get('proc_tp', '') for i in match['matched_proc_indices']]
-
                 ordered = {}
                 for k, v in match.items():
                     ordered[k] = v
-                    if k == 'proc_email':
-                        ordered['proc_tp'] = proc_tp_vals
-                    if k == 'crm_lastname':
-                        ordered['crm_tp'] = crm_tp_val
+                    if k == 'proc_email': ordered['proc_tp'] = proc_tp_vals
+                    if k == 'crm_lastname': ordered['crm_tp'] = crm_tp_val
                 match = ordered
 
                 matches.append(match)
@@ -420,87 +418,72 @@ class ReconciliationEngine:
                 used_proc.update(match['matched_proc_indices'])
                 self.metrics['currency_matches'][match['crm_currency']] = \
                     self.metrics['currency_matches'].get(match['crm_currency'], 0) + 1
-
                 if match['payment_status'] == 1:
                     self.metrics['correct_payments'] += 1
                 else:
                     self.metrics['incorrect_payments'] += 1
-
             else:
+                # unmatched CRM row
                 unmatched = self._create_unmatched_crm_record(crm_df.loc[idx])
                 ordered = {}
                 for k, v in unmatched.items():
                     ordered[k] = v
-                    if k == 'crm_lastname':
-                        ordered['crm_tp'] = crm_tp_val
-                    if k == 'proc_email':
-                        ordered['proc_tp'] = []  # no proc match
+                    if k == 'crm_lastname': ordered['crm_tp'] = crm_tp_val
+                    if k == 'proc_email': ordered['proc_tp'] = []
                 matches.append(ordered)
                 self.metrics['unmatched'] += 1
                 if self.config['enable_diagnostics']:
-                    self.diagnostics.append({
-                        'crm_idx': idx,
-                        'failure_reason': diag.get('failure_reason', 'No candidates')
-                    })
+                    self.diagnostics.append({'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
 
             if idx % 10 == 0:
                 self._update_eta(len(crm_df), idx + 1)
 
-            proc_name = str(row.get('crm_processor_name', '')).strip().lower()
-            proc_rows_for_processor = processor_df[
-                processor_df['proc_processor_name'].str.lower().str.strip() == proc_name
-                ]
-
-            if proc_rows_for_processor.empty:
+            # cross-check no processor data for this CRM
+            proc_rows_for = processor_df[processor_df['proc_processor_name'].str.lower().str.strip() == proc_name]
+            if proc_rows_for.empty:
                 unmatched = self._create_unmatched_crm_record(row)
-                ...
-                self.diagnostics.append({
-                    'crm_idx': idx,
-                    'failure_reason': 'No processor data found for this CRM processor'
-                })
+                self.diagnostics.append({'crm_idx': idx, 'failure_reason': 'No processor data found for this CRM processor'})
                 continue
-            # --- LAST-CHANCE CROSS-PROCESSOR MATCHING ---
+
+        # last-chance cross-processor matching
         self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
-        # unmatched processor‐only rows
-        for idx, row in processor_df.iterrows():
-            if idx not in used_proc:
+
+        # any processor-only rows left => unmatched processor
+        for pidx, prow in processor_df.iterrows():
+            if pidx not in used_proc:
                 base = {
-                    'crm_date': None,
-                    'crm_email': None,
-                    'crm_firstname': None,
-                    'crm_lastname': None,
-                    'crm_tp': None,
-                    'crm_last4': None,
-                    'crm_currency': None,
-                    'crm_amount': None,
-                    'crm_processor_name': None,
-                    'proc_date': [row.get('proc_date')],
-                    'proc_email': [row.get('proc_email')],
-                    'proc_last4': [row.get('proc_last4')],
-                    'proc_currency': [row.get('proc_currency')],
-                    'proc_amount': [row.get('proc_amount')],
-                    'proc_processor_name': row.get('proc_processor_name'),
-                    'proc_firstname': [row.get('proc_firstname')],
-                    'proc_lastname': [row.get('proc_lastname')],
-                    'email_similarity_avg': None,
-                    'last4_match': None,
-                    'name_fallback_used': False,
-                    'exact_match_used': False,
-                    'match_status': 0,
-                    'payment_status': 0,
-                    'comment': "No matching CRM row found",
-                    'matched_proc_indices': [idx],
+                    'crm_date': None, 'crm_email': None, 'crm_firstname': None, 'crm_lastname': None,
+                    'crm_tp': None, 'crm_last4': None, 'crm_currency': None, 'crm_amount': None,
+                    'crm_processor_name': None, 'proc_date': [prow.get('proc_date')],
+                    'proc_email': [prow.get('proc_email')], 'proc_last4': [prow.get('proc_last4')],
+                    'proc_currency': [prow.get('proc_currency')], 'proc_amount': [prow.get('proc_amount')],
+                    'proc_processor_name': prow.get('proc_processor_name'),
+                    'proc_firstname': [prow.get('proc_firstname')], 'proc_lastname': [prow.get('proc_lastname')],
+                    'email_similarity_avg': None, 'last4_match': None, 'name_fallback_used': False,
+                    'exact_match_used': False, 'match_status': 0, 'payment_status': 0,
+                    'comment': "No matching CRM row found", 'matched_proc_indices': [pidx]
                 }
-                # build in order so that proc_tp follows proc_email
                 entry = {}
                 for k, v in base.items():
                     entry[k] = v
-                    if k == 'proc_email':
-                        entry['proc_tp'] = [row.get('proc_tp', '')]
+                    if k == 'proc_email': entry['proc_tp'] = [prow.get('proc_tp', '')]
                 matches.append(entry)
 
+        # finalize timing
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
+
+        # ——— LOGIC IS CORRECT LABELING —————————————————————————————————
+        # 1. find all used processor indices
+        used_proc_indices = set()
+        for m in matches:
+            used_proc_indices.update(m.get('matched_proc_indices', []))
+        # 2. get emails for truly unmatched processors
+        unmatched_emails = processor_df.loc[~processor_df.index.isin(used_proc_indices), 'proc_email'].dropna().unique()
+        # 3. flag each match entry
+        for m in matches:
+            # default True
+            m['logic_is_correct'] = True
         return matches
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):

@@ -30,7 +30,7 @@ class ProcessorConfig:
 # Processor-specific configurations
 PROCESSOR_CONFIGS = {
     'safecharge': ProcessorConfig(
-        email_threshold=0.15,
+        email_threshold=0.3,
         require_last4=True,
         require_email=True,
         tolerance=0.1,
@@ -128,7 +128,8 @@ class ReconciliationEngine:
             'log_level': logging.INFO,
             'deep_search': True,
             'timeout': 300,
-            'auto_adjust': True
+            'auto_adjust': True,
+            'enable_logic_flag': True,
         }
         if config:
             self.config.update(config)
@@ -367,6 +368,143 @@ class ReconciliationEngine:
 
                 matches.append(best_match)
 
+    def _flag_logic_correctness(self, matches, processor_df):
+        from src.withdrawals_matcher_test import PROCESSOR_CONFIGS
+        from collections import Counter
+
+        # 1) truly-used processor indices
+        used_real = {
+            idx
+            for m in matches
+            if m.get('match_status') == 1
+            for idx in m.get('matched_proc_indices', [])
+        }
+
+        # 2) unmatched processor emails (Rule 1)
+        unmatched_emails = processor_df.loc[
+            ~processor_df.index.isin(used_real),
+            'proc_email'
+        ].dropna().unique()
+
+        # 3) unmatched processor last4 codes (Rule 3)
+        unmatched_last4s = processor_df.loc[
+            ~processor_df.index.isin(used_real),
+            'proc_last4'
+        ].dropna().astype(str)
+        dup_last4s = {
+            last4
+            for last4, cnt in Counter(unmatched_last4s).items()
+            if cnt > 1
+        }
+
+        print("\n--- Logic-check starting ---")
+
+        # ─── Rules 1 & 2 ───────────────────────────────────────────────
+        for i, m in enumerate(matches):
+            m['logic_is_correct'] = True
+
+            # threshold by processor
+            pname = str(m.get('crm_processor_name', '')).lower()
+            cfg = PROCESSOR_CONFIGS.get(pname)
+            thresh = cfg.email_threshold if cfg else self.config.get('email_threshold', 0.1)
+
+            # — Rule 1 — payment failed + similar unmatched email
+            if m.get('payment_status') == 0 and m.get('match_status') == 1:
+                crm_email = m.get('crm_email') or ''
+                for ue in unmatched_emails:
+                    sim = self.enhanced_email_similarity(crm_email, ue)
+                    print(f" [Row {i}] Rule1: '{crm_email}' vs '{ue}' → sim={sim:.3f}, thresh={thresh}")
+                    if sim >= thresh:
+                        m['logic_is_correct'] = False
+                        # remember which processor-side email caused this
+                        m['_fail_rule1_email'] = ue
+                        print(f"  ❌ Row {i} fails Rule1")
+                        break
+                if not m['logic_is_correct']:
+                    continue
+
+            # — Rule 2 — cross-processor fallback but too-low sim
+            if m.get('cross_processor_fallback') and m.get('email_similarity_avg', 1.0) < 0.5:
+                sim = m.get('email_similarity_avg', 0.0)
+                print(f" [Row {i}] Rule2: fallback & sim={sim:.3f}")
+                m['logic_is_correct'] = False
+                print(f"  ❌ Row {i} fails Rule2")
+                continue
+
+            print(f"  ✅ Row {i} passes Rules1+2")
+
+        # ─── Rule 1 propagation onto processor-only rows ───────────────────
+        fail_ues = {m.pop('_fail_rule1_email') for m in matches if '_fail_rule1_email' in m}
+        if fail_ues:
+            print(f"\n— Rule1 propagation for processor rows matching emails {fail_ues}")
+            for i, m in enumerate(matches):
+                if not m['logic_is_correct']:
+                    continue
+                # check processor email(s)
+                pe = m.get('proc_email')
+                emails = pe if isinstance(pe, list) else [pe] if pe else []
+                for e in emails:
+                    if e in fail_ues:
+                        m['logic_is_correct'] = False
+                        print(f"  ❌ Row {i} fails Rule1 propagation (proc_email='{e}')")
+                        break
+
+        # ─── Rule 3 — duplicate unmatched-processor last4s ───────────────────
+        if dup_last4s:
+            print("\n— Rule3: duplicate unmatched-processor last4 codes →", dup_last4s)
+            for i, m in enumerate(matches):
+                crm_l4 = str(m.get('crm_last4', '')).strip()
+                # normalize .0
+                crm_code = crm_l4[:-2] if crm_l4.endswith('.0') else crm_l4
+                if crm_code in dup_last4s and m['logic_is_correct']:
+                    print(f" [Row {i}] Rule3: crm_last4='{crm_l4}' in duplicate unmatched-processor")
+                    m['logic_is_correct'] = False
+                    print(f"  ❌ Row {i} fails Rule3")
+
+        # ─── Rule 4 — unmatched-processor entries whose proc_last4 shows up on CRM ─
+        print("\n— Rule4: unmatched-processor last4 found on CRM side")
+        # build CRM last4 set
+        crm_raws = {str(m.get('crm_last4', '')).strip() for m in matches if m.get('crm_last4') not in (None, '')}
+        crm_last4s = set()
+        for raw in crm_raws:
+            if raw.lower() == 'nan':
+                continue
+            crm_last4s.add(raw[:-2] if raw.endswith('.0') else raw)
+
+        flagged_codes = set()
+        # 4a) flag processor-only rows
+        for i, m in enumerate(matches):
+            if m.get('crm_date') is not None:
+                continue
+            raw = m.get('proc_last4')
+            if isinstance(raw, list):
+                raw = raw[0] if raw else None
+            if not raw:
+                continue
+            raw_str = str(raw).strip()
+            if not raw_str or raw_str.lower() == 'nan':
+                continue
+            code = raw_str[:-2] if raw_str.endswith('.0') else raw_str
+            if code in crm_last4s and m['logic_is_correct']:
+                print(f" [Row {i}] Rule4: unmatched-processor last4='{raw_str}' found in CRM rows")
+                m['logic_is_correct'] = False
+                print(f"  ❌ Row {i} fails Rule4")
+                flagged_codes.add(code)
+
+        # 4b) propagate to CRM-matched rows
+        if flagged_codes:
+            print(f"\n— Rule4 propagation to CRM side for codes: {flagged_codes}")
+            for i, m in enumerate(matches):
+                if m.get('crm_date') is None:
+                    continue
+                raw = str(m.get('crm_last4', '')).strip()
+                code = raw[:-2] if raw.endswith('.0') else raw
+                if code in flagged_codes and m['logic_is_correct']:
+                    print(f"  ❌ Row {i} (CRM) also fails Rule4 propagation")
+                    m['logic_is_correct'] = False
+
+        print("--- Logic-check done ---\n")
+
     def match_withdrawals(self, crm_df, processor_df):
         """
         Main reconciliation loop: matches CRM withdrawals to processor withdrawals,
@@ -433,7 +571,8 @@ class ReconciliationEngine:
                 matches.append(ordered)
                 self.metrics['unmatched'] += 1
                 if self.config['enable_diagnostics']:
-                    self.diagnostics.append({'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
+                    self.diagnostics.append(
+                        {'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
 
             if idx % 10 == 0:
                 self._update_eta(len(crm_df), idx + 1)
@@ -442,7 +581,8 @@ class ReconciliationEngine:
             proc_rows_for = processor_df[processor_df['proc_processor_name'].str.lower().str.strip() == proc_name]
             if proc_rows_for.empty:
                 unmatched = self._create_unmatched_crm_record(row)
-                self.diagnostics.append({'crm_idx': idx, 'failure_reason': 'No processor data found for this CRM processor'})
+                self.diagnostics.append(
+                    {'crm_idx': idx, 'failure_reason': 'No processor data found for this CRM processor'})
                 continue
 
         # last-chance cross-processor matching
@@ -473,18 +613,11 @@ class ReconciliationEngine:
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
 
-        # ——— LOGIC IS CORRECT LABELING —————————————————————————————————
-        # 1. find all used processor indices
-        used_proc_indices = set()
-        for m in matches:
-            used_proc_indices.update(m.get('matched_proc_indices', []))
-        # 2. get emails for truly unmatched processors
-        unmatched_emails = processor_df.loc[~processor_df.index.isin(used_proc_indices), 'proc_email'].dropna().unique()
-        # 3. flag each match entry
-        for m in matches:
-            # default True
-            m['logic_is_correct'] = True
+          # ——— FLAG LOGIC CORRECTNESS —————————————————————————————————
+        self._flag_logic_correctness(matches, processor_df)
         return matches
+
+
 
     def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
         """
@@ -1296,6 +1429,7 @@ class ReconciliationEngine:
         crm_last = str(crm_row.get("crm_lastname", "")).strip().lower()
         crm_amt = abs(float(crm_row.get("crm_amount", 0)))
         crm_cur = str(crm_row.get("crm_currency", "")).strip().upper()
+        crm_tokens = set(crm_first.split() + crm_last.split())
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
 
@@ -1313,6 +1447,7 @@ class ReconciliationEngine:
             proc_last = str(proc_row.get("proc_lastname", "")).strip().lower()
             proc_amt_raw = proc_row.get("proc_amount")
             proc_cur = str(proc_row.get("proc_currency", "")).strip().upper()
+            proc_tokens = set(proc_first.split() + proc_last.split())
 
             if proc_amt_raw is None:
                 continue
@@ -1322,8 +1457,8 @@ class ReconciliationEngine:
                 continue
 
             email_sim = self.enhanced_email_similarity(crm_email, proc_email)
-            full_name_match = (crm_first == proc_first and crm_last == proc_last)
-            first_or_last_name_match = (crm_first == proc_first or crm_last == proc_last)
+            full_name_match = crm_tokens == proc_tokens
+            first_or_last_name_match = bool(crm_tokens & proc_tokens)
 
             # Match tiers logic:
             if crm_tp and proc_tp and crm_tp == proc_tp and crm_last4 and proc_last4 and crm_last4 == proc_last4:

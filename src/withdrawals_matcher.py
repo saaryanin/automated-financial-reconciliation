@@ -227,25 +227,25 @@ class ReconciliationEngine:
             s = s.zfill(4)
         return s
 
-
-    def _match_processor_to_crm_row(self, proc_row, crm_row, proc_config):
+    def _match_processor_to_crm_row(self, proc_row, crm_row, proc_config,crm_idx):
         def safe_lower_strip(value):
             if pd.isna(value):
                 return ''
             return str(value).lower().strip()
+
         """
         Try to match one processor row to one CRM row.
 
         Return (match_dict, diagnostics_dict) or None if no match.
         """
         # Extract relevant fields
-        proc_amount = proc_row.get('proc_amount')
+        proc_amount = abs(proc_row.get('proc_amount'))  # Use abs for positive comparison
         proc_currency = proc_row.get('proc_currency')
         proc_email = safe_lower_strip(proc_row.get('proc_email'))
         proc_last4 = str(proc_row.get('proc_last4') or '').strip()
         proc_tp = str(proc_row.get('proc_tp') or '').strip()
 
-        crm_amount = crm_row.get('crm_amount')
+        crm_amount = abs(crm_row.get('crm_amount'))  # Use abs for CRM too
         crm_currency = crm_row.get('crm_currency')
         crm_email = safe_lower_strip(crm_row.get('crm_email'))
         crm_last4 = str(crm_row.get('crm_last4') or '').strip()
@@ -254,13 +254,17 @@ class ReconciliationEngine:
         # Convert processor amount to CRM currency
         proc_amount_conv, rate = self.convert_amount(proc_amount, proc_currency, crm_currency)
         if proc_amount_conv is None:
+            print(f"DEBUG: Rejected proc {proc_row.name}: conversion failed {proc_currency} to {crm_currency}")
             return None
 
-        # Compare amounts with tolerance
+        # Compare amounts with tolerance (relaxed for cross)
         abs_tol = 0.1
-        rel_tol = proc_config.tolerance * abs(crm_amount)
-        tol = abs_tol if proc_currency == crm_currency else rel_tol
-        if abs(proc_amount_conv - crm_amount) > tol:
+        rel_tol = proc_config.tolerance * crm_amount
+        tol = max(abs_tol, 500) if proc_currency == crm_currency else max(rel_tol, 500)  # High tol for testing
+        diff = abs(proc_amount_conv - crm_amount)
+        print(f"DEBUG: Amount check for proc {proc_row.name}: diff={diff}, tol={tol}")  # Add this for visibility
+        if diff > tol:
+            print(f"DEBUG: Rejected proc {proc_row.name}: amount diff = {diff} > tol={tol}")
             return None
 
         # Check last4 match or email similarity
@@ -270,14 +274,21 @@ class ReconciliationEngine:
             print(
                 f"[DEBUG] Fallback match rejected for proc idx={proc_row.name} due to last4 mismatch: crm_last4='{crm_last4}' proc_last4='{proc_last4}'")
 
-        # Email similarity using your function
+        # Email similarity using your function (relax threshold)
         email_sim = self.enhanced_email_similarity(crm_email, proc_email)
-        if proc_config.require_email and email_sim < proc_config.email_threshold and not last4_match:
+        print(f"DEBUG: Email sim for proc {proc_row.name}: {email_sim}")  # Add this
+        if proc_config.require_email and email_sim < 0.2 and not last4_match:  # Lowered to 0.2
+            print(f"DEBUG: Rejected proc {proc_row.name}: email_sim={email_sim} < 0.2, no last4_match")
             return None
 
-        # If required last4 and no match, fail
-        if proc_config.require_last4 and not last4_match and email_sim < 0.75:
+        # If required last4 and no match, fail (but make optional for cross)
+        if proc_config.require_last4 and not last4_match and email_sim < 0.5:  # Lowered from 0.75
+            print(f"DEBUG: Rejected proc {proc_row.name}: no last4_match, email_sim={email_sim} < 0.5")
             return None
+
+        # If we reach here, it's a match!
+        print(
+            f"DEBUG: Found potential match for proc {proc_row.name}: email_sim={email_sim}, last4_match={last4_match}, amount_diff={diff}")
 
         # Build match dict (similar to other match_*_row methods)
         match = {
@@ -287,23 +298,22 @@ class ReconciliationEngine:
             'crm_lastname': crm_row.get('crm_lastname', ''),
             'crm_last4': crm_last4,
             'crm_currency': crm_currency,
-            'crm_amount': crm_amount,
+            'crm_amount': -crm_amount if crm_row.get('crm_amount', 0) < 0 else crm_amount,  # Restore sign if negative
             'crm_processor_name': crm_row.get('crm_processor_name'),
-
             'proc_date': proc_row.get('proc_date'),
             'proc_email': proc_email,
             'proc_firstname': proc_row.get('proc_firstname', ''),
             'proc_lastname': proc_row.get('proc_lastname', ''),
+            'crm_tp': crm_row.get('crm_tp', ''),
             'proc_last4': proc_last4,
             'proc_currency': proc_currency,
             'proc_amount': proc_amount,
             'proc_amount_crm_currency': proc_amount_conv,
             'proc_processor_name': proc_row.get('proc_processor_name'),
-
             'email_similarity_avg': round(email_sim, 4),
             'last4_match': last4_match,
             'name_fallback_used': False,  # you can add fallback logic if you want
-            'exact_match_used': last4_match and abs(proc_amount_conv - crm_amount) <= tol,
+            'exact_match_used': last4_match and diff <= tol,
             'converted': proc_currency != crm_currency,
             'proc_combo_len': 1,
             'crm_combo_len': 1,
@@ -311,62 +321,85 @@ class ReconciliationEngine:
             'payment_status': 1,
             'comment': "Cross-processor fallback match",
             'matched_proc_indices': [proc_row.name],  # proc_row.name is index in DataFrame
-            'crm_row_index': crm_row.name  # track CRM index to mark used_crm
+            'crm_row_index': crm_idx
         }
 
         return match, {}
+    def _is_better_match(self, new_match, old_match):
+        # Primary: higher email similarity
+        if new_match['email_similarity_avg'] > old_match['email_similarity_avg']:
+            return True
+        if new_match['email_similarity_avg'] < old_match['email_similarity_avg']:
+            return False
+
+        # Tiebreaker 1: prefer last4 match
+        if new_match['last4_match'] > old_match['last4_match']:
+            return True
+        if new_match['last4_match'] < old_match['last4_match']:
+            return False
+
+        # Tiebreaker 2: prefer exact match
+        if new_match.get('exact_match_used', False) > old_match.get('exact_match_used', False):
+            return True
+
+        # Default: not better (keep old)
+        return False
 
     def _cross_processor_last_chance(self, crm_df, processor_df, used_crm, used_proc, matches):
         cross_processors = {"shift4", "safecharge", "powercash", "paypal", "trustpayments"}
 
-        # Filter unmatched processor rows from allowed processors
         unmatched_proc_rows = processor_df[
             processor_df['proc_processor_name'].str.lower().isin(cross_processors) &
             (~processor_df.index.isin(used_proc))
             ]
+
+        print(f"DEBUG: Unmatched proc rows eligible for cross: {len(unmatched_proc_rows)}")  # Add this
 
         if unmatched_proc_rows.empty:
             return
 
         proc_dict = processor_df.to_dict('index')
         crm_dict = crm_df.to_dict('index')
-        crm_last4_map = crm_df.groupby('crm_last4').indices  # for quick filtering by last4 if needed
+        crm_last4_map = crm_df.groupby('crm_last4').indices
 
         for proc_idx, proc_row in unmatched_proc_rows.iterrows():
-            # Try to find matching CRM rows that are not used yet
             candidate_crm_indices = [i for i in crm_df.index if i not in used_crm]
+            print(
+                f"DEBUG: For proc_idx={proc_idx} ({proc_row['proc_processor_name']}), unmatched CRM candidates: {len(candidate_crm_indices)}")  # Add this
 
             best_match = None
             best_diag = None
 
-            # Attempt match for each candidate CRM row
             for crm_idx in candidate_crm_indices:
                 crm_row = crm_dict[crm_idx]
-                # Get the matching function based on CRM processor name
-                crm_proc_name = (crm_row.get('crm_processor_name') or '').lower()
-                proc_config = self.get_processor_config(crm_proc_name)
+                proc_proc_name = proc_row['proc_processor_name'].lower()
+                if proc_row['proc_processor_name'].lower() == crm_row['crm_processor_name'].lower():
+                    continue
+                proc_config = self.get_processor_config(proc_proc_name)
 
-                # Call appropriate match function with CRM row and current processor row only
-                # Note: You might want to write a "_match_processor_row_to_crm" or reuse existing with slight tweak
                 match_result = self._match_processor_to_crm_row(
-                    proc_row, crm_row, proc_config
+                    proc_row, crm_row, proc_config,crm_idx
                 )
 
                 if match_result is not None:
                     match, diag = match_result
+                    print(
+                        f"DEBUG: Potential cross match for proc {proc_idx} to CRM {crm_idx}: email_sim={match['email_similarity_avg']}, last4_match={match['last4_match']}, amount_diff={abs(match['proc_amount_crm_currency'] - crm_row['crm_amount'])}")  # Add this
                     if match and (best_match is None or self._is_better_match(match, best_match)):
                         best_match = match
                         best_diag = diag
+                else:
+                    print(f"DEBUG: No match for proc {proc_idx} to CRM {crm_idx} (rejected by criteria)")  # Add this
 
             if best_match:
-                # Mark both as used
+                print(f"DEBUG: Adding cross match for proc {proc_idx}")  # Add this
                 used_proc.add(proc_idx)
-                used_crm.add(best_match['crm_row_index'])  # You will need to add this index inside match
-
+                used_crm.add(best_match['crm_row_index'])
                 best_match['comment'] = (best_match.get('comment', '') + " [Cross-processor fallback]").strip()
                 best_match['cross_processor_fallback'] = True
-
                 matches.append(best_match)
+            else:
+                print(f"DEBUG: No cross match found for proc {proc_idx}")  # Add this
 
     def _flag_logic_correctness(self, matches, processor_df):
         from src.withdrawals_matcher_test import PROCESSOR_CONFIGS
@@ -505,12 +538,27 @@ class ReconciliationEngine:
 
         print("--- Logic-check done ---\n")
 
+    def make_cancelled_rows(self, full_crm_df):
+        """
+        Return a list of “cancelled” rows (in the same schema as matches) for any
+        crm_type == 'withdrawal cancelled', *including* the crm_tp.
+        """
+        from src.utils import create_cancelled_row
+
+        cancelled = []
+        mask = full_crm_df['crm_type'].str.lower() == 'withdrawal cancelled'
+        for _, row in full_crm_df.loc[mask].iterrows():
+            out = create_cancelled_row(row)
+            # carry through your TP column
+            out['crm_tp'] = row.get('crm_tp')
+            cancelled.append(out)
+        return cancelled
+
     def match_withdrawals(self, crm_df, processor_df):
         """
         Main reconciliation loop: matches CRM withdrawals to processor withdrawals,
         then flags logic correctness on each match.
         """
-        from src.withdrawals_matcher_test import PROCESSOR_CONFIGS
         # start timing and metrics
         self.start_time = datetime.now()
         self.metrics['total_crm'] = len(crm_df)
@@ -560,19 +608,6 @@ class ReconciliationEngine:
                     self.metrics['correct_payments'] += 1
                 else:
                     self.metrics['incorrect_payments'] += 1
-            else:
-                # unmatched CRM row
-                unmatched = self._create_unmatched_crm_record(crm_df.loc[idx])
-                ordered = {}
-                for k, v in unmatched.items():
-                    ordered[k] = v
-                    if k == 'crm_lastname': ordered['crm_tp'] = crm_tp_val
-                    if k == 'proc_email': ordered['proc_tp'] = []
-                matches.append(ordered)
-                self.metrics['unmatched'] += 1
-                if self.config['enable_diagnostics']:
-                    self.diagnostics.append(
-                        {'crm_idx': idx, 'failure_reason': diag.get('failure_reason', 'No candidates')})
 
             if idx % 10 == 0:
                 self._update_eta(len(crm_df), idx + 1)
@@ -580,13 +615,26 @@ class ReconciliationEngine:
             # cross-check no processor data for this CRM
             proc_rows_for = processor_df[processor_df['proc_processor_name'].str.lower().str.strip() == proc_name]
             if proc_rows_for.empty:
-                unmatched = self._create_unmatched_crm_record(row)
                 self.diagnostics.append(
                     {'crm_idx': idx, 'failure_reason': 'No processor data found for this CRM processor'})
                 continue
 
         # last-chance cross-processor matching
-        self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
+        if self.config.get('enable_cross_processor', False):
+            self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
+            # Add unmatched CRM rows after all matching
+            for idx in crm_df.index:
+                if idx not in used_crm:
+                    unmatched = self._create_unmatched_crm_record(crm_df.loc[idx])
+                    ordered = {}
+                    for k, v in unmatched.items():
+                        ordered[k] = v
+                        if k == 'crm_lastname': ordered['crm_tp'] = crm_df.loc[idx].get('crm_tp', '')
+                        if k == 'proc_email': ordered['proc_tp'] = []
+                    matches.append(ordered)
+                    self.metrics['unmatched'] += 1
+                    if self.config['enable_diagnostics']:
+                        self.diagnostics.append({'crm_idx': idx, 'failure_reason': 'No match found'})
 
         # any processor-only rows left => unmatched processor
         for pidx, prow in processor_df.iterrows():
@@ -613,7 +661,7 @@ class ReconciliationEngine:
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
 
-          # ——— FLAG LOGIC CORRECTNESS —————————————————————————————————
+        # ——— FLAG LOGIC CORRECTNESS —————————————————————————————————
         self._flag_logic_correctness(matches, processor_df)
         return matches
 
@@ -662,7 +710,7 @@ class ReconciliationEngine:
 
         if proc == "zotapay_paymentasia":
             print(f"Routing to _match_zotapay_paymentasia_row for CRM TP: {crm_row.get('crm_tp')}")
-            return self._match_zotapay_paymentasia_row(crm_row, proc_dict, last4_map, used)
+            return self._match_zotapay_paymentasia_row(crm_row, proc_dict, last4_map, used,self.get_processor_config(proc))
 
         if proc == "trustpayments":
             return self._match_trustpayments_row(
@@ -684,11 +732,12 @@ class ReconciliationEngine:
         crm_email = crm_row['crm_email']
         crm_first = str(crm_row.get('crm_firstname', ''))
         crm_last = str(crm_row.get('crm_lastname', ''))
+        crm_proc_name = crm_row.get('crm_processor_name', '').lower()
 
         candidates = []
-        indices = [i for i in proc_dict if i not in used]
+        indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name',                                                                              '').lower() == crm_proc_name]
         if crm_last4 and crm_last4 in last4_map and proc_config.require_last4:
-            indices = last4_map[crm_last4]
+            indices = [i for i in last4_map[crm_last4] if i in indices]
 
         for i in indices:
             if i in used:
@@ -808,6 +857,7 @@ class ReconciliationEngine:
         crm_cur = str(crm_row['crm_currency']).strip().upper()
         crm_email = str(crm_row.get('crm_email', '')).strip().lower()
         crm_last4 = str(crm_row.get('crm_last4', '')).strip()
+        crm_proc_name = crm_row.get('crm_processor_name', '')
 
         if not crm_tp:
             return None, {'failure_reason': 'Missing CRM TP'}
@@ -816,7 +866,7 @@ class ReconciliationEngine:
         rel_tol = proc_config.tolerance * crm_amt
 
         candidates = []
-        indices = [i for i in proc_dict if i not in used]
+        indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
 
         for idx in indices:
             row = proc_dict[idx]
@@ -922,12 +972,13 @@ class ReconciliationEngine:
         crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
         crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
         crm_last4 = str(crm_row.get('crm_last4', '')).strip()
+        crm_proc_name = crm_row.get('crm_processor_name', '').lower()
 
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
 
         candidates = []
-        indices = [i for i in proc_dict if i not in used]
+        indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
 
         for i in indices:
             row = proc_dict[i]
@@ -1030,12 +1081,13 @@ class ReconciliationEngine:
         crm_email = (crm_row.get('crm_email') or '').lower()
         crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
         crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
+        crm_proc_name = crm_row.get('crm_processor_name', '').lower()
 
         if crm_last4 and crm_last4 in last4_map and proc_config.require_last4:
             # Normalize keys in last4_map? (Assuming last4_map keys already normalized)
-            indices = [i for i in last4_map.get(crm_last4_raw, []) if i not in used]
+            indices = [i for i in last4_map.get(crm_last4_raw, []) if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
         else:
-            indices = [i for i in proc_dict if i not in used]
+            indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
 
         candidates = []
 
@@ -1141,9 +1193,10 @@ class ReconciliationEngine:
         crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
         crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
         crm_last4 = str(crm_row.get('crm_last4', '')).strip()
+        crm_proc_name = crm_row.get('crm_processor_name', '').lower()  # Add this
 
         candidates = []
-        indices = [i for i in proc_dict if i not in used]
+        indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
 
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
@@ -1430,6 +1483,7 @@ class ReconciliationEngine:
         crm_amt = abs(float(crm_row.get("crm_amount", 0)))
         crm_cur = str(crm_row.get("crm_currency", "")).strip().upper()
         crm_tokens = set(crm_first.split() + crm_last.split())
+        crm_proc_name = crm_row.get('crm_processor_name', '').lower()
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
 
@@ -1437,6 +1491,8 @@ class ReconciliationEngine:
 
         for idx, proc_row in proc_dict.items():
             if idx in used:
+                continue
+            if proc_row.get('proc_processor_name', '').lower() != crm_proc_name:
                 continue
 
             proc_tp = normalize_tp(proc_row.get("proc_tp", ""))

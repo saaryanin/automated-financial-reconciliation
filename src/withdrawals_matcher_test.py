@@ -129,7 +129,7 @@ class ReconciliationEngine:
             'deep_search': True,
             'timeout': 300,
             'auto_adjust': True,
-            'enable_logic_flag': True,
+            'enable_logic_flag': False,
         }
         if config:
             self.config.update(config)
@@ -728,7 +728,11 @@ class ReconciliationEngine:
         self.logger.info(f"Total processing time: {timedelta(seconds=self.metrics['processing_time'])}")
 
         # ——— FLAG LOGIC CORRECTNESS —————————————————————————————————
-        self._flag_logic_correctness(matches, processor_df)
+        if self.config.get('enable_logic_flag', False):
+            self._flag_logic_correctness(matches, processor_df)
+        else:
+            for m in matches:
+                m['logic_is_correct'] = ''
         return matches
 
 

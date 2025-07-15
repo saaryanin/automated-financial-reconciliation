@@ -947,7 +947,12 @@ class ReconciliationEngine:
         payment_status = 1 if abs_diff <= tolerance else 0
         comment = ""
         if payment_status == 0:
-            comment = f"Client received {'less' if diff < 0 else 'more'} {abs_diff:.2f} {crm_cur}"
+            if diff > 0:
+                comment = f"Overpaid by {round(diff, 2)} {crm_cur}"
+            elif diff < 0:
+                comment = f"Underpaid by {round(-diff, 2)} {crm_cur}"
+            else:
+                comment = "Amount mismatch"
 
         proc_date_raw = best['row_data'].get('proc_date')
         proc_date_ts = pd.to_datetime(proc_date_raw, errors='coerce')
@@ -992,6 +997,9 @@ class ReconciliationEngine:
         crm_cur = str(crm_row['crm_currency']).strip().upper()
         crm_email = str(crm_row.get('crm_email', '')).strip().lower()
         crm_last4 = str(crm_row.get('crm_last4', '')).strip()
+        crm_first = str(crm_row.get('crm_firstname', '')).strip().lower()
+        crm_last = str(crm_row.get('crm_lastname', '')).strip().lower()
+        crm_full_name = (crm_first + " " + crm_last).strip()
         crm_proc_name = crm_row.get('crm_processor_name', '')
 
         if not crm_tp:
@@ -999,9 +1007,18 @@ class ReconciliationEngine:
 
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
+        tol = max(abs_tol, rel_tol)  # Apply relative tolerance universally
 
         candidates = []
-        indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
+
+        # Relax processor name matching for zotapay_paymentasia to include variants
+        if crm_proc_name.lower() == 'zotapay_paymentasia':
+            allowed_names = ['zotapay_paymentasia', 'zotapay', 'paymentasia']
+            indices = [i for i in proc_dict if
+                       i not in used and proc_dict[i].get('proc_processor_name', '').lower() in allowed_names]
+        else:
+            indices = [i for i in proc_dict if
+                       i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name.lower()]
 
         for idx in indices:
             row = proc_dict[idx]
@@ -1010,61 +1027,79 @@ class ReconciliationEngine:
             if proc_tp != crm_tp:
                 continue
 
-            proc_amt_crm_cur = row.get('proc_amount_crm_currency')
+            proc_amt_raw = row.get('proc_amount')
+            proc_cur = str(row.get('proc_currency', '')).strip().upper()
+            if proc_amt_raw is None or proc_cur is None:
+                continue
+
+            proc_amt_crm_cur, rate = self.convert_amount(proc_amt_raw, proc_cur, crm_cur)
             if proc_amt_crm_cur is None:
                 continue
 
             proc_email = str(row.get('proc_email', '')).strip().lower()
             proc_last4 = str(row.get('proc_last4', '')).strip()
-            proc_cur = str(row.get('proc_currency', '')).strip().upper()
+            proc_first = str(row.get('proc_firstname', '')).strip().lower()
+            proc_last = str(row.get('proc_lastname', '')).strip().lower()
+            proc_full_name = (proc_first + " " + proc_last).strip()
 
             email_sim = self.enhanced_email_similarity(crm_email, proc_email)
             last4_valid = crm_last4 not in ("0", "0000", "", "nan")
             last4_match = last4_valid and (crm_last4 == proc_last4)
+            name_sim = SequenceMatcher(None, crm_full_name, proc_full_name).ratio()
+            name_match = name_sim >= proc_config.name_match_threshold if hasattr(proc_config,
+                                                                                 'name_match_threshold') else name_sim >= 0.8
 
-            if not (last4_match or email_sim >= proc_config.email_threshold):
+            if not (last4_match or email_sim >= proc_config.email_threshold or name_match):
                 continue
 
             diff = proc_amt_crm_cur - crm_amt
             abs_diff = abs(diff)
-            tolerance = abs_tol if proc_cur == crm_cur else rel_tol
-            amount_match = abs_diff <= tolerance
-            payment_status = 1 if amount_match else 0
-
-            comment = ""
-            if not amount_match:
-                comment = f"Client received {'less' if diff < 0 else 'more'} {abs_diff:.2f} {crm_cur}"
+            amount_match = abs_diff <= tol
 
             candidates.append({
                 'index': idx,
                 'proc_tp': proc_tp,
                 'proc_date': row.get('proc_date'),
                 'proc_email': proc_email,
-                'proc_firstname': row.get('proc_firstname', ''),
-                'proc_lastname': row.get('proc_lastname', ''),
+                'proc_firstname': proc_first,
+                'proc_lastname': proc_last,
                 'proc_last4': proc_last4,
                 'proc_currency': proc_cur,
-                'proc_amount': row.get('proc_amount'),
+                'proc_amount': proc_amt_raw,
                 'proc_amount_crm_currency': round(proc_amt_crm_cur, 4),
-                'payment_status': payment_status,
-                'comment': comment,
                 'email_similarity': email_sim,
                 'last4_match': last4_match,
                 'exact_match': last4_match and amount_match,
-                'name_fallback': False  # could add if desired
+                'name_fallback': name_match and not (last4_match or email_sim >= proc_config.email_threshold),
+                'amount_difference': diff,
+                'amount_match': amount_match,
+                'rate': rate,
+                'name_sim': name_sim
             })
 
         if not candidates:
             return None, {'failure_reason': f'No zotapay_paymentasia match for TP: {crm_tp}'}
 
-        # Sort candidates by exact match, email similarity, last4 match
+        # Sort candidates by exact match, email similarity, last4 match, name sim
         candidates.sort(key=lambda c: (
             -int(c['exact_match']),
             -c['email_similarity'],
-            -int(c['last4_match'])
+            -int(c['last4_match']),
+            -c['name_sim']
         ))
 
         best_candidate = candidates[0]
+
+        amount_diff = best_candidate['amount_difference']
+        payment_status = 1 if best_candidate['amount_match'] else 0
+        comment = ""
+        if not payment_status:
+            if amount_diff > 0:
+                comment = f"Overpaid by {round(amount_diff, 2)} {crm_cur}"
+            elif amount_diff < 0:
+                comment = f"Underpaid by {round(-amount_diff, 2)} {crm_cur}"
+            else:
+                comment = "Amount mismatch"
 
         match = {
             'crm_date': crm_row.get('crm_date'),
@@ -1086,6 +1121,7 @@ class ReconciliationEngine:
             'proc_amount_crm_currency': best_candidate['proc_amount_crm_currency'],
             'proc_processor_name': proc_dict[best_candidate['index']].get('proc_processor_name'),
 
+            'exchange_rate': best_candidate['rate'],
             'email_similarity_avg': round(best_candidate['email_similarity'], 4),
             'last4_match': best_candidate['last4_match'],
             'name_fallback_used': best_candidate['name_fallback'],
@@ -1094,9 +1130,10 @@ class ReconciliationEngine:
             'proc_combo_len': 1,
             'crm_combo_len': 1,
             'match_status': 1,
-            'payment_status': best_candidate['payment_status'],
-            'comment': best_candidate['comment'],
-            'matched_proc_indices': [best_candidate['index']]
+            'payment_status': payment_status,
+            'comment': comment,
+            'matched_proc_indices': [best_candidate['index']],
+            'amount_difference': round(amount_diff, 2)
         }
         return match, {}
 
@@ -1106,18 +1143,27 @@ class ReconciliationEngine:
         crm_email = (crm_row.get('crm_email') or '').lower().strip()
         crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
         crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
+        crm_full_name = (crm_first + " " + crm_last).strip()
         crm_last4 = str(crm_row.get('crm_last4', '')).strip()
         crm_proc_name = crm_row.get('crm_processor_name', '').lower()
 
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
+        tol = max(abs_tol, rel_tol)  # Apply relative tolerance universally
 
         candidates = []
-        indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
+        indices = [i for i in proc_dict if
+                   i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
 
         for i in indices:
             row = proc_dict[i]
-            proc_amt_crm = row.get('proc_amount_crm_currency')
+
+            proc_amt_raw = row.get('proc_amount')
+            proc_cur = str(row.get('proc_currency', '')).strip()
+            if proc_amt_raw is None or proc_cur is None:
+                continue
+
+            proc_amt_crm, rate = self.convert_amount(proc_amt_raw, proc_cur, crm_cur)
             if proc_amt_crm is None:
                 continue
 
@@ -1127,9 +1173,9 @@ class ReconciliationEngine:
 
             proc_first = str(row.get('proc_firstname', '')).lower().strip()
             proc_last = str(row.get('proc_lastname', '')).lower().strip()
+            proc_full_name = (proc_first + " " + proc_last).strip()
             name_match = (
-                    SequenceMatcher(None, crm_first, proc_first).ratio() >= proc_config.name_match_threshold or
-                    SequenceMatcher(None, crm_last, proc_last).ratio() >= proc_config.name_match_threshold
+                    SequenceMatcher(None, crm_full_name, proc_full_name).ratio() >= proc_config.name_match_threshold
             )
 
             if not (email_match or name_match):
@@ -1141,24 +1187,21 @@ class ReconciliationEngine:
 
             diff = proc_amt_crm - crm_amt
             abs_diff = abs(diff)
-            proc_cur = str(row.get('proc_currency', '')).strip()
             same_currency = crm_cur == proc_cur
-            tol = abs_tol if same_currency else rel_tol
             amount_match = abs_diff <= tol
-
-            if not amount_match:
-                continue
 
             candidates.append({
                 'index': i,
                 'proc_amount_crm_currency': proc_amt_crm,
                 'email_score': email_sim,
                 'currency': proc_cur,
-                'rate': row.get('proc_rate', 1.0),
+                'rate': rate,
                 'row_data': row,
                 'name_fallback': name_match and not email_match,
                 'last4_match': last4_match,
                 'exact_match': amount_match and last4_match,
+                'amount_difference': diff,
+                'amount_match': amount_match
             })
 
         if not candidates:
@@ -1173,8 +1216,19 @@ class ReconciliationEngine:
         ))
 
         best = candidates[0]
-        payment_status = 1 if best['exact_match'] else 0
-        comment = "" if payment_status else "Amount or identifiers mismatch"
+        amount_diff = best['amount_difference']
+
+        if best['amount_match']:
+            payment_status = 1
+            comment = ""
+        else:
+            payment_status = 0  # Did not pay correctly (under or over)
+            if amount_diff > 0:
+                comment = f"Overpaid by {round(amount_diff, 2)} {crm_cur}"
+            elif amount_diff < 0:
+                comment = f"Underpaid by {round(-amount_diff, 2)} {crm_cur}"
+            else:
+                comment = "Amount mismatch"
 
         match = {
             'crm_date': crm_row.get('crm_date'),
@@ -1204,7 +1258,8 @@ class ReconciliationEngine:
             'match_status': 1,
             'payment_status': payment_status,
             'comment': comment,
-            'matched_proc_indices': [best['index']]
+            'matched_proc_indices': [best['index']],
+            'amount_difference': round(amount_diff, 2)
         }
         return match, {}
 
@@ -1295,15 +1350,14 @@ class ReconciliationEngine:
         if best['amount_match']:
             payment_status = 1
             comment = ""
-        elif amount_diff > 0:
-            payment_status = 2  # Overpaid
-            comment = f"Client Overpaid by {round(amount_diff, 2)} {crm_cur}"
-        elif amount_diff < 0:
-            payment_status = 3  # Underpaid
-            comment = f"Client Underpaid by {round(-amount_diff, 2)} {crm_cur}"
         else:
             payment_status = 0
-            comment = "Amount mismatch"
+            if amount_diff > 0:
+                comment = f"Client Overpaid by {round(amount_diff, 2)} {crm_cur}"
+            elif amount_diff < 0:
+                comment = f"Client Underpaid by {round(-amount_diff, 2)} {crm_cur}"
+            else:
+                comment = "Amount mismatch"
 
         match = {
             'crm_date': crm_row.get('crm_date'),
@@ -1346,10 +1400,12 @@ class ReconciliationEngine:
         crm_proc_name = crm_row.get('crm_processor_name', '').lower()  # Add this
 
         candidates = []
-        indices = [i for i in proc_dict if i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
+        indices = [i for i in proc_dict if
+                   i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
 
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
+        tol = max(abs_tol, rel_tol)  # Apply relative tolerance universally
 
         for i in indices:
             row = proc_dict[i]
@@ -1381,11 +1437,8 @@ class ReconciliationEngine:
             if not (email_match or name_match or name_in_email_match):
                 continue
 
-            same_currency = crm_cur == proc_cur
-            tol = abs_tol if same_currency else rel_tol
-            amount_match = abs(proc_amt_crm_cur - crm_amt) <= tol
-            if not amount_match:
-                continue
+            amount_diff = proc_amt_crm_cur - crm_amt
+            amount_match = abs(amount_diff) <= tol
 
             proc_last4 = str(row.get('proc_last4', '')).strip()
             last4_match = (crm_last4 == proc_last4) and crm_last4 not in ("0", "0000", "", "nan")
@@ -1402,7 +1455,9 @@ class ReconciliationEngine:
                 'match_tier': tier,
                 'name_fallback': tier > 1,
                 'last4_match': last4_match,
-                'exact_match': amount_match and last4_match
+                'exact_match': amount_match and last4_match,
+                'amount_difference': amount_diff,
+                'amount_match': amount_match
             })
 
         if not candidates:
@@ -1413,17 +1468,24 @@ class ReconciliationEngine:
         best = candidates[0]
 
         received_amount = round(best['proc_amount_crm_currency'], 4)
-        diff = abs(received_amount - crm_amt)
-        comment = ""
-        if diff > (abs_tol if best['currency'] == crm_cur else rel_tol):
-            comment = f"Amount mismatch of {diff:.2f} {crm_cur}. "
+        amount_diff = best['amount_difference']
+
+        if best['amount_match']:
+            payment_status = 1
+            comment = ""
+        else:
+            payment_status = 0
+            if amount_diff > 0:
+                comment = f"Overpaid by {round(amount_diff, 2)} {crm_cur}. "
+            elif amount_diff < 0:
+                comment = f"Underpaid by {round(-amount_diff, 2)} {crm_cur}. "
+            else:
+                comment = "Amount mismatch. "
+
         if best['currency'] != crm_cur:
             comment += "Mixed currencies. "
         if best['name_fallback']:
             comment += "Matched by name fallback."
-
-        payment_status = 1 if abs(best['proc_amount_crm_currency'] - crm_amt) <= (abs_tol if best['currency'] == crm_cur else rel_tol) else 0
-
 
         return {
             'crm_date': crm_row.get('crm_date'),
@@ -1451,7 +1513,8 @@ class ReconciliationEngine:
             'match_status': 1,
             'payment_status': payment_status,
             'comment': comment,
-            'matched_proc_indices': [best['index']]
+            'matched_proc_indices': [best['index']],
+            'amount_difference': round(amount_diff, 2)
         }, {}
 
     def _match_skrill_neteller_row(self, crm_row, proc_dict, last4_map, used, proc_config, processor_name):
@@ -1636,6 +1699,7 @@ class ReconciliationEngine:
         crm_proc_name = crm_row.get('crm_processor_name', '').lower()
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
+        tol = max(abs_tol, rel_tol)  # Apply relative tolerance universally
 
         tier_candidates = {1: [], 2: [], 3: [], 4: [], 5: []}  # added tier 5
 
@@ -1669,19 +1733,19 @@ class ReconciliationEngine:
             # Match tiers logic:
             if crm_tp and proc_tp and crm_tp == proc_tp and crm_last4 and proc_last4 and crm_last4 == proc_last4:
                 # TP + last4 exact
-                tier_candidates[1].append((idx, proc_row, proc_amt_crm_cur, email_sim))
+                tier_candidates[1].append((idx, proc_row, proc_amt_crm_cur, email_sim, rate))
             elif crm_tp and proc_tp and crm_tp == proc_tp and email_sim > 0.75:
                 # TP + email similarity
-                tier_candidates[2].append((idx, proc_row, proc_amt_crm_cur, email_sim))
+                tier_candidates[2].append((idx, proc_row, proc_amt_crm_cur, email_sim, rate))
             elif crm_last4 and proc_last4 and crm_last4 == proc_last4 and email_sim > 0.75:
                 # last4 + email similarity
-                tier_candidates[3].append((idx, proc_row, proc_amt_crm_cur, email_sim))
+                tier_candidates[3].append((idx, proc_row, proc_amt_crm_cur, email_sim, rate))
             elif crm_last4 and proc_last4 and crm_last4 == proc_last4 and first_or_last_name_match:
                 # last4 + (first or last name) match, even if TP differs
-                tier_candidates[4].append((idx, proc_row, proc_amt_crm_cur, email_sim))
+                tier_candidates[4].append((idx, proc_row, proc_amt_crm_cur, email_sim, rate))
             elif email_sim > 0.75 and full_name_match:
                 # email similarity + full name match
-                tier_candidates[5].append((idx, proc_row, proc_amt_crm_cur, email_sim))
+                tier_candidates[5].append((idx, proc_row, proc_amt_crm_cur, email_sim, rate))
 
         # Iterate tiers in order of priority
         for tier in range(1, 6):
@@ -1692,20 +1756,25 @@ class ReconciliationEngine:
             best_candidate = None
             best_err = float('inf')
 
-            for idx, proc_row, proc_amt_crm_cur, email_sim in candidates:
+            for idx, proc_row, proc_amt_crm_cur, email_sim, rate in candidates:
                 err = abs(proc_amt_crm_cur - crm_amt)
-                tol = abs_tol if crm_cur == proc_row.get("proc_currency", "").strip().upper() else rel_tol
-                if err <= tol and err < best_err:
-                    best_candidate = (idx, proc_row, proc_amt_crm_cur, email_sim, err)
+                if err < best_err:
+                    best_candidate = (idx, proc_row, proc_amt_crm_cur, email_sim, rate, err)
                     best_err = err
 
             if best_candidate:
-                idx, proc_row, proc_amt_crm_cur, email_sim, err = best_candidate
+                idx, proc_row, proc_amt_crm_cur, email_sim, rate, err = best_candidate
                 received = round(proc_amt_crm_cur, 4)
+                amount_diff = proc_amt_crm_cur - crm_amt
                 payment_status = int(err <= tol)
                 comment = ""
                 if not payment_status:
-                    comment = f"Amount {'under' if received < crm_amt else 'over'} by {abs(received - crm_amt):.2f} {crm_cur}"
+                    if amount_diff > 0:
+                        comment = f"Overpaid by {round(amount_diff, 2)} {crm_cur}"
+                    elif amount_diff < 0:
+                        comment = f"Underpaid by {round(-amount_diff, 2)} {crm_cur}"
+                    else:
+                        comment = "Amount mismatch"
 
                 name_fallback_used = (tier in [4, 5])
 
@@ -1727,6 +1796,7 @@ class ReconciliationEngine:
                     'proc_amount': proc_row.get('proc_amount'),
                     'proc_amount_crm_currency': proc_amt_crm_cur,
                     'proc_processor_name': proc_row.get('proc_processor_name'),
+                    'exchange_rate': rate,
                     'email_similarity_avg': round(email_sim, 4),
                     'last4_match': tier in [1, 3, 4],
                     'name_fallback_used': name_fallback_used,
@@ -1736,7 +1806,8 @@ class ReconciliationEngine:
                     'match_status': 1,
                     'payment_status': payment_status,
                     'comment': comment,
-                    'matched_proc_indices': [idx]
+                    'matched_proc_indices': [idx],
+                    'amount_difference': round(amount_diff, 2)
                 }, {'trustpayments_candidate': best_candidate}
 
         return None, {'failure_reason': 'No TrustPayments match'}

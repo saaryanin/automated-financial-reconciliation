@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-07-03"
+date = "2025-05-05"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",

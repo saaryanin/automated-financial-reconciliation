@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-06-17"
+date = "2025-07-03"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",
@@ -104,11 +104,8 @@ if crm_df is None or processor_df is None:
 
 logger.info("Configuring reconciliation engine...")
 engine = ReconciliationEngine(exchange_rate_map, config={
-    'max_combo': 20,
-    'tolerance': 0.02,
-    'email_threshold': 0.5,
-    'enable_diagnostics': True,
-    'log_level': logging.DEBUG
+    'enable_cross_processor': True,
+    'enable_logic_flag': True
 })
 
 non_cancelled_mask = crm_df['crm_type'].str.lower() != 'withdrawal cancelled'

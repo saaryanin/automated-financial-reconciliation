@@ -24,39 +24,56 @@ def enhanced_name_similarity(name1, name2):
 
 def make_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # ── Numeric amounts ───────────────────────────────────────────
-    df['crm_amount']  = pd.to_numeric(df.get('crm_amount', 0),  errors='coerce').fillna(0)
-    df['proc_amount'] = pd.to_numeric(df.get('proc_amount', 0), errors='coerce').fillna(0)
-    # ── Difference & ratio ────────────────────────────────────────
-    df['amount_diff']  = (abs(df['crm_amount']) - abs(df['proc_amount'])).abs()  # Use abs on both to ignore signs
-    df['amount_ratio'] = df['proc_amount_crm_currency'].fillna(0) / df['crm_amount'].replace(0, 1)
-    # ── Comment length ────────────────────────────────────────────
+    # Handle proc_amount if list: sum abs or 0 if empty
+    def handle_amount(val):
+        if isinstance(val, list):
+            if val:
+                return sum(abs(x) for x in val if pd.notna(x))
+            return 0.0
+        return pd.to_numeric(val, errors='coerce')
+
+    df['crm_amount'] = pd.to_numeric(df.get('crm_amount', 0), errors='coerce').fillna(0)
+    df['proc_amount'] = df['proc_amount'].apply(handle_amount).fillna(0)
+
+    # Difference & ratio (positive)
+    df['amount_diff'] = (abs(df['crm_amount']) - abs(df['proc_amount'])).abs()
+    df['amount_ratio'] = abs(df['proc_amount_crm_currency'].fillna(0)) / abs(df['crm_amount']).replace(0, 1)
+
+    # Comment length
     df['comment_len'] = df.get('comment', '').fillna('').str.len()
-    # ── Date gap (days) ───────────────────────────────────────────
-    df['crm_date']  = pd.to_datetime(df.get('crm_date'),  errors='coerce')
+
+    # Date gap (days)
+    df['crm_date'] = pd.to_datetime(df.get('crm_date'), errors='coerce')
     df['proc_date'] = pd.to_datetime(df.get('proc_date'), errors='coerce')
     df['date_diff'] = (df['proc_date'] - df['crm_date']).dt.days.abs().fillna(0)
-    # ── “Comment but paid” flag ───────────────────────────────────
+
+    # Comment but paid
     df['comment_but_paid'] = (
         df.get('comment','').notna() &
         (df['comment']!='') &
         (df['payment_status']==1)
     ).astype(int)
-    # ── Cast existing bools to int ────────────────────────────────
+
+    # Cast bools to int
     for flag in [
         'last4_match','name_fallback_used','exact_match_used',
         'match_status','payment_status','logic_is_correct'
     ]:
         if flag in df:
             df[flag] = df[flag].fillna(0).astype(int)
-    # ── New validation features ───────────────────────────────────
+
+    # Validation features
     df['currency_match'] = (df.get('crm_currency', '') == df.get('proc_currency', '')).astype(int)
-    df['payment_valid'] = (abs(df['crm_amount']) - df['proc_amount_crm_currency']).abs() <= 0.1 * abs(df['crm_amount'])  # Also abs crm for validation
+    df['payment_valid'] = (abs(df['crm_amount']) - df['proc_amount_crm_currency']).abs() <= 0.1 * abs(df['crm_amount'])
+    df['payment_valid'] = df['payment_valid'].fillna(False).astype(int)  # Handle NaN as 0
     df['last4_actual'] = (df['crm_last4'].fillna('') == df['proc_last4'].fillna('')).astype(int)
     df['last4_disagree'] = (df['last4_actual'] != df['last4_match']).astype(int)
     df['name_sim_first'] = df.apply(lambda row: enhanced_name_similarity(row.get('crm_firstname', ''), row.get('proc_firstname', '')), axis=1)
     df['name_sim_last'] = df.apply(lambda row: enhanced_name_similarity(row.get('crm_lastname', ''), row.get('proc_lastname', '')), axis=1)
     df['match_status_valid'] = ((df['last4_match'] == 1) | (df['email_similarity_avg'] > 0.5) | (df['name_sim_first'] > 0.5) | (df['name_sim_last'] > 0.5)).astype(int)
+
+    # is_cancel: more flexible match for "Withdrawal cancelled with no matching withdrawal found"
+    df['is_cancel'] = df['comment'].str.lower().fillna('').str.contains(r'withdrawal\s*cancelled\s*with\s*no\s*matching\s*withdrawal\s*found').astype(int)
     return df
 
 def main():
@@ -85,7 +102,7 @@ def main():
     bool_feats = [
         'last4_match','name_fallback_used','exact_match_used',
         'match_status','payment_status','comment_but_paid', 'currency_match',
-        'payment_valid', 'last4_actual', 'last4_disagree', 'match_status_valid'
+        'payment_valid', 'last4_actual', 'last4_disagree', 'match_status_valid', 'is_cancel'
     ]
     cat_feats = [
         'crm_processor_name','crm_currency','proc_currency'

@@ -1,5 +1,5 @@
 import time
-from src.preprocess import process_files_in_parallel
+from src.preprocess_test import process_files_in_parallel
 from src.config import CRM_DIR, PROCESSOR_DIR
 from src.deposits_matcher import (
     match_all_processors_in_parallel,

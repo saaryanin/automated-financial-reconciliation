@@ -32,7 +32,7 @@ args = parser.parse_args()
 
 logger = setup_logger('TrainingGenerator', logging.INFO)
 
-date = "2025-04-10"
+date = "2025-07-17"
 processors = [
     "safecharge", "paypal", "powercash", "shift4",
     "skrill", "neteller", "bitpay", "zotapay", "paymentasia",

@@ -1,47 +1,47 @@
 import pandas as pd
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, DATA_DIR
 
 
 def match_deposits(processor: str, date: str) -> pd.DataFrame:
-    crm_path = PROCESSED_CRM_DIR / 'combined' / date / "combined_crm_deposits.xlsx"
-    psp_path = PROCESSED_PROCESSOR_DIR / 'combined' / date / "combined_processor_deposits.xlsx"
+    crm_path = PROCESSED_CRM_DIR / processor / date / f"{processor}_deposits.xlsx"
+    psp_path = PROCESSED_PROCESSOR_DIR / processor / date / f"{processor}_deposits.xlsx"
 
-    if not crm_path.exists() or not psp_path.exists():
-        print(f"⚠️ Combined files missing for {processor} deposits on {date}")
+    if not crm_path.exists():
+        print(f"⚠️ CRM file not found for {processor}: {crm_path}")
         return pd.DataFrame()
 
     crm_df = pd.read_excel(crm_path, dtype=str)
-    psp_df = pd.read_excel(psp_path, dtype=str)
 
-    # Match on transaction_id (add suffixes for column conflicts)
-    matched = pd.merge(crm_df, psp_df, on="transaction_id", how="inner", suffixes=('_crm', '_psp'))
-    matched['status'] = 'matched'
+    if not psp_path.exists():
+        print(f"⚠️ Processor file not found for {processor}: {psp_path}")
+        unmatched_crm = crm_df.copy()
+        unmatched_psp = pd.DataFrame()
+    else:
+        psp_df = pd.read_excel(psp_path, dtype=str)
 
-    # Unmatched
-    unmatched_crm = crm_df[~crm_df["transaction_id"].isin(matched["transaction_id"])].copy()
-    unmatched_crm['status'] = 'unmatched_crm'
+        crm_ids = set(crm_df["transaction_id"].dropna())
+        psp_ids = set(psp_df["transaction_id"].dropna())
 
-    unmatched_psp = psp_df[~psp_df["transaction_id"].isin(matched["transaction_id"])].copy()
-    unmatched_psp['status'] = 'unmatched_psp'
+        unmatched_psp = psp_df[~psp_df["transaction_id"].isin(crm_ids)].copy()
+        unmatched_crm = crm_df[~crm_df["transaction_id"].isin(psp_ids)].copy()
 
-    # Combine all into one DF (align columns)
-    all_cols = list(set(matched.columns) | set(unmatched_crm.columns) | set(unmatched_psp.columns))
-    combined = pd.concat([matched, unmatched_crm, unmatched_psp], ignore_index=True)
-    combined = combined.reindex(columns=all_cols).fillna('')  # Fill missing cols with empty
-
-    if combined.empty:
+    if unmatched_psp.empty and unmatched_crm.empty:
         print(f"✅ All {processor.capitalize()} deposits for {date} matched both directions.")
-        return combined
+        return pd.DataFrame()
 
-    out_dir = DATA_DIR / "lists" / "deposits" / processor / date
+    out_dir = DATA_DIR / "lists" / "unmatched_deposits" / processor / date
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{processor}_deposits_combined.xlsx"
-    combined.to_excel(out_path, index=False)
+    out_path = out_dir / f"{processor}_unmatched.xlsx"
 
-    print(f"📄 Combined {processor.capitalize()} deposits saved to {out_path} (Matched: {len(matched)}, Unmatched CRM: {len(unmatched_crm)}, PSP: {len(unmatched_psp)})")
-    return combined
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        if not unmatched_psp.empty:
+            unmatched_psp.to_excel(writer, index=False, sheet_name="Unmatched_PSP")
+        if not unmatched_crm.empty:
+            unmatched_crm.to_excel(writer, index=False, sheet_name="Unmatched_CRM")
+
+    print(f"❌ Unmatched {processor.capitalize()} deposits saved to {out_path} (Processor: {len(unmatched_psp)}, CRM: {len(unmatched_crm)})")
+    return unmatched_crm
 
 
 def match_all_processors_in_parallel(processors: list[str], date: str) -> list[pd.DataFrame]:

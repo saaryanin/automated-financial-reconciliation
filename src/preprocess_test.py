@@ -24,6 +24,7 @@ PSP_NAME_MAP = {
     'acquiringcom': 'trustpayments',
     'acquiring com': 'trustpayments',
     'trust payments': 'trustpayments',
+    'paysafe': 'skrill',
     # Add any other known aliases as needed
 }
 def clean_amount(val):
@@ -81,6 +82,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         name_split = df['Name'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
         df['last_name'] = name_split[1].fillna('')
+        df['processor_name'] = processor
         # Drop unneeded columns
         drop_cols = ["Time zone", "Status", "Fee", "Gross", "To Email Address", "Date", "Time", "Name", "Type"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
@@ -96,13 +98,15 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         df['last_4digits'] = df['PAN'].astype(str).str[-4:].str.zfill(4)  # Extract last 4, zfill handles leading zeros
         df['email'] = df['Email Address'].astype(str).str.strip()  # Added email column
+        df['processor_name'] = processor
         df = df.drop(columns=['Transaction Type', 'Transaction Result', 'PAN',
                               'Email Address'])  # Clean up, added 'Email Address' to drop
 
 
+
     elif processor == "powercash":
         df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (
-                    df["Currency"].str.upper() != "CAD")]
+            ~df["Currency"].str.upper().isin(["CAD", "GBP"]))]
         df = df[["Tx-Id", "Date", "Time", "Currency", "Amount", "Firstname", "Lastname", "EMail", "Custom 3",
                  "Credit Card Number"]]
         df = df.rename(
@@ -113,6 +117,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['tp'] = df['Custom 3'].astype(str).str.split('-').str[0].str.strip()  # Extract tp before '-'
         df['last_4digits'] = df['Credit Card Number'].astype(str).str[-4:].str.zfill(
             4)  # Extract last 4, zfill for leading zeros
+        df['processor_name'] = processor
         # Drop unneeded columns (Date and Time after combining, Custom 3 and Credit Card Number after extraction)
         drop_cols = ["Date", "Time", "Custom 3", "Credit Card Number"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
@@ -135,6 +140,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         name_split = df['Cardholder Name'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
         df['last_name'] = name_split[1].fillna('')
+        df['processor_name'] = processor
         # Drop unneeded columns
         drop_cols = ["Card Scheme", "Card Number", "Cardholder Name"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
@@ -157,7 +163,9 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
                                                                         case=False).str.strip()
         df['date'] = df['date'].apply(
             lambda x: parser.parse(str(x)).strftime('%m/%d/%Y %I:%M:%S %p') if pd.notna(x) else '')
+        df['processor_name'] = processor
         df = df.drop(columns=['Transaction Details'])
+
 
     elif processor == "trustpayments":
         df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
@@ -167,8 +175,21 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "mainamount": "amount",
             "currencyiso3a": "currency"
         })
-        df = df[["transaction_id", "billingfullname", "paymenttypedescription", "date", "currency", "amount", "maskedpan", "orderreference"]]
+        df = df[["transaction_id", "billingfullname", "date", "currency", "amount", "maskedpan",
+                 "orderreference"]]  # Removed "paymenttypedescription"
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
+        # Split billingfullname into first_name and last_name
+        name_split = df['billingfullname'].astype(str).str.strip().str.split(n=1, expand=True)
+        df['first_name'] = name_split[0].fillna('')
+        df['last_name'] = name_split[1].fillna('')
+        df['last_4digits'] = df['maskedpan'].astype(str).str[-4:].str.zfill(
+            4)  # Extract last 4, zfill for leading zeros
+        df['tp'] = df['orderreference'].astype(str).str.split('-').str[0].str.strip()  # Extract tp before '-'
+        df['processor_name'] = processor
+        # Drop unneeded columns
+        drop_cols = ["billingfullname", "maskedpan", "orderreference"]
+        df = df.drop(columns=[col for col in drop_cols if col in df.columns])
+
 
     elif processor == "zotapay":
         df = df.copy()
@@ -179,26 +200,51 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "ID": "transaction_id",
             "Order Currency": "currency",
             "Order Amount": "amount",
-            "Created At": "date"
+            "Created At": "date",  # Will be dropped later
+            "Ended At": "date",  # Renamed to date (overwrites if conflict, but since dropping old date)
+            "Customer Email": "email",
+            "Customer First Name": "first_name",
+            "Customer Last Name": "last_name"
         })
         keep_cols = [
-            "transaction_id", "Type", "Status", "currency", "amount", "Merchant Order Description",
-            "Payment Method", "date", "Ended At", "Customer Email", "Customer First Name", "Customer Last Name"
+            "transaction_id", "currency", "amount", "Merchant Order Description",
+            "date", "email", "first_name", "last_name"  # Removed Type, Status, Payment Method; kept Ended At as date
+        ]
+        df = df[keep_cols]
+        df['amount'] = abs(pd.to_numeric(df['amount'].astype(str).str.replace(',', ''), errors='coerce').fillna(
+            0))  # Ensure numeric, handle strings/commas
+        df['tp'] = df['Merchant Order Description'].astype(str).str.split('-').str[
+            0].str.strip()  # Extract tp before '-'
+        df['processor_name'] = processor
+        df = df.drop(columns=['Merchant Order Description'])  # Drop after extraction
+
+
+
+    elif processor == "bitpay":
+        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+        df = df[df["tx_type"].str.lower() == "sale"]
+        df = df.rename(columns={
+            "invoice_id": "transaction_id",
+            "payout_amount": "amount",
+            "payout_currency": "currency",
+            "buyeremail": "email"
+        })
+        keep_cols = [
+            "date", "time", "transaction_id", "amount",
+            "currency", "buyername", "email"
         ]
         df = df[keep_cols]
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
+        df['date'] = df['date'].astype(str) + ' ' + df['time'].astype(str)  # Combine date and time
+        # Split buyername into first_name and last_name
+        name_split = df['buyername'].astype(str).str.strip().str.split(n=1, expand=True)
+        df['first_name'] = name_split[0].fillna('')
+        df['last_name'] = name_split[1].fillna('')
+        df['processor_name'] = processor
+        # Drop unneeded columns
+        drop_cols = ["time", "buyername"]
+        df = df.drop(columns=[col for col in drop_cols if col in df.columns])
 
-    elif processor == "bitpay":
-        df = df[df["txtype"].str.lower() == "sale"]
-        df = df.rename(columns={
-            "invoiceid": "transaction_id"
-        })
-        keep_cols = [
-            "date", "time", "transaction_id", "payoutamount",
-            "invoiceprice", "buyerName", "buyerEmail"
-        ]
-        df = df[keep_cols]
-        df['amount'] = abs(pd.to_numeric(df['invoiceprice'], errors='coerce').fillna(0))
 
     elif processor == "ezeebill":
         df.columns = df.columns.str.replace(" ", "").str.strip()
@@ -211,6 +257,10 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         })
         df = df[["transaction_id", "amount"]]  # Time dropped
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
+        df['tp'] = df['transaction_id'].astype(str).str.split('-').str[
+            0].str.strip()  # Extract tp from transaction_id before '-'
+        df['currency'] = 'MYR'  # Always set to MYR
+        df['processor_name'] = processor
 
     elif processor == "paymentasia":
         df = df[(df["Type"].str.upper() == "SALE") & (df["Status"].str.upper() == "SUCCESS")]
@@ -218,10 +268,12 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "Merchant Reference": "transaction_id",
             "Order Amount": "amount",
             "Order Currency": "currency",
-            "Created Time": "date"
+            "Completed Time": "date"
         })
         df = df[["transaction_id", "amount", "currency", "date"]]
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
+        df['tp'] = df['transaction_id'].astype(str).str.split('-').str[0].str.strip()
+        df['processor_name'] = processor
 
     # Common cleanup for all processors
     if 'transaction_id' in df:
@@ -1241,6 +1293,7 @@ def combine_processed_files(
             'last_name': 'proc_lastname',
             'processor_name': 'proc_processor_name',
             'tp': 'proc_tp',
+            'transaction_id': 'proc_transaction_id',
         }
 
         for old_col, new_col in rename_map_proc.items():

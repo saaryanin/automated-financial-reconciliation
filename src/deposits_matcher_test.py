@@ -8,14 +8,24 @@ def match_deposits(processor: str, date: str) -> pd.DataFrame:
     crm_path = PROCESSED_CRM_DIR / processor / date / f"{processor}_deposits.xlsx"
     psp_path = PROCESSED_PROCESSOR_DIR / processor / date / f"{processor}_deposits.xlsx"
 
-    crm_df = pd.read_excel(crm_path, dtype={'transaction_id': str})
-    psp_df = pd.read_excel(psp_path, dtype={'transaction_id': str})
+    if not crm_path.exists():
+        print(f"⚠️ CRM file not found for {processor}: {crm_path}")
+        return pd.DataFrame()
 
-    crm_ids = set(crm_df["transaction_id"].dropna())
-    psp_ids = set(psp_df["transaction_id"].dropna())
+    crm_df = pd.read_excel(crm_path, dtype=str)
 
-    unmatched_psp = psp_df[~psp_df["transaction_id"].isin(crm_ids)].copy()
-    unmatched_crm = crm_df[~crm_df["transaction_id"].isin(psp_ids)].copy()
+    if not psp_path.exists():
+        print(f"⚠️ Processor file not found for {processor}: {psp_path}")
+        unmatched_crm = crm_df.copy()
+        unmatched_psp = pd.DataFrame()
+    else:
+        psp_df = pd.read_excel(psp_path, dtype=str)
+
+        crm_ids = set(crm_df["transaction_id"].dropna())
+        psp_ids = set(psp_df["transaction_id"].dropna())
+
+        unmatched_psp = psp_df[~psp_df["transaction_id"].isin(crm_ids)].copy()
+        unmatched_crm = crm_df[~crm_df["transaction_id"].isin(psp_ids)].copy()
 
     if unmatched_psp.empty and unmatched_crm.empty:
         print(f"✅ All {processor.capitalize()} deposits for {date} matched both directions.")
@@ -26,13 +36,10 @@ def match_deposits(processor: str, date: str) -> pd.DataFrame:
     out_path = out_dir / f"{processor}_unmatched.xlsx"
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        if processor == "powercash":
-            unmatched_psp.to_excel(writer, index=False, sheet_name="Unmatched")
-        else:
-            psp_columns = psp_df.columns.tolist()
-            crm_columns = crm_df.columns.tolist()
-            unmatched_psp.to_excel(writer, index=False, sheet_name="Unmatched_PSP", columns=psp_columns)
-            unmatched_crm.to_excel(writer, index=False, sheet_name="Unmatched_CRM", columns=crm_columns)
+        if not unmatched_psp.empty:
+            unmatched_psp.to_excel(writer, index=False, sheet_name="Unmatched_PSP")
+        if not unmatched_crm.empty:
+            unmatched_crm.to_excel(writer, index=False, sheet_name="Unmatched_CRM")
 
     print(f"❌ Unmatched {processor.capitalize()} deposits saved to {out_path} (Processor: {len(unmatched_psp)}, CRM: {len(unmatched_crm)})")
     return unmatched_crm

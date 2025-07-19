@@ -1,5 +1,4 @@
 import pandas as pd
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, DATA_DIR
 

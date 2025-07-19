@@ -4,9 +4,10 @@ from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
-import logging
 from collections import Counter
 from dateutil import parser
+import dateutil.parser
+
 
 PSP_NAME_MAP = {
     'netteler': 'neteller',
@@ -283,8 +284,6 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
 
 
 def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
-    import pandas as pd
-    import re
 
     processor_tag = processor.lower()
     df.columns = df.columns.str.strip().str.replace(u'\xa0', ' ', regex=False)
@@ -866,7 +865,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         processor = processor.lower()
         patterns = {
             "paypal": r"PSP TransactionId:([A-Z0-9]+)",
-            "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})",
+            "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
             "powercash": r"PSP TransactionId:(\d+)",
             "shift4": r"More Comment:[^$]*\$(\w+)",
             "skrill": r"More Comment:[^$]*\$(\d+)",
@@ -950,10 +949,12 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             "PSP name",
             "CC Last 4 Digits",
             "transaction_id",
+            "Approved",  # Keep raw Approved column
             "Name"  # 🟢 Optional: keep 'Name' for traceability (remove if not wanted)
         ]
         # Only keep columns that exist in the df
         df = df[[col for col in needed_columns if col in df.columns]]
+        df['crm_approved'] = df['Approved'].str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0)  # Create crm_approved from Approved
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)
@@ -1160,7 +1161,7 @@ def combine_processed_files(
         out_df = pd.DataFrame(grouped_rows)
         return out_df
 
-    import dateutil.parser
+
 
     def group_processor_withdrawals(df, exchange_rate_map):
         df = df.copy()
@@ -1253,12 +1254,15 @@ def combine_processed_files(
             'PSP name': 'crm_processor_name',
             'CC Last 4 Digits': 'crm_last4',
             'Name': 'crm_type',
-            'transaction_id': 'crm_transaction_id'
+            'transaction_id': 'crm_transaction_id',
+            'approved': 'crm_approved'  # Use only crm_approved, drop raw Approved
         }
 
         for old_col, new_col in rename_map.items():
             if old_col in combined_crm.columns:
                 combined_crm.rename(columns={old_col: new_col}, inplace=True)
+        if 'Approved' in combined_crm.columns:  # Remove raw Approved column
+            combined_crm = combined_crm.drop(columns=['Approved'])
 
         # ... (any other formatting code here, like for crm_date, crm_last4, etc.)
 
@@ -1301,28 +1305,31 @@ def combine_processed_files(
                 combined_proc.rename(columns={old_col: new_col}, inplace=True)
 
         # Robust date parsing for proc_date using dateutil.parser to handle all formats
-        import dateutil.parser
+
 
         def parse_mixed_date(date_str):
             if pd.isna(date_str) or str(date_str).strip() == '':
                 return pd.NaT
             try:
                 dt = dateutil.parser.parse(str(date_str), dayfirst=True)
-                return dt.date()
+                return dt  # Keep full datetime to include time
             except Exception:
                 return pd.NaT
 
         if 'proc_date' in combined_proc.columns:
             combined_proc['proc_date'] = combined_proc['proc_date'].apply(parse_mixed_date)
+            # Optional: Standardize to string format 'YYYY-MM-DD HH:MM:SS' for consistency
+            combined_proc['proc_date'] = combined_proc['proc_date'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-        # Normalize proc_amount to numeric absolute
+            # Normalize proc_amount to numeric absolute
         if 'proc_amount' in combined_proc.columns:
             combined_proc['proc_amount'] = pd.to_numeric(combined_proc['proc_amount'], errors='coerce').abs()
 
         if 'proc_last4' in combined_proc.columns:
             combined_proc['proc_last4'] = combined_proc['proc_last4'].apply(clean_proc_last4)
 
-        # Clean proc_tp to remove trailing '.0' if present and strip spaces
+            # Clean proc_tp to remove trailing '.0' if present and strip spaces
+
         def clean_proc_tp(val):
             if pd.isna(val):
                 return ''
@@ -1334,7 +1341,7 @@ def combine_processed_files(
         if 'proc_tp' in combined_proc.columns:
             combined_proc['proc_tp'] = combined_proc['proc_tp'].apply(clean_proc_tp)
 
-        # Clean and strip other string columns
+            # Clean and strip other string columns
         str_cols_proc = [
             'proc_email', 'proc_firstname', 'proc_lastname', 'proc_processor_name'
         ]

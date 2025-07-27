@@ -3,16 +3,15 @@ from src.preprocess_test import process_files_in_parallel, combine_processed_fil
 from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 import pandas as pd
 import numpy as np
-from src.withdrawals_matcher import ReconciliationEngine
+from src.withdrawals_matcher_test import ReconciliationEngine
 from src.utils import (
-    logging, setup_logger, load_excel_if_exists, safe_concat, create_cancelled_row, drop_cols
+    logging, setup_logger, load_excel_if_exists, safe_concat,drop_cols
 )
-
 
 start_time = time.time()
 
 # --- Configuration ---
-DATE = "2025-05-07"  # Adjust as needed; can be made configurable
+DATE = "2025-07-16"  # Adjust as needed; can be made configurable
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments","neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---
@@ -60,7 +59,6 @@ combine_processed_files(
     transaction_type="deposit",
     exchange_rate_map={},  # Load rates if needed, else empty dict
 )
-
 # --- Step 4: Generate deposits matching report ---
 combined_crm_path_deposits = PROCESSED_CRM_DIR / "combined" / DATE / "combined_crm_deposits.xlsx"
 combined_proc_path_deposits = PROCESSED_PROCESSOR_DIR / "combined" / DATE / "combined_processor_deposits.xlsx"
@@ -73,21 +71,27 @@ matched_deposits = pd.merge(crm_df_deposits, proc_df_deposits, left_on='crm_tran
 matched_deposits['match_status'] = 1
 
 # Unmatched CRM: add proc columns as NaN
-unmatched_crm_deposits = crm_df_deposits[~crm_df_deposits['crm_transaction_id'].isin(matched_deposits['crm_transaction_id'])]
-for col in proc_df_deposits.columns:
-    if col not in unmatched_crm_deposits.columns:
-        unmatched_crm_deposits[col] = np.nan
-unmatched_crm_deposits['match_status'] = 0
+unmatched_crm_deposits = crm_df_deposits[~crm_df_deposits['crm_transaction_id'].isin(matched_deposits['crm_transaction_id'])].copy()
+if not unmatched_crm_deposits.empty:
+    for col in proc_df_deposits.columns:
+        if col not in unmatched_crm_deposits.columns:
+            unmatched_crm_deposits.loc[:, col] = np.nan
+    unmatched_crm_deposits.loc[:, 'match_status'] = 0
 
 # Unmatched Processor: add crm columns as NaN
-unmatched_proc_deposits = proc_df_deposits[~proc_df_deposits['proc_transaction_id'].isin(matched_deposits['proc_transaction_id'])]
-for col in crm_df_deposits.columns:
-    if col not in unmatched_proc_deposits.columns:
-        unmatched_proc_deposits[col] = np.nan
-unmatched_proc_deposits['match_status'] = 0
+unmatched_proc_deposits = proc_df_deposits[~proc_df_deposits['proc_transaction_id'].isin(matched_deposits['proc_transaction_id'])].copy()
+if not unmatched_proc_deposits.empty:
+    for col in crm_df_deposits.columns:
+        if col not in unmatched_proc_deposits.columns:
+            unmatched_proc_deposits.loc[:, col] = np.nan
+    unmatched_proc_deposits.loc[:, 'match_status'] = 0
 
 # Combine all: matched + unmatched_crm + unmatched_proc
-all_rows_deposits = pd.concat([matched_deposits, unmatched_crm_deposits, unmatched_proc_deposits], ignore_index=True)
+dfs = [df for df in [matched_deposits, unmatched_crm_deposits, unmatched_proc_deposits] if not df.empty]
+if dfs:
+    all_rows_deposits = pd.concat(dfs, ignore_index=True)
+else:
+    all_rows_deposits = pd.DataFrame()
 all_rows_deposits = all_rows_deposits.sort_values(by='match_status', ascending=False)  # Matched first
 
 # Save to Excel (single sheet)
@@ -186,7 +190,7 @@ else:
     engine = ReconciliationEngine(
         exchange_rate_map, config={
             'enable_cross_processor': True,
-            'enable_logic_flag': True  # Changed to True to enable logic_is_correct
+            'enable_warning_flag': True
         }
     )
     crm_df_non_cancelled = crm_df_withdrawals[crm_df_withdrawals['crm_type'].str.lower() != 'withdrawal cancelled']
@@ -203,7 +207,7 @@ else:
     desired_columns = [
         'crm_date','crm_email','crm_firstname','crm_lastname','crm_tp','crm_last4','crm_currency','crm_amount','crm_processor_name',
         'proc_date','proc_email','proc_tp','proc_firstname','proc_lastname','proc_last4','proc_currency','proc_amount','proc_amount_crm_currency','proc_processor_name',
-        'email_similarity_avg','last4_match','name_fallback_used','exact_match_used','match_status','payment_status','logic_is_correct','comment'
+        'email_similarity_avg','last4_match','name_fallback_used','exact_match_used','match_status','payment_status','warning','comment'
     ]
 
     matches_df = matches_df[[c for c in desired_columns if c in matches_df.columns]]

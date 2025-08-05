@@ -142,6 +142,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
 
     elif processor == "trustpayments":
         df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
+        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR"])].copy()
         df = df.rename(columns={
             "transactionreference": "transaction_id",
             "transactionstartedtimestamp": "date",
@@ -492,7 +493,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             pan_col: "last_4cc" if pan_col else "last_4cc"
         })
         df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$") if pan_col else ""
-        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD"})
+        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
         df["processor_name"] = "safecharge"
         df["first_name"] = ""
         df["last_name"] = ""
@@ -717,7 +718,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             (df["requesttypedescription"].str.upper() == "REFUND") &
             (df["errorcode"] == 0)
             ].copy()
-
+        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR"])].copy()
         if df.empty:
             return pd.DataFrame()
 
@@ -843,7 +844,9 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({
             "Euro": "EUR",
-            "US Dollar": "USD"
+            "US Dollar": "USD",
+            "Canadian Dollar": "CAD",
+            "Australian Dollar": "AUD"
         })
 
     # --- Only keep needed columns for withdrawal output ---

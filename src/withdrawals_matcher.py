@@ -30,7 +30,7 @@ class ProcessorConfig:
 # Processor-specific configurations
 PROCESSOR_CONFIGS = {
     'safecharge': ProcessorConfig(
-        email_threshold=0.45,
+        email_threshold=0.425,
         require_last4=True,
         require_email=True,
         tolerance=0.1,

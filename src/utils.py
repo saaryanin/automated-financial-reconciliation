@@ -1,6 +1,7 @@
 import pandas as pd
 import logging
 from pathlib import Path
+import re
 
 def setup_logger(name, level=logging.INFO):
     """Create and return a logger with the specified name and level."""
@@ -71,3 +72,38 @@ def create_cancelled_row(row):
 def drop_cols(df, cols):
     """Drop columns from df if they exist."""
     return df.drop(columns=cols, errors='ignore')
+
+def normalize_string(value, is_last4=False):
+    """Normalize a string field by converting to string, stripping, and optionally formatting as last4."""
+    if pd.isna(value):
+        return ''
+    value = str(value).strip()
+    if value.endswith('.0'):
+        value = value[:-2]
+    if is_last4 and value.isdigit():
+        value = value.zfill(4)  # Zero-pad last4 to 4 digits
+    return value.lower() if not is_last4 else value
+
+def clean_amount(val):
+    """Convert accounting-style amounts like '(100.00)' to -100.00, or plain strings to numbers."""
+    s = str(val).replace(',', '').strip()
+    if re.match(r'^\(\s*-?[\d,\.]+\s*\)$', s):  # Handles (100.00) or (-100.00)
+        s = s.strip('()')
+        try:
+            return -float(s)
+        except ValueError:
+            return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+def clean_last4(v):
+    if pd.isna(v):
+        return ''
+    try:
+        return str(int(float(v))).zfill(4)
+    except ValueError:
+        return str(v).strip()
+
+

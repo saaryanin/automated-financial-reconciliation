@@ -1,18 +1,23 @@
 import time
-from src.preprocess_test import process_files_in_parallel, combine_processed_files
+import warnings
+from src.preprocess import process_files_in_parallel, combine_processed_files
 from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
 import pandas as pd
 import numpy as np
-from src.withdrawals_matcher_test import ReconciliationEngine
+from src.withdrawals_matcher import ReconciliationEngine
 from src.utils import (
-    logging, setup_logger, load_excel_if_exists, safe_concat,drop_cols
+    logging, setup_logger, load_excel_if_exists, safe_concat, drop_cols
 )
+
+# Suppress openpyxl and pandas warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 
 start_time = time.time()
 
 # --- Configuration ---
-DATE = "2025-07-16"  # Adjust as needed; can be made configurable
-PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments","neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
+DATE = "2025-08-04"  # Adjust as needed; can be made configurable
+PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---
 crm_files = list(CRM_DIR.glob(f"crm_{DATE}.xlsx"))
@@ -23,15 +28,16 @@ shift4_files = list(PROCESSOR_DIR.glob(f"shift4_*{DATE}*.csv"))
 skrill_files = list(PROCESSOR_DIR.glob(f"skrill_*{DATE}*.csv"))
 trustpayments_files = list(PROCESSOR_DIR.glob(f"trustpayments_*{DATE}*.csv"))
 neteller_files = list(PROCESSOR_DIR.glob(f"neteller_{DATE}.csv"))
-neteller_crm_files = list(CRM_DIR.glob(f"crm_{DATE}.xlsx"))
-zotapay_crm_files = list(CRM_DIR.glob(f"crm_{DATE}.xlsx"))
 zotapay_files = list(PROCESSOR_DIR.glob(f"zotapay_{DATE}.csv*"))
 bitpay_files = list(PROCESSOR_DIR.glob(f"bitpay_{DATE}.csv"))
-bitpay_crm_files = list(CRM_DIR.glob(f"crm_{DATE}.xlsx"))
 ezeebill_files = list(PROCESSOR_DIR.glob(f"ezeebill_{DATE}.csv"))
-ezeebill_crm_files = list(CRM_DIR.glob(f"crm_{DATE}.xlsx"))
-paymentasia_files = list(PROCESSOR_DIR.glob(f"paymentasia_{DATE}.csv"))
-paymentasia_crm_files = list(CRM_DIR.glob(f"crm_{DATE}.xlsx"))
+paymentasia_deposits_files = list(PROCESSOR_DIR.glob(f"paymentasia_deposits_{DATE}.csv"))
+paymentasia_withdrawals_files = list(PROCESSOR_DIR.glob(f"paymentasia_withdrawals_{DATE}.csv"))
+
+if not any([paypal_files, safecharge_files, powercash_files, shift4_files, skrill_files,
+            trustpayments_files, neteller_files, zotapay_files, bitpay_files, ezeebill_files,
+            paymentasia_deposits_files, paymentasia_withdrawals_files]):
+    raise FileNotFoundError("No processor raw files found for the given date.")
 
 # --- Deposits Processing ---
 
@@ -46,7 +52,7 @@ process_files_in_parallel(neteller_files, processor_name="neteller", is_crm=Fals
 process_files_in_parallel(zotapay_files, processor_name="zotapay", is_crm=False, transaction_type="deposit")
 process_files_in_parallel(bitpay_files, processor_name="bitpay", is_crm=False, transaction_type="deposit")
 process_files_in_parallel(ezeebill_files, processor_name="ezeebill", is_crm=False, transaction_type="deposit")
-process_files_in_parallel(paymentasia_files, processor_name="paymentasia", is_crm=False, transaction_type="deposit")
+process_files_in_parallel(paymentasia_deposits_files, processor_name="paymentasia", is_crm=False, transaction_type="deposit")  # Process deposits file
 
 # --- Step 3: Preprocess CRM files for deposits ---
 for processor in PROCESSORS:
@@ -206,7 +212,7 @@ else:
 
     desired_columns = [
         'crm_date','crm_email','crm_firstname','crm_lastname','crm_tp','crm_last4','crm_currency','crm_amount','crm_processor_name',
-        'proc_date','proc_email','proc_tp','proc_firstname','proc_lastname','proc_last4','proc_currency','proc_amount','proc_amount_crm_currency','proc_processor_name',
+        'proc_date','proc_email','proc_tp','proc_firstname','proc_last_name','proc_last4','proc_currency','proc_amount','proc_amount_crm_currency','proc_processor_name',
         'email_similarity_avg','last4_match','name_fallback_used','exact_match_used','match_status','payment_status','warning','comment'
     ]
 
@@ -233,6 +239,7 @@ else:
         print(f"Saved diagnostics to {diag_path}")
 
     print(f"✅ Saved {len(matches_df)} rows for withdrawals")
+
 
 end_time = time.time()
 print(f"\n⏱️ Total time: {end_time - start_time:.2f} seconds")

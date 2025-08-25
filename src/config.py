@@ -9,6 +9,7 @@ MODEL_DIR = BASE_DIR / "model"
 CRM_DIR = DATA_DIR / "crm_reports"
 PROCESSOR_DIR = DATA_DIR / "processor_reports"
 RAW_TRACKING_DIR = DATA_DIR / "raw_tracking_lists"
+RAW_ATTACHED_FILES = DATA_DIR / "raw_attached_files"
 
 # Preprocessed data directories
 PROCESSED_DIR = DATA_DIR / "processed"

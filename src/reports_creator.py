@@ -1,13 +1,14 @@
 import time
 import warnings
-from src.preprocess_test import process_files_in_parallel, combine_processed_files
-from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR,LISTS_DIR
+from src.preprocess import process_files_in_parallel, combine_processed_files
+from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR
 import pandas as pd
 import numpy as np
-from src.withdrawals_matcher_test import ReconciliationEngine
+from src.withdrawals_matcher import ReconciliationEngine
 from src.utils import (
     logging, setup_logger, load_excel_if_exists, safe_concat, drop_cols
 )
+from src.shifts_handler import main as handle_shifts  # Import the shifts_handler main function
 
 # Suppress openpyxl and pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -16,7 +17,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 start_time = time.time()
 
 # --- Configuration ---
-DATE = "2025-07-14"  # Adjust as needed; can be made configurable
+DATE = "2025-07-11"  # Adjust as needed; can be made configurable
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---
@@ -112,6 +113,9 @@ with pd.ExcelWriter(report_path_deposits, engine='openpyxl') as writer:
     all_rows_deposits.to_excel(writer, sheet_name='Deposits_Matching', index=False)
 
 print(f"✅ Deposits matching report saved to {report_path_deposits}")
+
+# --- Apply Shifts Handler ---
+handle_shifts(DATE)  # Call shifts_handler with the current DATE
 
 # --- Withdrawals Processing ---
 
@@ -246,7 +250,6 @@ else:
         print(f"Saved diagnostics to {diag_path}")
 
     print(f"✅ Saved {len(matches_df)} rows for withdrawals")
-
 
 end_time = time.time()
 print(f"\n⏱️ Total time: {end_time - start_time:.2f} seconds")

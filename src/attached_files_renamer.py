@@ -25,7 +25,7 @@ PROCESSOR_PATTERNS = {
         "header_row": 11
     },
     "bitpay": {
-        "pattern": r"bitpay-export-[a-z]{3}-(\d{1,2}-\d{1,2}-\d{4})-_to_\d{1,2}-\d{1,2}-\d{4}(?i:\.csv|\.xlsx|\.xls)",
+        "pattern": r"bitpay-export-[a-z]{3}-(\d{1,2}-\d{1,2}-\d{4})-_to_\d{1,2}-\d{1,2}-\d{4}(?:\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
         "date_format": "%m-%d-%Y",
         "type_group": None,
         "date_column": "date",
@@ -35,7 +35,7 @@ PROCESSOR_PATTERNS = {
         "pattern": r"daily_transaction_report_(\d{4}-\d{2}-\d{2})_to_\d{4}-\d{2}-\d{2}(?i:\.csv|\.xlsx|\.xls)",
         "date_format": "%Y-%m-%d",
         "type_group": None,
-        "date_column": None,  # Note: Should be updated if a date column exists
+        "date_column": None,
         "header_row": 17
     },
     "paypal": {
@@ -61,7 +61,7 @@ PROCESSOR_PATTERNS = {
     },
     "powercash": {
         "pattern": r"report-[a-zA-Z0-9]+(?i:\.csv|\.xlsx|\.xls)",
-        "date_format": None,
+        "date_format": "%d.%m.%Y",  # Specify input format for Date column
         "type_group": None,
         "date_column": "Date",
         "header_row": 0
@@ -104,10 +104,10 @@ PROCESSOR_PATTERNS = {
     }
 }
 
-def extract_date_from_file(file_path: Path, date_column: str = None, header_row: int = 0):
+def extract_date_from_file(file_path: Path, date_column: str = None, header_row: int = 0, processor=None, config=None):
     """
     Extract the most recent date from the file content if no date in filename.
-    - Returns YYYY-MM-DD or None if failed.
+    - Returns YYYY-MM-DD or custom format for powercash, or None if failed.
     - Logs available columns for debugging.
     - For skrill/neteller, checks both Time (CET) and Time (UTC).
     """
@@ -125,14 +125,19 @@ def extract_date_from_file(file_path: Path, date_column: str = None, header_row:
         logging.info(f"Processing file: {file_path}")
         logging.info(f"Columns in {file_path}: {df.columns.tolist()}")
         if date_column in df.columns:
-            # Convert to datetime and get the maximum date
-            dates = pd.to_datetime(df[date_column], errors='coerce')
+            date_format = config.get("date_format") if config else None  # Use date_format from config
+            if date_format:
+                dates = pd.to_datetime(df[date_column], format=date_format, errors='coerce')
+            else:
+                dates = pd.to_datetime(df[date_column], errors='coerce')
             max_date = dates.max()
             if pd.notna(max_date):
+                # Special handling for powercash to output YYYY-MM-DD
+                if processor == "powercash":
+                    return max_date.strftime('%Y-%m-%d')
                 return max_date.strftime('%Y-%m-%d')
             logging.warning(f"No valid maximum date found in {date_column} for {file_path}")
         logging.warning(f"Column {date_column} not found or no valid dates in {file_path}")
-        # Dual check for skrill/neteller
         if date_column in ["Time (CET)", "Time (UTC)"]:
             columns = df.columns
             if "Time (UTC)" in columns and date_column == "Time (UTC)":
@@ -147,7 +152,6 @@ def extract_date_from_file(file_path: Path, date_column: str = None, header_row:
                 if pd.notna(max_date):
                     logging.info(f"Using max Time (CET) for {file_path}")
                     return max_date.strftime('%Y-%m-%d')
-        # Fallback for zotapay
         if "zotapay" in file_path.name:
             for col in ["Created At", "Completed Time", "Date"]:
                 if col in df.columns:
@@ -177,11 +181,13 @@ def rename_raw_file(file_path: Path):
 
     for processor, config, match in potential_processors:
         try:
-            if config["date_format"]:
+            if config["date_format"] and match and len(
+                    match.groups()) > 0:  # Use date_format only if a capture group exists
                 date_raw = match.group(1)
                 date_str = datetime.strptime(date_raw, config["date_format"]).strftime('%Y-%m-%d')
             elif config["date_column"] and config["header_row"] is not None:  # Rename logic
-                date_str = extract_date_from_file(file_path, config["date_column"], config["header_row"])
+                date_str = extract_date_from_file(file_path, config["date_column"], config["header_row"], processor,
+                                                  config)
                 if not date_str:
                     logging.warning(f"No date found for {filename} with {processor}, skipping")
                     continue

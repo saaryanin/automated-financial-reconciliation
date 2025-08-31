@@ -9,6 +9,7 @@ from dateutil import parser
 import dateutil.parser
 from src.utils import clean_amount, clean_last4
 from src.withdrawals_matcher_test import ReconciliationEngine  # Import for enhanced_email_similarity
+import numpy as np
 
 PSP_NAME_MAP = {
     'netteler': 'neteller',
@@ -142,6 +143,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
 
     elif processor == "trustpayments":
         df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
+        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR"])].copy()
         df = df.rename(columns={
             "transactionreference": "transaction_id",
             "transactionstartedtimestamp": "date",
@@ -492,7 +494,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             pan_col: "last_4cc" if pan_col else "last_4cc"
         })
         df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$") if pan_col else ""
-        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD"})
+        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
         df["processor_name"] = "safecharge"
         df["first_name"] = ""
         df["last_name"] = ""
@@ -717,7 +719,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             (df["requesttypedescription"].str.upper() == "REFUND") &
             (df["errorcode"] == 0)
             ].copy()
-
+        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR"])].copy()
         if df.empty:
             return pd.DataFrame()
 
@@ -813,19 +815,16 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         if not pattern:
             return None
         match = re.search(pattern, text)
-        if match:
-            return next((g for g in match.groups() if g), None)
-        return None
+        return next((g for g in match.groups() if g), None) if match else None
 
     df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
-    df["transaction_id"] = df["transaction_id"].astype(str)
+    df["transaction_id"] = df["transaction_id"].astype(str).fillna('UNKNOWN')
 
     if normalized_processor in ["zotapay", "paymentasia"]:
         name_has_chinese = (
                 df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
                 df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
         )
-        # Filter by known indicators
         name_col_match = df["Name"].str.lower() == "withdrawal"
         psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
         method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
@@ -833,7 +832,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
-
         if transaction_type == "withdrawal":
             name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])
             df = df[name_mask & psp_mask].reset_index(drop=True)
@@ -843,10 +841,11 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({
             "Euro": "EUR",
-            "US Dollar": "USD"
+            "US Dollar": "USD",
+            "Canadian Dollar": "CAD",
+            "Australian Dollar": "AUD"
         })
 
-    # --- Only keep needed columns for withdrawal output ---
     if transaction_type == "withdrawal":
         df = handle_withdrawal_cancellations(df)
         needed_columns = [
@@ -860,12 +859,10 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             "Method of Payment",
             "PSP name",
             "CC Last 4 Digits",
-            "Name"  # Optional: keep 'Name' for traceability (remove if not wanted)
+            "Name",
+            "Site (Account) (Account)"
         ]
-        # Only keep columns that exist in the df
         df = df[[col for col in needed_columns if col in df.columns]]
-
-        # Drop 'transaction_id' column AFTER handling cancellations
         if "transaction_id" in df.columns:
             df = df.drop(columns=["transaction_id"])
 
@@ -882,12 +879,13 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             "PSP name",
             "CC Last 4 Digits",
             "transaction_id",
-            "Approved",  # Keep raw Approved column
-            "Name"  # Optional: keep 'Name' for traceability (remove if not wanted)
+            "Approved",
+            "Name",
+            "Site (Account) (Account)"
         ]
-        # Only keep columns that exist in the df
         df = df[[col for col in needed_columns if col in df.columns]]
-        df['crm_approved'] = df['Approved'].str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0)  # Create crm_approved from Approved
+        df['crm_approved'] = df['Approved'].str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0) if 'Approved' in df.columns else pd.Series(0, index=df.index)  # Default to 0 if missing
+        df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')  # Ensure transaction_id exists
 
     if save_clean:
         date_str = extract_date_from_filename(filepath)
@@ -1143,6 +1141,7 @@ def combine_processed_files(
             out_df = pd.DataFrame()
         return out_df
 
+
     # Combine and save
     if crm_dfs:
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
@@ -1162,29 +1161,74 @@ def combine_processed_files(
             'tp': 'crm_tp',
             'Amount': 'crm_amount',
             'Currency': 'crm_currency',
+            'Method of Payment': 'payment_method',  # Renamed
+            'Approved': 'crm_approved',
             'PSP name': 'crm_processor_name',
             'CC Last 4 Digits': 'crm_last4',
-            'Name': 'crm_type',
+            'Site (Account) (Account)': 'regulation',
             'transaction_id': 'crm_transaction_id',
-            'approved': 'crm_approved'  # Use only crm_approved, drop raw Approved
+            'Name': 'crm_type'  # Keep for traceability, can remove if unwanted
         }
 
+        # Rename columns and remove duplicates
         for old_col, new_col in rename_map.items():
             if old_col in combined_crm.columns:
-                combined_crm.rename(columns={old_col: new_col}, inplace=True)
-        if 'Approved' in combined_crm.columns:  # Remove raw Approved column
+                combined_crm[new_col] = combined_crm[old_col]  # Overwrite with new name
+                if old_col != new_col:  # Only drop if different to avoid self-drop
+                    combined_crm = combined_crm.drop(columns=[old_col], errors='ignore')
+        combined_crm = combined_crm.loc[:, ~combined_crm.columns.duplicated()]  # Ensure no duplicates
+        if 'Approved' in combined_crm.columns:
             combined_crm = combined_crm.drop(columns=['Approved'])
+
+        def categorize_regulation(site):
+            site = str(site).lower().strip()
+            if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
+                return 'belarus'
+            elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
+                return 'australia'
+            elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
+                return 'mauritius'
+            elif site == 'fortrade.ca':
+                return 'canada'
+            elif site == 'fortrade.cy':
+                return 'cyprus'
+            return 'unknown'
+
+        combined_crm['regulation'] = combined_crm['regulation'].apply(categorize_regulation)
+
+        combined_crm = combined_crm[combined_crm['regulation'] != 'canada']
+
+        # Define base column order with regulation between crm_last4 and crm_transaction_id
+        base_columns = [
+            'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount', 'crm_currency',
+            'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4', 'regulation', 'crm_transaction_id'
+        ]
+        # Get all existing columns
+        existing_columns = combined_crm.columns.tolist()
+        print(
+            f"Debug: combined_crm type: {type(combined_crm)}, shape: {combined_crm.shape}, columns: {existing_columns}")  # Debug
+        # Append any additional columns not in base
+        custom_columns = base_columns + [col for col in existing_columns if col not in base_columns]
+        # Reorder columns, using only those that exist
+        combined_crm = combined_crm[[col for col in custom_columns if col in existing_columns]]
 
         out_crm_date_dir = out_crm_dir / date
         out_crm_date_dir.mkdir(parents=True, exist_ok=True)
         combined_crm_path = out_crm_date_dir / f"combined_crm_{transaction_type}s.xlsx"
         with pd.ExcelWriter(combined_crm_path, engine='openpyxl') as writer:
             combined_crm.to_excel(writer, index=False, sheet_name='Sheet1')
-            if 'crm_transaction_id' in combined_crm.columns:
+            if 'crm_transaction_id' in combined_crm.columns and not combined_crm.empty:
                 worksheet = writer.sheets['Sheet1']
                 trans_col = combined_crm.columns.get_loc('crm_transaction_id') + 1
-                for row in range(2, len(combined_crm) + 2):
-                    worksheet.cell(row=row, column=trans_col).number_format = '@'
+                row_count = int(combined_crm.shape[0]) if not combined_crm.empty and isinstance(combined_crm.shape[0], (
+                int, np.integer)) else 0  # Ensure scalar int
+                print(f"Debug: row_count: {row_count}")  # Debug
+                if row_count > 0:
+                    for row in range(2, row_count + 2):  # Use validated row_count
+                        worksheet.cell(row=row, column=trans_col).number_format = '@'
+                else:
+                    print("Debug: No rows to format in combined_crm")
+        print(f"Combined CRM columns: {combined_crm.columns.tolist()}")  # Debug print
         print(f"✅ Combined CRM {transaction_type}s saved to {combined_crm_path}")
     else:
         print("⚠️ No CRM files found to combine.")
@@ -1200,7 +1244,7 @@ def combine_processed_files(
             'amount': 'proc_amount',
             'currency': 'proc_currency',
             'date': 'proc_date',
-            'last_4cc': 'proc_last4',
+            'last_4cc': 'proc_last4',  # Renamed from proc_last4digits to proc_last4
             'email': 'proc_email',
             'first_name': 'proc_firstname',
             'last_name': 'proc_lastname',
@@ -1228,7 +1272,7 @@ def combine_processed_files(
             # Optional: Standardize to string format 'YYYY-MM-DD HH:MM:SS' for consistency
             combined_proc['proc_date'] = combined_proc['proc_date'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-            # Normalize proc_amount to numeric absolute
+        # Normalize proc_amount to numeric absolute
         if 'proc_amount' in combined_proc.columns:
             combined_proc['proc_amount'] = pd.to_numeric(combined_proc['proc_amount'], errors='coerce').abs()
 
@@ -1247,20 +1291,28 @@ def combine_processed_files(
         if 'proc_tp' in combined_proc.columns:
             combined_proc['proc_tp'] = combined_proc['proc_tp'].apply(clean_proc_tp)
 
-            # Clean and strip other string columns
-        str_cols_proc = [
-            'proc_email', 'proc_firstname', 'proc_lastname', 'proc_processor_name'
-        ]
+        # Clean and strip other string columns
+        str_cols_proc = ['proc_email', 'proc_firstname', 'proc_lastname', 'proc_processor_name']
         for col in str_cols_proc:
             if col in combined_proc.columns:
                 combined_proc[col] = combined_proc[col].fillna('').astype(str).str.strip()
             else:
                 combined_proc[col] = ''
 
+        # Define custom column order for processor columns
+        custom_proc_columns = [
+            'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_tp',
+            'proc_amount', 'proc_currency', 'proc_processor_name', 'proc_last4', 'proc_transaction_id'
+        ]
+        # Reorder columns, using only those that exist
+        existing_proc_columns = combined_proc.columns.tolist()
+        combined_proc = combined_proc[[col for col in custom_proc_columns if col in existing_proc_columns]]
+
         out_proc_date_dir = out_proc_dir / date
         out_proc_date_dir.mkdir(parents=True, exist_ok=True)
         combined_proc_path = out_proc_date_dir / f"combined_processor_{transaction_type}s.xlsx"
         combined_proc.to_excel(combined_proc_path, index=False)
         print(f"✅ Combined processor {transaction_type}s saved to {combined_proc_path}")
+        print(f"Combined proc columns: {combined_proc.columns.tolist()}")  # Debug print
     else:
         print("⚠️ No processor files found to combine.")

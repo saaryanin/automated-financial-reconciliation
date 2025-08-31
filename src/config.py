@@ -16,7 +16,7 @@ PROCESSED_DIR = DATA_DIR / "processed"
 PROCESSED_CRM_DIR = PROCESSED_DIR / "crm"
 PROCESSED_PROCESSOR_DIR = PROCESSED_DIR / "processors"
 RATES_DIR = DATA_DIR / "rates"
-LISTS_DIR =  PROCESSED_DIR /"lists"
+LISTS_DIR =  DATA_DIR /"lists"
 
 # Training dataset directories
 TRAINING_DATASET_DIR = DATA_DIR / "training_dataset"

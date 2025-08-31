@@ -1,10 +1,10 @@
 import time
 import warnings
-from src.preprocess import process_files_in_parallel, combine_processed_files
-from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
+from src.preprocess_test import process_files_in_parallel, combine_processed_files
+from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR,LISTS_DIR
 import pandas as pd
 import numpy as np
-from src.withdrawals_matcher import ReconciliationEngine
+from src.withdrawals_matcher_test import ReconciliationEngine
 from src.utils import (
     logging, setup_logger, load_excel_if_exists, safe_concat, drop_cols
 )
@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 start_time = time.time()
 
 # --- Configuration ---
-DATE = "2025-08-04"  # Adjust as needed; can be made configurable
+DATE = "2025-07-14"  # Adjust as needed; can be made configurable
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---
@@ -96,12 +96,15 @@ if not unmatched_proc_deposits.empty:
 dfs = [df for df in [matched_deposits, unmatched_crm_deposits, unmatched_proc_deposits] if not df.empty]
 if dfs:
     all_rows_deposits = pd.concat(dfs, ignore_index=True)
+    # Remove crm_type column
+    if 'crm_type' in all_rows_deposits.columns:
+        all_rows_deposits = all_rows_deposits.drop(columns=['crm_type'])
 else:
     all_rows_deposits = pd.DataFrame()
 all_rows_deposits = all_rows_deposits.sort_values(by='match_status', ascending=False)  # Matched first
 
 # Save to Excel (single sheet)
-report_dir = DATA_DIR / "lists" / DATE
+report_dir = LISTS_DIR / DATE
 report_dir.mkdir(parents=True, exist_ok=True)
 report_path_deposits = report_dir / "deposits_matching.xlsx"
 
@@ -211,9 +214,13 @@ else:
     matches_df = pd.DataFrame(matches)
 
     desired_columns = [
-        'crm_date','crm_email','crm_firstname','crm_lastname','crm_tp','crm_last4','crm_currency','crm_amount','crm_processor_name',
-        'proc_date','proc_email','proc_tp','proc_firstname','proc_last_name','proc_last4','proc_currency','proc_amount','proc_amount_crm_currency','proc_processor_name',
-        'email_similarity_avg','last4_match','name_fallback_used','exact_match_used','match_status','payment_status','warning','comment'
+        'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
+        'crm_processor_name',
+        'regulation',  # Added here
+        'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_last_name', 'proc_last4', 'proc_currency',
+        'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
+        'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
+        'payment_status', 'warning', 'comment'
     ]
 
     matches_df = matches_df[[c for c in desired_columns if c in matches_df.columns]]

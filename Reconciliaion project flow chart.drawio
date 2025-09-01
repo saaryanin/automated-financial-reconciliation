@@ -1,0 +1,221 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36" version="28.0.4">
+  <diagram name="Page-1" id="KYwQ1G7zDsQA42YuMVXJ">
+    <mxGraphModel dx="1426" dy="751" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="Ae09-KmcBkR8viZgckkO-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-1" target="Ae09-KmcBkR8viZgckkO-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-1" value="Processors" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry x="80" y="40" width="70" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-2" target="Ae09-KmcBkR8viZgckkO-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-2" value="CRM" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry x="680" y="40" width="60" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-59" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-4" target="Ae09-KmcBkR8viZgckkO-17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-4" value="START" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="365" y="40" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.75;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-10" target="Ae09-KmcBkR8viZgckkO-25">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="720" y="180" />
+              <mxPoint x="720" y="400" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-51" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-10" target="Ae09-KmcBkR8viZgckkO-17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-10" value="&lt;br&gt;&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(236, 236, 236); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;Combined Grouped Withdrawals of CRM fromat file, managing cancelled withdrawals&lt;/span&gt;&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="520" y="140" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-10" target="Ae09-KmcBkR8viZgckkO-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-15" target="Ae09-KmcBkR8viZgckkO-25">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-54" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=0.75;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-15" target="Ae09-KmcBkR8viZgckkO-17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-15" value="&lt;br&gt;&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(236, 236, 236); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;Combined Grouped Withdrawals of Processors fromat file, managing cancelled withdrawals&lt;/span&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="520" y="240" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-17" value="Preprocess.py (works parallelly)&amp;nbsp;" style="shape=ext;margin=3;double=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="355" y="200" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-30" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-21" target="Ae09-KmcBkR8viZgckkO-28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-52" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-21" target="Ae09-KmcBkR8viZgckkO-17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-21" value="&lt;br&gt;&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(236, 236, 236); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;Combined Combined Deposits of CRM fromat file, managing cancelled withdrawals&lt;/span&gt;&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="150" y="140" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-29" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-22" target="Ae09-KmcBkR8viZgckkO-28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-22" value="&lt;br&gt;&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(236, 236, 236); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; float: none; display: inline !important;&quot;&gt;Combined Combined Deposits&amp;nbsp;of Processors fromat file, managing cancelled withdrawals&lt;/span&gt;&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="150" y="240" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-32" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-25" target="Ae09-KmcBkR8viZgckkO-31">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-25" value="Withdrawals_matcher.py" style="shape=ext;margin=3;double=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="530" y="370" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-33" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-28" target="Ae09-KmcBkR8viZgckkO-31">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-28" value="Deposits_matcher.py" style="shape=ext;margin=3;double=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="160" y="370" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-36" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-31" target="Ae09-KmcBkR8viZgckkO-34">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="460" y="430" />
+              <mxPoint x="670" y="430" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-37" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-31" target="Ae09-KmcBkR8viZgckkO-35">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="380" y="430" />
+              <mxPoint x="190" y="430" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-40" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-31" target="Ae09-KmcBkR8viZgckkO-39">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-31" value="Reports_creator.py" style="shape=ext;margin=3;double=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="340" y="370" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-69" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-34" target="Ae09-KmcBkR8viZgckkO-56">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="560" y="570" />
+              <mxPoint x="560" y="610" />
+              <mxPoint x="253" y="610" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-83" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-34" target="Ae09-KmcBkR8viZgckkO-74">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-34" value="&lt;div&gt;Output 1:report of the withdrawals matching operation including the matched, unmatched and cancelled withdrawals rows&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="580" y="510" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-75" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-35" target="Ae09-KmcBkR8viZgckkO-56">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-35" value="&lt;div&gt;Output 2:report of the deposits matching operation including the matched and unmatched rows&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="100" y="510" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-39" target="Ae09-KmcBkR8viZgckkO-34">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-42" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-39" target="Ae09-KmcBkR8viZgckkO-35">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-39" value="&lt;div&gt;Checks for deposits that cancelled on the same time period and remove them from the 2 outpouts&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="330" y="450" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-76" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-43" target="Ae09-KmcBkR8viZgckkO-56">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-43" value="Unapproved deposits tracking list" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry y="620" width="80" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-44" value="New unapproved deposits tracking list" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry x="160" y="950" width="80" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-84" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-45" target="Ae09-KmcBkR8viZgckkO-74">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-45" value="Withdrawals that weren&#39;t executed yet, fully or overpays" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry x="730" y="720" width="110" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-46" value="New withdrawals that weren&#39;t executed yet, fully or overpays" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry x="580" y="920" width="100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-48" value="Total amount per currency compared to the SAP balances" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry x="362.5" y="1120" width="105" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-55" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0.3;entryY=1.014;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-22" target="Ae09-KmcBkR8viZgckkO-17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-79" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-56" target="Ae09-KmcBkR8viZgckkO-77">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-80" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-56" target="Ae09-KmcBkR8viZgckkO-78">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-56" value="unapproved_deposits_handler.py&lt;br&gt;Explanation&amp;nbsp;:&lt;br&gt;&lt;div&gt;adds unapproved deposits, removes approved deposits that created before, and looks for unapproved deposits that are matching to unmatched withdrawals and removes these deposits (deposits cancellations) and removes deposits that have been cancelled on the CRM.&lt;br&gt;Uses the rest of the unmatched deposits to check if a client transferred between accounts.&lt;br&gt;Creates the remaining unmatched deposits and unmatched withdrawals on seperate files&lt;/div&gt;" style="shape=ext;margin=3;double=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="110" y="640" width="190" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-60" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-58" target="Ae09-KmcBkR8viZgckkO-4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="805" y="20" />
+              <mxPoint x="467" y="20" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-71" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-58" target="Ae09-KmcBkR8viZgckkO-31">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="805" y="340" />
+              <mxPoint x="420" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-58" value="Rates" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;" vertex="1" parent="1">
+          <mxGeometry x="770" y="220" width="70" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-70" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-56" target="Ae09-KmcBkR8viZgckkO-44">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-74" value="Underpays_overpays_handler.py&lt;div&gt;Explanation:&lt;/div&gt;&lt;div&gt;seeks withdrawals in the tracking list that match the unmatched processor rows and remove them fully or partly(depends how much paid), adds the remaining underpays, overpays and unmatched withdrawals. From the CRM side.&lt;/div&gt;" style="shape=ext;margin=3;double=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="510" y="680" width="190" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-81" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-77" target="Ae09-KmcBkR8viZgckkO-74">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-77" value="Remaining unmatched withdrawals" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="650" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-78" value="Remaining unmatched deposits" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="800" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-82" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=-0.005;entryY=0.811;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-78" target="Ae09-KmcBkR8viZgckkO-74">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-85" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-74" target="Ae09-KmcBkR8viZgckkO-46">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-89" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-86" target="Ae09-KmcBkR8viZgckkO-48">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-86" value="Total_balances.py&lt;div&gt;&lt;div&gt;Explanation:&lt;/div&gt;&lt;div&gt;calculates the balances of both tracking files of every currency, adds them up and allows the user to change the SAP and add more parameters that could be important.&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;color: rgba(0, 0, 0, 0); font-family: monospace; font-size: 0px; text-align: start; text-wrap-mode: nowrap;&quot;&gt;%3CmxGraphModel%3E%3Croot%3E%3CmxCell%20id%3D%220%22%2F%3E%3CmxCell%20id%3D%221%22%20parent%3D%220%22%2F%3E%3CmxCell%20id%3D%222%22%20value%3D%22Underpays_overpays_handler.py%26lt%3Bdiv%26gt%3BExplanation%3A%26lt%3B%2Fdiv%26gt%3B%26lt%3Bdiv%26gt%3Bseeks%20withdrawals%20in%20the%20tracking%20list%20that%20match%20the%20unmatched%20processor%20rows%20and%20remove%20them%20fully%20or%20partly(depends%20how%20much%20paid)%2C%20adds%20the%20remaining%20underpays%2C%20overpays%20and%20unmatched%20withdrawals.%20From%20the%20CRM%20side.%26lt%3B%2Fdiv%26gt%3B%22%20style%3D%22shape%3Dext%3Bmargin%3D3%3Bdouble%3D1%3BwhiteSpace%3Dwrap%3Bhtml%3D1%3Balign%3Dcenter%3B%22%20vertex%3D%221%22%20parent%3D%221%22%3E%3CmxGeometry%20x%3D%22510%22%20y%3D%22680%22%20width%3D%22190%22%20height%3D%22180%22%20as%3D%22geometry%22%2F%3E%3C%2FmxCell%3E%3C%2Froot%3E%3C%2FmxGraphModel%3E&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;" style="shape=ext;margin=3;double=1;whiteSpace=wrap;html=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="320" y="910" width="190" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-87" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.984;entryY=0.45;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-46" target="Ae09-KmcBkR8viZgckkO-86">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ae09-KmcBkR8viZgckkO-88" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="Ae09-KmcBkR8viZgckkO-86" target="Ae09-KmcBkR8viZgckkO-44">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

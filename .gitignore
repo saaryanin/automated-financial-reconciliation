@@ -1,0 +1,12 @@
+# Ignore venv and Python cache
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+
+# Ignore all files inside data/, but not the folders themselves or .gitkeep files
+data/**
+!data/
+!data/**/
+!data/**/.gitkeep

@@ -4,6 +4,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 MODEL_DIR = BASE_DIR / "model"
+FRONTEND_DIR = BASE_DIR / "frontend"
 
 # Raw input directories
 CRM_DIR = DATA_DIR / "crm_reports"

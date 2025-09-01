@@ -17,11 +17,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 start_time = time.time()
 
 # --- Configuration ---
-<<<<<<< HEAD
-DATE = "2025-07-30"  # Adjusted to test date
-=======
-DATE = "2025-07-11"  # Adjust as needed; can be made configurable
->>>>>>> 1a1c13c62095aeda41c1c748caa57deb7f62dc3f
+DATE = "2025-08-01"  # Adjusted to test date
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---
@@ -119,15 +115,11 @@ with pd.ExcelWriter(report_path_deposits, engine='openpyxl') as writer:
 print(f"✅ Deposits matching report saved to {report_path_deposits}")
 
 # --- Apply Shifts Handler ---
-<<<<<<< HEAD
 matched_sums = handle_shifts(DATE)  # Capture returned sums
 if matched_sums:
     print("Matched Shifted Deposits by Currency:")
     for currency, amount in matched_sums.items():
         print(f"{currency}: {amount}")
-=======
-handle_shifts(DATE)  # Call shifts_handler with the current DATE
->>>>>>> 1a1c13c62095aeda41c1c748caa57deb7f62dc3f
 
 # --- Withdrawals Processing ---
 

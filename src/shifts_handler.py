@@ -36,7 +36,10 @@ def load_deposits_matching(date_str):
         return pd.DataFrame()
     df['crm_date'] = pd.to_datetime(df['crm_date'], errors='coerce')
     df = df.dropna(subset=['crm_date'])
+<<<<<<< HEAD
     logging.info(f"Columns in {matching_path}: {df.columns.tolist()}")  # Add for debugging
+=======
+>>>>>>> 1a1c13c62095aeda41c1c748caa57deb7f62dc3f
     return df
 
 def filter_shifted_deposits(df, cutoff):
@@ -48,6 +51,7 @@ def calculate_matched_sum(shifted_df):
     if 'crm_date' not in shifted_df.columns or 'match_status' not in shifted_df.columns or 'crm_currency' not in shifted_df.columns or 'crm_amount' not in shifted_df.columns:
         logging.warning("Required columns (crm_date, match_status, crm_currency, crm_amount) not found")
         return {}
+<<<<<<< HEAD
     matched_shifted = shifted_df[(shifted_df['match_status'] == 1) & (shifted_df['crm_date'] > get_cutoff_time(shifted_df['crm_date'].min().strftime('%Y-%m-%d')))]
     if matched_shifted.empty:
         logging.info("No matched shifted deposits found")
@@ -58,6 +62,21 @@ def calculate_matched_sum(shifted_df):
 def save_unmatched_shifted(shifted_df, date_str):
     """Save unmatched shifted deposits to a file in the dated folder."""
     unmatched_shifted = shifted_df[shifted_df['match_status'] == 0]
+=======
+    matched_shifted = shifted_df[(shifted_df['match_status'] == 1) & (shifted_df['crm_date'] > get_cutoff_time("2025-07-14"))]  # Explicitly filter post-cutoff
+    if matched_shifted.empty:
+        logging.info("No matched shifted deposits found")
+        return {}
+    matched_sum = matched_shifted.groupby('crm_currency')['crm_amount'].sum()
+    logging.info("Sum of matched shifted deposits by crm_currency:")
+    for currency, amount in matched_sum.items():
+        logging.info(f"{currency}: {amount}")
+    return matched_sum
+
+def save_unmatched_shifted(shifted_df, date_str):
+    """Save unmatched shifted deposits to a file in the dated folder."""
+    unmatched_shifted = shifted_df[shifted_df['match_status'] == 0]  # Assuming 'match_status' column
+>>>>>>> 1a1c13c62095aeda41c1c748caa57deb7f62dc3f
     if unmatched_shifted.empty:
         logging.info("No unmatched shifted deposits to save")
         return
@@ -70,8 +89,15 @@ def main(date_str):
     cutoff = get_cutoff_time(date_str)
     deposits_df = load_deposits_matching(date_str)
     if deposits_df.empty:
+<<<<<<< HEAD
         return None  # Return None if no data
     shifted_deposits = filter_shifted_deposits(deposits_df, cutoff)
     matched_sums = calculate_matched_sum(shifted_deposits)
     save_unmatched_shifted(shifted_deposits, date_str)
     return matched_sums  # Return only the matched sums
+=======
+        return
+    shifted_deposits = filter_shifted_deposits(deposits_df, cutoff)
+    calculate_matched_sum(shifted_deposits)
+    save_unmatched_shifted(shifted_deposits, date_str)
+>>>>>>> 1a1c13c62095aeda41c1c748caa57deb7f62dc3f

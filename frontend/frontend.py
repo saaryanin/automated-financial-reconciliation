@@ -12,15 +12,13 @@ from src.config import RATES_DIR, CRM_DIR
 class DropButton(QPushButton):
     def __init__(self, text, window, parent=None):
         super().__init__(text, parent)
-        self.window = window  # Store the ReconciliationWindow instance
+        self.window = window
         self.setAcceptDrops(True)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setProperty("drag-over", True)
-            self.style().unpolish(self)
-            self.style().polish(self)
+            self.setStyleSheet("border: 4px dashed #667eea; background: #e0e7ff; min-height: 200px; min-width: 400px;")
             print("Drag enter accepted")
 
     def dropEvent(self, event):
@@ -33,7 +31,7 @@ class DropButton(QPushButton):
                         source_path = file_paths[0]
                         file_name = os.path.basename(source_path)
                         dest_path = CRM_DIR / file_name
-                        shutil.move(str(source_path), str(dest_path))  # Move and overwrite
+                        shutil.move(str(source_path), str(dest_path))
                         self.window.crm_file = str(dest_path)
                         self.setText(f"📊 {file_name}")
                     else:
@@ -47,9 +45,10 @@ class DropButton(QPushButton):
                 print(f"Drop error: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to process drop: {e}")
             finally:
-                self.setProperty("drag-over", False)
-                self.style().unpolish(self)
-                self.style().polish(self)
+                if self.objectName() == "crm-button":
+                    self.setStyleSheet("border: 4px dashed #003366; min-height: 200px; min-width: 400px;")
+                else:
+                    self.setStyleSheet("border: 4px dashed #006600; min-height: 200px; min-width: 400px;")
         event.accept()
 
     def dragMoveEvent(self, event):
@@ -57,9 +56,10 @@ class DropButton(QPushButton):
             event.acceptProposedAction()
 
     def dragLeaveEvent(self, event):
-        self.setProperty("drag-over", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        if self.objectName() == "crm-button":
+            self.setStyleSheet("border: 4px dashed #003366; min-height: 200px; min-width: 400px;")
+        else:
+            self.setStyleSheet("border: 4px dashed #006600; min-height: 200px; min-width: 400px;")
         event.accept()
 
 class ReconciliationWindow(QWidget):
@@ -93,13 +93,13 @@ class ReconciliationWindow(QWidget):
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #667eea, stop:1 #764ba2);
                 color: white;
-                border: none;
-                padding: 20px 40px; /* Increased padding for larger area */
-                border-radius: 6px;
+                border: none; /* Remove default border */
+                padding: 15px 30px;
+                border-radius: 4px;
                 font-size: 14px;
                 font-weight: 600;
-                min-height: 80px; /* Increased height */
-                min-width: 150px; /* Increased width */
+                min-height: 100px;
+                min-width: 200px;
             }
             QPushButton:hover {
                 transform: translateY(-2px);
@@ -121,11 +121,11 @@ class ReconciliationWindow(QWidget):
             }
             #crm-button {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0); /* Light blue */
-                border: 2px solid #66c2d5;
+                border: 4px solid #003366; /* Darker blue border, always visible */
             }
             #processor-button {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9); /* Light green */
-                border: 2px solid #81c784;
+                border: 4px solid #006600; /* Darker green border, always visible */
             }
             QDateEdit {
                 padding: 4px;
@@ -246,19 +246,32 @@ class ReconciliationWindow(QWidget):
         file_section = QWidget()
         file_layout = QVBoxLayout()
         file_section.setLayout(file_layout)
-        file_section.setStyleSheet("background: #f0f0f0; border-radius: 6px; padding: 15px; border: 1px solid #e9ecef; color: #333;")
+        file_section.setStyleSheet(
+            "background: #f0f0f0; border-radius: 6px; padding: 15px; border: 1px solid #e9ecef; color: #333;")
         file_label = QLabel('📁 Upload Files')
         file_label.setStyleSheet("font-size: 16px; margin-bottom: 10px;")
         file_layout.addWidget(file_label)
 
         file_grid = QHBoxLayout()
-        self.crm_file_btn = DropButton('📊 CRM File', self)  # Pass ReconciliationWindow instance
-        self.crm_file_btn.setObjectName("crm-button")  # For specific styling
+        crm_widget = QWidget()
+        crm_layout = QVBoxLayout()
+        crm_widget.setLayout(crm_layout)
+        self.crm_file_btn = DropButton('📊 CRM File', self)
+        self.crm_file_btn.setObjectName("crm-button")
+        self.crm_file_btn.setStyleSheet("border: 4px dashed #003366; min-height: 200px; min-width: 400px;")
         self.crm_file_btn.clicked.connect(lambda: self.select_file('crm'))
-        self.processor_file_btn = DropButton('💳 Processors Files', self)  # Pass ReconciliationWindow instance
-        self.processor_file_btn.setObjectName("processor-button")  # For specific styling
-        file_grid.addWidget(self.crm_file_btn)
-        file_grid.addWidget(self.processor_file_btn)
+        crm_layout.addWidget(self.crm_file_btn)
+        file_grid.addWidget(crm_widget)
+
+        processor_widget = QWidget()
+        processor_layout = QVBoxLayout()
+        processor_widget.setLayout(processor_layout)
+        self.processor_file_btn = DropButton('💳 Processors Files', self)
+        self.processor_file_btn.setObjectName("processor-button")
+        self.processor_file_btn.setStyleSheet("border: 4px dashed #006600; min-height: 200px; min-width: 400px;")
+        self.processor_file_btn.clicked.connect(lambda: self.select_file('processor'))
+        processor_layout.addWidget(self.processor_file_btn)
+        file_grid.addWidget(processor_widget)
         file_layout.addLayout(file_grid)
 
         self.crm_file = None
@@ -268,6 +281,7 @@ class ReconciliationWindow(QWidget):
 
         # Process Button
         self.process_btn = QPushButton('Start Processing')
+        self.process_btn.setStyleSheet("padding: 5px 10px; min-height: 30px; min-width: 100px;")  # Smaller size
         self.process_btn.setEnabled(False)
         self.process_btn.clicked.connect(self.save_rates_and_process)
         main_layout.addWidget(self.process_btn)
@@ -278,6 +292,9 @@ class ReconciliationWindow(QWidget):
             rate = float(input_field.text()) if input_field.text() else 0
             if rate > 0:
                 calc_label.setText(f"{to_curr}/{from_curr}: {(1 / rate):.4f}")
+            else:
+                calc_label.setText(f"{to_curr}/{from_curr}: 0.0000")
+        self.check_files_ready()  # Update button state when rates change
 
     def select_file(self, file_type):
         file_dialog = QFileDialog()
@@ -295,7 +312,13 @@ class ReconciliationWindow(QWidget):
         self.check_files_ready()
 
     def check_files_ready(self):
-        self.process_btn.setEnabled(bool(self.crm_file and self.processor_files))
+        # Check if files are provided
+        files_ready = bool(self.crm_file and self.processor_files)
+        # Check if any currency exchange rate is entered
+        rates_entered = any(float(input_field.text()) if input_field.text() else 0 > 0
+                            for input_field, _ in self.rate_inputs.values())
+        # Enable button only if both files and rates are ready
+        self.process_btn.setEnabled(files_ready and rates_entered)
 
     def save_rates_and_process(self):
         date = self.date_edit.date().toString("yyyy-MM-dd")

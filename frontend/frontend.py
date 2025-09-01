@@ -1,16 +1,72 @@
 import sys
 import os
+import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
                              QPushButton, QGridLayout, QFileDialog, QDateEdit, QMessageBox, QCalendarWidget)
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import Qt, QDate, QMimeData
 import pandas as pd
 
 # Use direct import from src.config
-from src.config import RATES_DIR
+from src.config import RATES_DIR, CRM_DIR
+
+class DropButton(QPushButton):
+    def __init__(self, text, window, parent=None):
+        super().__init__(text, parent)
+        self.window = window  # Store the ReconciliationWindow instance
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.setProperty("drag-over", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            print("Drag enter accepted")
+
+    def dropEvent(self, event):
+        mime_data = event.mimeData()
+        if mime_data.hasUrls():
+            file_paths = [u.toLocalFile() for u in mime_data.urls()]
+            try:
+                if self.text().startswith("📊"):  # CRM File
+                    if len(file_paths) == 1:
+                        source_path = file_paths[0]
+                        file_name = os.path.basename(source_path)
+                        dest_path = CRM_DIR / file_name
+                        shutil.move(str(source_path), str(dest_path))  # Move and overwrite
+                        self.window.crm_file = str(dest_path)
+                        self.setText(f"📊 {file_name}")
+                    else:
+                        QMessageBox.warning(self, "Invalid Drop", "Please drop only one file for CRM.")
+                elif self.text().startswith("💳"):  # Processors Files
+                    self.window.processor_files = file_paths
+                    names = [os.path.basename(p) for p in file_paths]
+                    self.setText(f"💳 {', '.join(names)}")
+                self.window.check_files_ready()
+            except Exception as e:
+                print(f"Drop error: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to process drop: {e}")
+            finally:
+                self.setProperty("drag-over", False)
+                self.style().unpolish(self)
+                self.style().polish(self)
+        event.accept()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self.setProperty("drag-over", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        event.accept()
 
 class ReconciliationWindow(QWidget):
     def __init__(self):
         super().__init__()
+        self.crm_file = None
+        self.processor_files = []
         self.initUI()
 
     def initUI(self):
@@ -38,10 +94,12 @@ class ReconciliationWindow(QWidget):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #667eea, stop:1 #764ba2);
                 color: white;
                 border: none;
-                padding: 10px 20px;
-                border-radius: 4px;
+                padding: 20px 40px; /* Increased padding for larger area */
+                border-radius: 6px;
                 font-size: 14px;
                 font-weight: 600;
+                min-height: 80px; /* Increased height */
+                min-width: 150px; /* Increased width */
             }
             QPushButton:hover {
                 transform: translateY(-2px);
@@ -56,6 +114,18 @@ class ReconciliationWindow(QWidget):
             .upload-section {
                 background: #f0f0f0;
                 color: #333;
+            }
+            QPushButton[drag-over="true"] {
+                border: 2px dashed #667eea;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0e7ff, stop:1 #d0d7e6);
+            }
+            #crm-button {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0); /* Light blue */
+                border: 2px solid #66c2d5;
+            }
+            #processor-button {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9); /* Light green */
+                border: 2px solid #81c784;
             }
             QDateEdit {
                 padding: 4px;
@@ -182,10 +252,11 @@ class ReconciliationWindow(QWidget):
         file_layout.addWidget(file_label)
 
         file_grid = QHBoxLayout()
-        self.crm_file_btn = QPushButton('📊 CRM File')
+        self.crm_file_btn = DropButton('📊 CRM File', self)  # Pass ReconciliationWindow instance
+        self.crm_file_btn.setObjectName("crm-button")  # For specific styling
         self.crm_file_btn.clicked.connect(lambda: self.select_file('crm'))
-        self.processor_file_btn = QPushButton('💳 Processors Files')
-        self.processor_file_btn.clicked.connect(lambda: self.select_file('processor'))
+        self.processor_file_btn = DropButton('💳 Processors Files', self)  # Pass ReconciliationWindow instance
+        self.processor_file_btn.setObjectName("processor-button")  # For specific styling
         file_grid.addWidget(self.crm_file_btn)
         file_grid.addWidget(self.processor_file_btn)
         file_layout.addLayout(file_grid)

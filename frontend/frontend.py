@@ -14,11 +14,18 @@ class DropButton(QPushButton):
         super().__init__(text, parent)
         self.window = window
         self.setAcceptDrops(True)
+        self.setMinimumSize(200, 100)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setStyleSheet("border: 4px dashed #667eea; background: #e0e7ff; min-height: 200px; min-width: 400px;")
+            self.setStyleSheet("""
+                border: 4px dashed #4a90e2;
+                background: #e6f0fa;
+                min-height: 100px;
+                min-width: 200px;
+                border-radius: 8px;
+            """)
             print("Drag enter accepted")
 
     def dropEvent(self, event):
@@ -46,9 +53,21 @@ class DropButton(QPushButton):
                 QMessageBox.critical(self, "Error", f"Failed to process drop: {e}")
             finally:
                 if self.objectName() == "crm-button":
-                    self.setStyleSheet("border: 4px dashed #003366; min-height: 200px; min-width: 400px;")
+                    self.setStyleSheet("""
+                        border: 4px dashed #003366;
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
+                        min-height: 100px;
+                        min-width: 200px;
+                        border-radius: 8px;
+                    """)
                 else:
-                    self.setStyleSheet("border: 4px dashed #006600; min-height: 200px; min-width: 400px;")
+                    self.setStyleSheet("""
+                        border: 4px dashed #006600;
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
+                        min-height: 100px;
+                        min-width: 200px;
+                        border-radius: 8px;
+                    """)
         event.accept()
 
     def dragMoveEvent(self, event):
@@ -57,9 +76,21 @@ class DropButton(QPushButton):
 
     def dragLeaveEvent(self, event):
         if self.objectName() == "crm-button":
-            self.setStyleSheet("border: 4px dashed #003366; min-height: 200px; min-width: 400px;")
+            self.setStyleSheet("""
+                border: 4px dashed #003366;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
+                min-height: 100px;
+                min-width: 200px;
+                border-radius: 8px;
+            """)
         else:
-            self.setStyleSheet("border: 4px dashed #006600; min-height: 200px; min-width: 400px;")
+            self.setStyleSheet("""
+                border: 4px dashed #006600;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
+                min-height: 100px;
+                min-width: 200px;
+                border-radius: 8px;
+            """)
         event.accept()
 
 class ReconciliationWindow(QWidget):
@@ -70,62 +101,60 @@ class ReconciliationWindow(QWidget):
         self.initUI()
 
     def initUI(self):
+        print(os.path.abspath("./calendar_icon.png"))  # Debug print to verify file path
         self.setWindowTitle('CRM-Processor Reconciliation System')
         self.setStyleSheet("""
             QWidget {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #667eea, stop:1 #764ba2);
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4a90e2, stop:1 #d3d8e8);
+                border-radius: 10px;
+                padding: 10px;
             }
             QLabel {
-                color: #2c3e50;
+                color: #1a252f;
+                font-weight: 500;
             }
             QLineEdit {
                 padding: 8px;
-                border: 2px solid #e9ecef;
+                border: 2px solid #dfe6e9;
                 border-radius: 4px;
                 font-size: 14px;
                 max-width: 100px;
             }
             QLineEdit:focus {
-                border-color: #667eea;
-                box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+                border-color: #4a90e2;
+                box-shadow: 0 0 5px rgba(74, 144, 226, 0.3);
             }
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #667eea, stop:1 #764ba2);
-                color: white;
-                border: none; /* Remove default border */
-                padding: 15px 30px;
-                border-radius: 4px;
-                font-size: 14px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4a90e2, stop:1 #357abd);
+                color: #ffffff;
+                border: none;
+                padding: 12px 25px;
+                border-radius: 6px;
+                font-size: 16px;
                 font-weight: 600;
-                min-height: 100px;
-                min-width: 200px;
             }
             QPushButton:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 6px 15px rgba(102, 126, 234, 0.3);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #357abd, stop:1 #2a609d);
+                box-shadow: 0 4px 10px rgba(74, 144, 226, 0.4);
             }
             QPushButton:disabled {
-                background: #6c757d;
+                background: #b0b7c3;
+                color: #ffffff;
                 cursor: not-allowed;
-                transform: none;
                 box-shadow: none;
             }
-            .upload-section {
-                background: #f0f0f0;
-                color: #333;
+            .section {
+                background: #ffffff;
+                border-radius: 8px;
+                padding: 15px;
+                margin-bottom: 15px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
             }
-            QPushButton[drag-over="true"] {
-                border: 2px dashed #667eea;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0e7ff, stop:1 #d0d7e6);
-            }
-            #crm-button {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0); /* Light blue */
-                border: 4px solid #003366; /* Darker blue border, always visible */
-            }
-            #processor-button {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9); /* Light green */
-                border: 4px solid #006600; /* Darker green border, always visible */
+            #crm-button, #processor-button {
+                min-height: 100px;
+                min-width: 200px;
+                font-size: 14px;
             }
             QDateEdit {
                 padding: 4px;
@@ -134,32 +163,46 @@ class ReconciliationWindow(QWidget):
                 font-size: 12px;
                 background: #f8f9fa;
                 color: #2c3e50;
-                max-width: 90px;
+                min-width: 90px; /* Increased from 90px to ensure full year visibility */
             }
             QDateEdit::drop-down {
                 width: 22px;
                 border-left: 1px solid #e9ecef;
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e9ecef, stop:1 #fff);
+                background: #f1f3f5; /* Light gray background */
+                border-radius: 0 4px 4px 0; /* Rounded corner on the right */
             }
             QDateEdit::drop-down:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d1d7e0, stop:1 #f8f9fa);
-                border-left: 1px solid #667eea;
+                background: #d1d7e0; /* Darker gray on hover for feedback */
+                border-left: 1px solid #667eea; /* Blue border on hover */
             }
             QDateEdit::down-arrow {
-                image: url(:/qt-project.org/styles/commonstyle/images/downarrow-16.png);
-                width: 16px;
-                height: 16px;
+                image: url(./calendar_icon.png); /* Relative path from frontend.py */
+                width: 18px;
+                height: 18px;
+            }
+            /* Fallback triangle arrow if image fails */
+            QDateEdit::down-arrow:invalid {
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #1e90ff; /* Blue triangle */
             }
             QCalendarWidget {
-                background: #f8f9fa;
+                background: #ffffff;
                 border: 1px solid #e9ecef;
                 border-radius: 4px;
+                min-width: 270px;
+            }
+            QCalendarWidget QAbstractItemView {
+                background: #ffffff;
+                color: #1e90ff; /* Blue for all numbers */
             }
             QCalendarWidget QToolButton {
                 background: #f0f0f0;
-                color: #2c3e50;
+                color: #1e90ff; /* Blue for tool buttons */
                 font-size: 12px;
                 padding: 4px;
                 border: none;
@@ -167,38 +210,49 @@ class ReconciliationWindow(QWidget):
             QCalendarWidget QToolButton:hover {
                 background: #d1d7e0;
                 color: #1a252f;
+                
             }
             QCalendarWidget QMenu {
-                background: #fff;
-                color: #2c3e50;
+                background: #ffffff;
+                color: #1e90ff;
+                
             }
             QCalendarWidget QMenu::item:selected {
-                background: #667eea;
-                color: white;
+                background: #4a90e2;
+                color: #ffffff;
+                
             }
         """)
-        # Adjust window position to be higher and centered
+        # Adjust window position and size
         screen = QApplication.desktop().screenGeometry()
-        self.setGeometry((screen.width() - 800) // 2, 50, 800, 500)  # Centered, 50px from top
+        self.setGeometry((screen.width() - 900) // 2, 50, 900, 600)
 
         # Main layout
         main_layout = QVBoxLayout()
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
 
         # Header
         header = QLabel('CRM-Processor Reconciliation System')
         header.setAlignment(Qt.AlignCenter)
-        header.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2c3e50, stop:1 #34495e); color: white; padding: 15px; text-align: center; font-size: 20px; font-weight: 600;")
+        header.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2c3e50, stop:1 #34495e);
+            color: #ffffff;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 24px;
+            font-weight: 700;
+        """)
         main_layout.addWidget(header)
 
         # Currency Section
         currency_section = QWidget()
+        currency_section.setObjectName("section")
         currency_layout = QVBoxLayout()
         currency_section.setLayout(currency_layout)
-        currency_section.setStyleSheet(
-            "background: #f8f9fa; border-radius: 6px; padding: 15px; border: 1px solid #e9ecef;")
         currency_label = QLabel('💱 Currency Exchange Rates')
-        currency_label.setStyleSheet("font-size: 16px; margin-bottom: 10px;")
+        currency_label.setStyleSheet("font-size: 18px; margin-bottom: 10px;")
         currency_layout.addWidget(currency_label)
 
         currency_grid = QGridLayout()
@@ -221,70 +275,55 @@ class ReconciliationWindow(QWidget):
             currency_grid.addWidget(calc_label, i, 2)
         currency_layout.addLayout(currency_grid)
 
-        main_layout.addWidget(currency_section)
-
-        # Date Picker (Compact)
+        # Date Picker (Compact) - Centered
         date_widget = QWidget()
         date_layout = QHBoxLayout()
         date_widget.setLayout(date_layout)
         date_label = QLabel("Date:")
-        date_label.setStyleSheet("font-size: 12px; margin-right: 0px;")  # Removed margin
+        date_label.setStyleSheet("font-size: 12px; margin-right: 0px;")
         self.date_edit = QDateEdit()
         self.date_edit.setDate(QDate.currentDate())  # Set to 01/09/2025
         self.date_edit.setCalendarPopup(True)
-        self.date_edit.setDisplayFormat("dd/MM/yyyy")  # Israel format
+        self.date_edit.setDisplayFormat("dd/MM/yyyy")
         self.date_edit.setMaximumWidth(90)
-        date_layout.addWidget(date_label, alignment=Qt.AlignRight)  # Align label to right
+        date_layout.addWidget(date_label, alignment=Qt.AlignRight)
         date_layout.addWidget(self.date_edit)
-        date_layout.setSpacing(0)  # No spacing between label and editor
-        date_layout.setContentsMargins(0, 0, 0, 0)  # Remove extra margins
+        date_layout.setSpacing(0)
+        date_layout.setContentsMargins(0, 0, 0, 0)
+        date_layout.setAlignment(Qt.AlignCenter)  # Center the date picker
         currency_layout.addWidget(date_widget)
 
         main_layout.addWidget(currency_section)
 
         # File Upload Section
         file_section = QWidget()
+        file_section.setObjectName("section")
         file_layout = QVBoxLayout()
         file_section.setLayout(file_layout)
-        file_section.setStyleSheet(
-            "background: #f0f0f0; border-radius: 6px; padding: 15px; border: 1px solid #e9ecef; color: #333;")
         file_label = QLabel('📁 Upload Files')
-        file_label.setStyleSheet("font-size: 16px; margin-bottom: 10px;")
+        file_label.setStyleSheet("font-size: 18px; margin-bottom: 10px;")
         file_layout.addWidget(file_label)
 
         file_grid = QHBoxLayout()
-        crm_widget = QWidget()
-        crm_layout = QVBoxLayout()
-        crm_widget.setLayout(crm_layout)
+        file_grid.setSpacing(20)
         self.crm_file_btn = DropButton('📊 CRM File', self)
         self.crm_file_btn.setObjectName("crm-button")
-        self.crm_file_btn.setStyleSheet("border: 4px dashed #003366; min-height: 200px; min-width: 400px;")
         self.crm_file_btn.clicked.connect(lambda: self.select_file('crm'))
-        crm_layout.addWidget(self.crm_file_btn)
-        file_grid.addWidget(crm_widget)
+        file_grid.addWidget(self.crm_file_btn)
 
-        processor_widget = QWidget()
-        processor_layout = QVBoxLayout()
-        processor_widget.setLayout(processor_layout)
         self.processor_file_btn = DropButton('💳 Processors Files', self)
         self.processor_file_btn.setObjectName("processor-button")
-        self.processor_file_btn.setStyleSheet("border: 4px dashed #006600; min-height: 200px; min-width: 400px;")
         self.processor_file_btn.clicked.connect(lambda: self.select_file('processor'))
-        processor_layout.addWidget(self.processor_file_btn)
-        file_grid.addWidget(processor_widget)
+        file_grid.addWidget(self.processor_file_btn)
         file_layout.addLayout(file_grid)
-
-        self.crm_file = None
-        self.processor_files = []  # List for multiple files
 
         main_layout.addWidget(file_section)
 
         # Process Button
         self.process_btn = QPushButton('Start Processing')
-        self.process_btn.setStyleSheet("padding: 5px 10px; min-height: 30px; min-width: 100px;")  # Smaller size
         self.process_btn.setEnabled(False)
         self.process_btn.clicked.connect(self.save_rates_and_process)
-        main_layout.addWidget(self.process_btn)
+        main_layout.addWidget(self.process_btn, alignment=Qt.AlignCenter)
 
     def update_reciprocal_rates(self):
         for key, (input_field, calc_label) in self.rate_inputs.items():
@@ -294,7 +333,7 @@ class ReconciliationWindow(QWidget):
                 calc_label.setText(f"{to_curr}/{from_curr}: {(1 / rate):.4f}")
             else:
                 calc_label.setText(f"{to_curr}/{from_curr}: 0.0000")
-        self.check_files_ready()  # Update button state when rates change
+        self.check_files_ready()
 
     def select_file(self, file_type):
         file_dialog = QFileDialog()
@@ -303,7 +342,7 @@ class ReconciliationWindow(QWidget):
             if file_path:
                 self.crm_file = file_path
                 self.crm_file_btn.setText(f"📊 {os.path.basename(file_path)}")
-        else:  # processor, multiple files
+        else:
             file_paths, _ = file_dialog.getOpenFileNames(self, "Select Processors Files", "", "CSV Files (*.csv *.xlsx *.xls)")
             if file_paths:
                 self.processor_files = file_paths
@@ -312,12 +351,9 @@ class ReconciliationWindow(QWidget):
         self.check_files_ready()
 
     def check_files_ready(self):
-        # Check if files are provided
         files_ready = bool(self.crm_file and self.processor_files)
-        # Check if any currency exchange rate is entered
         rates_entered = any(float(input_field.text()) if input_field.text() else 0 > 0
-                            for input_field, _ in self.rate_inputs.values())
-        # Enable button only if both files and rates are ready
+                           for input_field, _ in self.rate_inputs.values())
         self.process_btn.setEnabled(files_ready and rates_entered)
 
     def save_rates_and_process(self):
@@ -337,7 +373,6 @@ class ReconciliationWindow(QWidget):
             file_path = RATES_DIR / f"rates_{date}.csv"
             df.to_csv(file_path, index=False)
             QMessageBox.information(self, "Success", f"Rates saved to {file_path}")
-            # Proceed to processing (to be implemented in next steps)
         else:
             QMessageBox.warning(self, "Error", "No valid rates entered.")
 

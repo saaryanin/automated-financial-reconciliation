@@ -2,7 +2,8 @@ import sys
 import os
 import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-                             QPushButton, QGridLayout, QFileDialog, QDateEdit, QMessageBox, QCalendarWidget)
+                             QPushButton, QGridLayout, QFileDialog, QDateEdit, QMessageBox, QCalendarWidget,QToolButton)
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QDate, QMimeData
 import pandas as pd
 
@@ -98,6 +99,7 @@ class ReconciliationWindow(QWidget):
         super().__init__()
         self.crm_file = None
         self.processor_files = []
+        self.date_button = None  # Add this for the custom calendar button
         self.initUI()
 
     def initUI(self):
@@ -179,16 +181,8 @@ class ReconciliationWindow(QWidget):
             }
             QDateEdit::down-arrow {
                 image: url(./calendar_icon.png); /* Relative path from frontend.py */
-                width: 18px;
-                height: 18px;
-            }
-            /* Fallback triangle arrow if image fails */
-            QDateEdit::down-arrow:invalid {
-                width: 0;
-                height: 0;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #1e90ff; /* Blue triangle */
+                width: 16px;
+                height: 16px;
             }
             QCalendarWidget {
                 background: #ffffff;

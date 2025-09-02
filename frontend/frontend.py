@@ -406,6 +406,20 @@ class ReconciliationWindow(QWidget):
             file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
             QMessageBox.information(self, "Success", f"Rates saved to {file_path}")
+
+            # Trigger reports_creator.py
+            try:
+                python_executable = os.path.join(os.path.dirname(sys.executable), "python.exe")
+                env = os.environ.copy()
+                src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+                env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
+                subprocess.run([python_executable, "../src/reports_creator.py", selected_date], env=env, check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"Error executing reports_creator.py: {e}")
+                QMessageBox.critical(self, "Error", "Failed to run reports creator script.")
+            except FileNotFoundError as e:
+                print(f"File not found error: {e}")
+                QMessageBox.critical(self, "Error", "Reports creator script not found.")
         else:
             QMessageBox.warning(self, "Error", "No valid rates entered.")
 

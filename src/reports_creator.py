@@ -9,6 +9,8 @@ from src.utils import (
     logging, setup_logger, load_excel_if_exists, safe_concat, drop_cols
 )
 from src.shifts_handler import main as handle_shifts  # Import the shifts_handler main function
+import sys
+
 
 # Suppress openpyxl and pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -17,7 +19,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 start_time = time.time()
 
 # --- Configuration ---
-DATE = "2025-08-04"  # Adjusted to test date
+DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-04"  # Use command-line arg or default
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---
@@ -38,7 +40,7 @@ paymentasia_withdrawals_files = list(PROCESSOR_DIR.glob(f"paymentasia_withdrawal
 if not any([paypal_files, safecharge_files, powercash_files, shift4_files, skrill_files,
             trustpayments_files, neteller_files, zotapay_files, bitpay_files, ezeebill_files,
             paymentasia_deposits_files, paymentasia_withdrawals_files]):
-    raise FileNotFoundError("No processor raw files found for the given date.")
+    raise FileNotFoundError(f"No processor raw files found for the given date {DATE}.")
 
 # --- Deposits Processing ---
 

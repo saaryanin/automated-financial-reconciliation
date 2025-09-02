@@ -6,9 +6,12 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QL
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QDate, QMimeData
 import pandas as pd
-
+import re
+from pathlib import Path
+import subprocess
 # Use direct import from src.config
-from src.config import RATES_DIR, CRM_DIR
+from src.config import RATES_DIR, CRM_DIR,PROCESSOR_DIR,RAW_ATTACHED_FILES
+from src.processor_renamer import  run_renamer
 
 class DropButton(QPushButton):
     def __init__(self, text, window, parent=None):
@@ -45,9 +48,26 @@ class DropButton(QPushButton):
                     else:
                         QMessageBox.warning(self, "Invalid Drop", "Please drop only one file for CRM.")
                 elif self.text().startswith("💳"):  # Processors Files
-                    self.window.processor_files = file_paths
-                    names = [os.path.basename(p) for p in file_paths]
-                    self.setText(f"💳 {', '.join(names)}")
+                    for source_path in file_paths:
+                        file_name = os.path.basename(source_path)
+                        dest_path = RAW_ATTACHED_FILES / file_name
+                        shutil.move(str(source_path), str(dest_path))  # Move to RAW_ATTACHED_FILES first
+                    self.window.processor_files = [str(RAW_ATTACHED_FILES / n) for n in
+                                                   [os.path.basename(p) for p in file_paths]]
+                    self.setText(f"💳 {', '.join([os.path.basename(p) for p in file_paths])}")
+                    # Trigger processor_renamer.py
+                    try:
+                        python_executable = os.path.join(os.path.dirname(sys.executable), "python.exe")
+                        env = os.environ.copy()
+                        src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+                        env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
+                        subprocess.run([python_executable, "../src/processor_renamer.py"], env=env, check=True)
+                    except subprocess.CalledProcessError as e:
+                        print(f"Error executing processor_renamer.py: {e}")
+                        QMessageBox.critical(self, "Error", "Failed to run processor renamer script.")
+                    except FileNotFoundError as e:
+                        print(f"File not found error: {e}")
+                        QMessageBox.critical(self, "Error", "Processor renamer script not found.")
                 self.window.check_files_ready()
             except Exception as e:
                 print(f"Drop error: {e}")
@@ -70,6 +90,15 @@ class DropButton(QPushButton):
                         border-radius: 8px;
                     """)
         event.accept()
+
+    def _detect_processor(self, filename):
+        """Detect processor name from filename based on patterns."""
+        filename_lower = filename.lower()
+        for processor in ["safecharge", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
+                          "trustpayments", "paysafe"]:
+            if processor in filename_lower:
+                return processor
+        return "unknown"  # Default if no match
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
@@ -313,11 +342,21 @@ class ReconciliationWindow(QWidget):
 
         main_layout.addWidget(file_section)
 
-        # Process Button
+        # Process and Reset Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(1)  # Stretch to center the buttons
         self.process_btn = QPushButton('Start Processing')
         self.process_btn.setEnabled(False)
         self.process_btn.clicked.connect(self.save_rates_and_process)
-        main_layout.addWidget(self.process_btn, alignment=Qt.AlignCenter)
+        button_layout.addWidget(self.process_btn)
+
+        self.reset_btn = QPushButton('Reset')
+        self.reset_btn.clicked.connect(self.reset_fields)
+        button_layout.addWidget(self.reset_btn)
+        button_layout.addStretch(1)  # Stretch to center the buttons
+        main_layout.addLayout(button_layout)
+
+
 
     def update_reciprocal_rates(self):
         for key, (input_field, calc_label) in self.rate_inputs.items():
@@ -351,7 +390,7 @@ class ReconciliationWindow(QWidget):
         self.process_btn.setEnabled(files_ready and rates_entered)
 
     def save_rates_and_process(self):
-        date = self.date_edit.date().toString("yyyy-MM-dd")
+        selected_date = self.date_edit.date().toString("yyyy-MM-dd")
         rates_data = []
         for key, (input_field, _) in self.rate_inputs.items():
             from_curr, to_curr = key.split('_')
@@ -364,11 +403,53 @@ class ReconciliationWindow(QWidget):
 
         if rates_data:
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
-            file_path = RATES_DIR / f"rates_{date}.csv"
+            file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
             QMessageBox.information(self, "Success", f"Rates saved to {file_path}")
         else:
             QMessageBox.warning(self, "Error", "No valid rates entered.")
+
+    def rename_processor_files(self, file_paths):
+        selected_date = self.date_edit.date().toString("yyyy-MM-dd")
+        for source_path in file_paths:
+            file_name = os.path.basename(source_path)
+            dest_path = PROCESSOR_DIR / file_name
+            if not re.match(r"^[a-zA-Z]+_\d{4}-\d{2}-\d{2}\.(csv|xlsx|xls)$", file_name):
+                processor = self.crm_file_btn._detect_processor(file_name)
+                new_name = f"{processor}_{selected_date}{Path(source_path).suffix}"
+                dest_path = PROCESSOR_DIR / new_name
+            shutil.move(str(source_path), str(dest_path))
+        self.processor_files = [str(PROCESSOR_DIR / n) for n in [os.path.basename(p) for p in file_paths]]
+
+    def reset_fields(self):
+        # Reset exchange rates
+        for _, (input_field, calc_label) in self.rate_inputs.items():
+            input_field.clear()
+            calc_label.setText("0.0000")
+
+        # Reset attached files and delete from directories
+        if self.crm_file and os.path.exists(self.crm_file):
+            os.remove(self.crm_file)
+        self.crm_file = None
+        self.crm_file_btn.setText("📊 CRM File")
+        self.crm_file_btn.setStyleSheet("")  # Reset button style to remove hover look
+
+        for file_path in self.processor_files:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        self.processor_files = []
+        self.processor_file_btn.setText("💳 Processors Files")
+        self.processor_file_btn.setStyleSheet("")  # Reset button style to remove hover look
+
+        # Disable process button
+        self.process_btn.setEnabled(False)
+
+        # Optional: Clear RAW_ATTACHED_FILES if needed
+        for file in RAW_ATTACHED_FILES.glob("*.*"):
+            if file.is_file() and file.name != ".gitkeep":
+                file.unlink()
+
+        QMessageBox.information(self, "Reset", "All fields and attachments have been reset.")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -3,13 +3,15 @@ import re
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR
+from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR,CRM_DIR
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
 from src.utils import clean_amount, clean_last4
 from src.withdrawals_matcher_test import ReconciliationEngine  # Import for enhanced_email_similarity
 import numpy as np
+from datetime import timedelta
+import logging
 
 PSP_NAME_MAP = {
     'netteler': 'neteller',
@@ -30,6 +32,8 @@ PSP_NAME_MAP = {
     'paysafe': 'skrill',
     # Add any other known aliases as needed
 }
+
+processed_unmatched_files = set()  # Add this near other global definitions
 
 # ----------------------------
 
@@ -806,105 +810,241 @@ def extract_crm_transaction_id(comment: str, processor: str):
     return next((g for g in match.groups() if g), None) if match else None
 
 def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
-    df = pd.read_excel(filepath, engine="openpyxl")
-    df.columns = df.columns.str.strip()
-    df["PSP name"] = (
-        df["PSP name"]
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .replace(PSP_NAME_MAP)
-    )
-    df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
+    # Define normalized_processor at the start
     normalized_processor = processor_name.lower()
 
-    df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
-    df["transaction_id"] = df["transaction_id"].astype(str).fillna('UNKNOWN')
+    # Calculate relevant previous date based on the current day
+    date_str = extract_date_from_filename(filepath)
+    current_date = datetime.strptime(date_str, '%Y-%m-%d')
+    previous_date = current_date - timedelta(days=1)  # Previous day for unmatched data
+    previous_date_str = previous_date.strftime('%Y-%m-%d')
 
-    if normalized_processor in ["zotapay", "paymentasia"]:
-        name_has_chinese = (
-                df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
-                df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
-        )
-        name_col_match = df["Name"].str.lower() == "withdrawal"
-        psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
-        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
-        full_mask = name_col_match & (psp_match | method_match)
-        df = df[full_mask].reset_index(drop=True)
-    else:
-        psp_mask = df["PSP name"] == normalized_processor
-        if transaction_type == "withdrawal":
-            name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])
-            df = df[name_mask & psp_mask].reset_index(drop=True)
+    # Load current raw CRM file
+    df = pd.read_excel(filepath, engine="openpyxl")
+    df.columns = df.columns.str.strip()
+
+    # Load and process unmatched_shifted_deposits from the previous day
+    previous_unmatched_path = LISTS_DIR / previous_date_str / "unmatched_shifted_deposits.xlsx"
+    if previous_unmatched_path.exists():
+        unmatched_df = pd.read_excel(previous_unmatched_path)
+        logging.info(
+            f"Loaded unmatched_shifted_deposits from {previous_unmatched_path} with columns: {unmatched_df.columns.tolist()}")
+        # Expanded mapping based on sample unmatched file
+        mapping = {
+            'Name': 'crm_type',
+            'Created On': 'crm_date',
+            'First Name (Account) (Account)': 'crm_firstname',
+            'Last Name (Account) (Account)': 'crm_lastname',
+            'Email (Account) (Account)': 'crm_email',
+            'Amount': 'crm_amount',
+            'Currency': 'crm_currency',
+            'Approved': 'crm_approved',
+            'Approved On': 'crm_approved_on',  # Optional
+            'TP Account': 'crm_tp',
+            'Internal Comment': 'internal_comment',
+            'Method of Payment': 'payment_method',
+            'Internal Type': 'internal_type',  # Optional
+            'Site (Account) (Account)': 'regulation',
+            'Country Of Residence (Account) (Account)': 'country_of_residence',  # Optional
+            'PSP name': 'crm_processor_name',
+            'CC Last 4 Digits': 'crm_last4'
+        }
+        unmatched_mapped = unmatched_df.rename(columns=mapping, errors='ignore')
+        # Log columns after mapping
+        logging.debug(f"Columns in unmatched_mapped after mapping: {unmatched_mapped.columns.tolist()}")
+        # Normalize crm_processor_name
+        if 'crm_processor_name' in unmatched_mapped.columns:
+            unmatched_mapped['crm_processor_name'] = unmatched_mapped['crm_processor_name'].astype(
+                str).str.strip().str.lower().replace(PSP_NAME_MAP)
         else:
-            df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
+            logging.warning(f"'crm_processor_name' column missing in {previous_unmatched_path}")
+            unmatched_mapped['crm_processor_name'] = 'unknown'
+        # Extract transaction_id from internal_comment using per-row processor
+        if 'internal_comment' in unmatched_mapped.columns and 'crm_processor_name' in unmatched_mapped.columns:
+            unmatched_mapped['crm_transaction_id'] = unmatched_mapped.apply(
+                lambda row: extract_crm_transaction_id(row['internal_comment'], row['crm_processor_name'])
+                if pd.notna(row['internal_comment']) and pd.notna(row['crm_processor_name']) else None,
+                axis=1
+            )
+            unmatched_mapped['crm_transaction_id'] = unmatched_mapped['crm_transaction_id'].astype(str).fillna(
+                'UNKNOWN')
+        else:
+            logging.warning(
+                f"Internal Comment or crm_processor_name column not found in {previous_unmatched_path}, columns available: {unmatched_mapped.columns.tolist()}")
+            unmatched_mapped['crm_transaction_id'] = 'UNKNOWN'
+        # Log for debugging
+        for idx, row in unmatched_mapped.iterrows():
+            if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
+                logging.debug(
+                    f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
+        # Define required columns for final output
+        required_columns = ['crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount',
+                            'crm_currency', 'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4',
+                            'regulation', 'crm_transaction_id', 'crm_type']
+        for col in required_columns:
+            if col not in unmatched_mapped.columns:
+                unmatched_mapped[col] = pd.NA
+        unmatched_mapped = unmatched_mapped[required_columns]
+        # Convert data types
+        if 'crm_date' in unmatched_mapped.columns:
+            unmatched_mapped['crm_date'] = pd.to_datetime(unmatched_mapped['crm_date'], errors='coerce').fillna(
+                pd.NaT).dt.strftime('%Y-%m-%d %H:%M:%S')
+        for col in ['crm_amount', 'crm_last4']:
+            if col in unmatched_mapped.columns:
+                unmatched_mapped[col] = pd.to_numeric(unmatched_mapped[col], errors='coerce').fillna(0)
+        # Log for debugging
+        for idx, row in unmatched_mapped.iterrows():
+            if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
+                logging.debug(
+                    f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
+            # Log for debugging
+        for idx, row in unmatched_mapped.iterrows():
+            if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
+                logging.debug(
+                    f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
+        # Standardize crm_currency
+        if 'crm_currency' in unmatched_mapped.columns:
+            unmatched_mapped['crm_currency'] = unmatched_mapped['crm_currency'].replace({
+                'US Dollar': 'USD',
+                'Euro': 'EUR'
+            })
+        # Convert crm_approved to 1/0
+        if 'crm_approved' in unmatched_mapped.columns:
+            unmatched_mapped['crm_approved'] = unmatched_mapped['crm_approved'].str.strip().str.lower().map(
+                {'yes': 'Yes', 'no': 'No'}).fillna(0)
 
-    if "Currency" in df.columns:
-        df["Currency"] = df["Currency"].replace({
-            "Euro": "EUR",
-            "US Dollar": "USD",
-            "Canadian Dollar": "CAD",
-            "Australian Dollar": "AUD"
-        })
+        # Categorize regulation
+        def categorize_regulation(site):
+            site = str(site).lower().strip()
+            if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
+                return 'belarus'
+            elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
+                return 'australia'
+            elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
+                return 'mauritius'
+            elif site == 'fortrade.ca':
+                return 'canada'
+            elif site == 'fortrade.cy':
+                return 'cyprus'
+            return 'unknown'
 
-    if transaction_type == "withdrawal":
-        df = handle_withdrawal_cancellations(df)
-        needed_columns = [
-            "Created On",
-            "First Name (Account) (Account)",
-            "Last Name (Account) (Account)",
-            "Email (Account) (Account)",
-            "tp",
-            "Amount",
-            "Currency",
-            "Method of Payment",
-            "PSP name",
-            "CC Last 4 Digits",
-            "Name",
-            "Site (Account) (Account)"
-        ]
-        df = df[[col for col in needed_columns if col in df.columns]]
-        if "transaction_id" in df.columns:
-            df = df.drop(columns=["transaction_id"])
+        if 'regulation' in unmatched_mapped.columns:
+            unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
+        # Append to current CRM if new transactions
+        existing_transaction_ids = set(df['Internal Comment'].apply(
+            lambda x: extract_crm_transaction_id(x, normalized_processor) if pd.notna(x) else None).dropna().unique())
+        new_deposits = unmatched_mapped[~unmatched_mapped['crm_transaction_id'].isin(existing_transaction_ids)]
+        if not new_deposits.empty:
+            for col in df.columns:
+                if col not in new_deposits.columns:
+                    new_deposits[col] = pd.NA
+            for col in new_deposits.columns:
+                if col not in df.columns:
+                    df[col] = pd.NA
+            df = pd.concat([df, new_deposits], ignore_index=True)
+            logging.info(f"Added {len(new_deposits)} new unmatched deposits from {previous_date_str}")
+        # Save the processed unmatched data
+        if save_clean:
+            unmatched_out_path = PROCESSED_CRM_DIR / "unmatched_shifted_deposits" / date_str / "unmatched_shifted_deposits.xlsx"
+            unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
+            unmatched_mapped.to_excel(unmatched_out_path, index=False)
+            logging.info(f"Saved unmatched deposits to {unmatched_out_path}")
 
-    elif transaction_type == "deposit":
-        needed_columns = [
-            "Created On",
-            "First Name (Account) (Account)",
-            "Last Name (Account) (Account)",
-            "Email (Account) (Account)",
-            "tp",
-            "Amount",
-            "Currency",
-            "Method of Payment",
-            "PSP name",
-            "CC Last 4 Digits",
-            "transaction_id",
-            "Approved",
-            "Name",
-            "Site (Account) (Account)"
-        ]
-        df = df[[col for col in needed_columns if col in df.columns]]
-        df['crm_approved'] = df['Approved'].str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0) if 'Approved' in df.columns else pd.Series(0, index=df.index)  # Default to 0 if missing
-        df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')  # Ensure transaction_id exists
+        df["PSP name"] = (
+            df["PSP name"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .replace(PSP_NAME_MAP)
+        )
+        df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
 
-    if save_clean:
-        date_str = extract_date_from_filename(filepath)
-        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
-        folder = f"{folder_name}_{transaction_type}s.xlsx"
-        out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sheet1')
-            if "transaction_id" in df.columns and transaction_type == "deposit":
-                worksheet = writer.sheets['Sheet1']
-                trans_col = df.columns.get_loc('transaction_id') + 1
-                for row in range(2, len(df) + 2):
-                    worksheet.cell(row=row, column=trans_col).number_format = '@'
+        df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor))
+        df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
 
-    return df.reset_index(drop=True)
+        if normalized_processor in ["zotapay", "paymentasia"]:
+            name_has_chinese = (
+                    df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
+                    df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
+            )
+            name_col_match = df["Name"].str.lower() == "withdrawal"
+            psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
+            method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
+            full_mask = name_col_match & (psp_match | method_match)
+            df = df[full_mask].reset_index(drop=True)
+        else:
+            psp_mask = df["PSP name"] == normalized_processor
+            if transaction_type == "withdrawal":
+                name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])
+                df = df[name_mask & psp_mask].reset_index(drop=True)
+            else:
+                df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
 
+        if "Currency" in df.columns:
+            df["Currency"] = df["Currency"].replace({
+                "Euro": "EUR",
+                "US Dollar": "USD",
+                "Canadian Dollar": "CAD",
+                "Australian Dollar": "AUD"
+            })
 
+        if transaction_type == "withdrawal":
+            df = handle_withdrawal_cancellations(df)
+            needed_columns = [
+                "Created On",
+                "First Name (Account) (Account)",
+                "Last Name (Account) (Account)",
+                "Email (Account) (Account)",
+                "tp",
+                "Amount",
+                "Currency",
+                "Method of Payment",
+                "PSP name",
+                "CC Last 4 Digits",
+                "Name",
+                "Site (Account) (Account)"
+            ]
+            df = df[[col for col in needed_columns if col in df.columns]]
+            if "transaction_id" in df.columns:
+                df = df.drop(columns=["transaction_id"])
+
+        elif transaction_type == "deposit":
+            needed_columns = [
+                "Created On",
+                "First Name (Account) (Account)",
+                "Last Name (Account) (Account)",
+                "Email (Account) (Account)",
+                "tp",
+                "Amount",
+                "Currency",
+                "Method of Payment",
+                "PSP name",
+                "CC Last 4 Digits",
+                "transaction_id",
+                "Approved",
+                "Name",
+                "Site (Account) (Account)"
+            ]
+            df = df[[col for col in needed_columns if col in df.columns]]
+            df['crm_approved'] = df['Approved'].str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0) if 'Approved' in df.columns else pd.Series(0, index=df.index)
+            df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')
+
+        if save_clean:
+            date_str = extract_date_from_filename(filepath)
+            # Save processed CRM file
+            folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
+            folder = f"{folder_name}_{transaction_type}s.xlsx"
+            out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Sheet1')
+                if "transaction_id" in df.columns and transaction_type == "deposit":
+                    worksheet = writer.sheets['Sheet1']
+                    trans_col = df.columns.get_loc('transaction_id') + 1
+                    for row in range(2, len(df) + 2):
+                        worksheet.cell(row=row, column=trans_col).number_format = '@'
+
+        return df.reset_index(drop=True)
 
 # ----------------------------
 # Utility
@@ -987,8 +1127,9 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
     return df_clean
 
 # Updated combine_processed_files to read with dtype for transaction_id
+
 def combine_processed_files(
-    date, processors,
+    date, processors, processor_name=None,  # Added processor_name as optional parameter
     processed_crm_dir=PROCESSED_CRM_DIR,
     processed_proc_dir=PROCESSED_PROCESSOR_DIR,
     out_crm_dir=None,
@@ -1007,18 +1148,24 @@ def combine_processed_files(
     if out_proc_dir is None:
         out_proc_dir = processed_proc_dir / "combined"
 
+    # Define current_date and normalized_processor locally
+    current_date = datetime.strptime(date, '%Y-%m-%d')
+    normalized_processor = processor_name.lower() if processor_name else 'crm'
+
     crm_dfs, proc_dfs = [], []
     crm_file_template = f"{{}}_{transaction_type}s.xlsx"
     proc_file_template = f"{{}}_{transaction_type}s.xlsx"
 
-    for proc in all_processors:
-        crm_f = processed_crm_dir / proc / date / crm_file_template.format(proc)
+    # Load other processed CRM files including unmatched_shifted_deposits (processed version only)
+    for proc in all_processors + ["unmatched_shifted_deposits"]:  # Add unmatched_shifted_deposits as a processor
+        crm_f = processed_crm_dir / proc / date / f"{proc}_{transaction_type}s.xlsx"
         if crm_f.exists():
             df = pd.read_excel(crm_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)
             crm_dfs.append(df)
         else:
             print(f" CRM processed file not found for {proc}: {crm_f}")
 
+    for proc in all_processors:  # Only original processors for processor files
         proc_f = processed_proc_dir / proc / date / proc_file_template.format(proc)
         if proc_f.exists():
             df = pd.read_excel(proc_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)

@@ -782,6 +782,29 @@ def handle_withdrawal_cancellations(df):
 # ----------------------------
 # CRM Handling
 # ----------------------------
+
+def extract_crm_transaction_id(comment: str, processor: str):
+    text = str(comment)
+    processor = processor.lower()
+    patterns = {
+        "paypal": r"PSP TransactionId:([A-Z0-9]+)",
+        "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
+        "powercash": r"PSP TransactionId:(\d+)",
+        "shift4": r"More Comment:[^$]*\$(\w+)",
+        "skrill": r"More Comment:[^$]*\$(\d+)",
+        "neteller": r"More Comment:[^$]*\$(\d+)",
+        "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
+        "zotapay": r"PSP TransactionId:(\d+)",
+        "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
+        "ezeebill": r"(\d{7}-\d{18})",
+        "paymentasia": r"(\d{7}-\d{18})",
+    }
+    pattern = patterns.get(processor)
+    if not pattern:
+        return None
+    match = re.search(pattern, text)
+    return next((g for g in match.groups() if g), None) if match else None
+
 def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
@@ -794,28 +817,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     )
     df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
     normalized_processor = processor_name.lower()
-
-    def extract_crm_transaction_id(comment: str, processor: str):
-        text = str(comment)
-        processor = processor.lower()
-        patterns = {
-            "paypal": r"PSP TransactionId:([A-Z0-9]+)",
-            "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
-            "powercash": r"PSP TransactionId:(\d+)",
-            "shift4": r"More Comment:[^$]*\$(\w+)",
-            "skrill": r"More Comment:[^$]*\$(\d+)",
-            "neteller": r"More Comment:[^$]*\$(\d+)",
-            "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
-            "zotapay": r"PSP TransactionId:(\d+)",
-            "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
-            "ezeebill": r"(\d{7}-\d{18})",
-            "paymentasia": r"(\d{7}-\d{18})",
-        }
-        pattern = patterns.get(processor)
-        if not pattern:
-            return None
-        match = re.search(pattern, text)
-        return next((g for g in match.groups() if g), None) if match else None
 
     df["transaction_id"] = df["Internal Comment"].apply(lambda c: extract_crm_transaction_id(c, processor_name))
     df["transaction_id"] = df["transaction_id"].astype(str).fillna('UNKNOWN')
@@ -903,6 +904,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 
     return df.reset_index(drop=True)
 
+
+
 # ----------------------------
 # Utility
 # ----------------------------
@@ -979,7 +982,7 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
             out_path.parent.mkdir(parents=True, exist_ok=True)
             df_clean.to_excel(out_path, index=False)
         else:
-            print(f"⚠️ Not saving empty {processor_name} {transaction_type}s")
+            print(f" Not saving empty {processor_name} {transaction_type}s")
 
     return df_clean
 
@@ -1014,14 +1017,14 @@ def combine_processed_files(
             df = pd.read_excel(crm_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)
             crm_dfs.append(df)
         else:
-            print(f"⚠️ CRM processed file not found for {proc}: {crm_f}")
+            print(f" CRM processed file not found for {proc}: {crm_f}")
 
         proc_f = processed_proc_dir / proc / date / proc_file_template.format(proc)
         if proc_f.exists():
             df = pd.read_excel(proc_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)
             proc_dfs.append(df)
         else:
-            print(f"⚠️ Processor processed file not found for {proc}: {proc_f}")
+            print(f" Processor processed file not found for {proc}: {proc_f}")
 
     def choose_target_currency(currencies):
         cur_set = set(currencies)
@@ -1229,9 +1232,9 @@ def combine_processed_files(
                 else:
                     print("Debug: No rows to format in combined_crm")
         print(f"Combined CRM columns: {combined_crm.columns.tolist()}")  # Debug print
-        print(f"✅ Combined CRM {transaction_type}s saved to {combined_crm_path}")
+        print(f"Combined CRM {transaction_type}s saved to {combined_crm_path}")
     else:
-        print("⚠️ No CRM files found to combine.")
+        print("No CRM files found to combine.")
 
     if proc_dfs:
         combined_proc = pd.concat(proc_dfs, ignore_index=True)
@@ -1312,7 +1315,7 @@ def combine_processed_files(
         out_proc_date_dir.mkdir(parents=True, exist_ok=True)
         combined_proc_path = out_proc_date_dir / f"combined_processor_{transaction_type}s.xlsx"
         combined_proc.to_excel(combined_proc_path, index=False)
-        print(f"✅ Combined processor {transaction_type}s saved to {combined_proc_path}")
+        print(f"Combined processor {transaction_type}s saved to {combined_proc_path}")
         print(f"Combined proc columns: {combined_proc.columns.tolist()}")  # Debug print
     else:
-        print("⚠️ No processor files found to combine.")
+        print("No processor files found to combine.")

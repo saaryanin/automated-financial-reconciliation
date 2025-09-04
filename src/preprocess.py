@@ -7,7 +7,7 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, CR
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
-from src.utils import clean_amount, clean_last4
+from src.utils import clean_amount, clean_last4, format_date_no_leading_zero
 from src.withdrawals_matcher_test import ReconciliationEngine  # Import for enhanced_email_similarity
 import numpy as np
 from datetime import timedelta
@@ -1487,6 +1487,9 @@ def append_unmatched_to_combined(date_str, unmatched_path_str):
 
     if not df_unmatched_to_append.empty:
         df_updated = pd.concat([df_combined, df_unmatched_to_append], ignore_index=True)
+        if 'crm_date' in df_updated.columns:
+            df_updated['crm_date'] = pd.to_datetime(df_updated['crm_date'], errors='coerce').dt.strftime(
+                '%m/%d/%Y %I:%M:%S %p')
         key_cols = ['crm_transaction_id', 'crm_tp', 'crm_email', 'crm_amount']
         df_updated = df_updated.drop_duplicates(subset=[col for col in key_cols if col in df_updated.columns])
         logging.info(f"Updated combined_crm_deposits shape after append and dedup: {df_updated.shape}")

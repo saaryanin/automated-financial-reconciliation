@@ -1,16 +1,18 @@
+import logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
 import time
 import warnings
-from src.preprocess import process_files_in_parallel, combine_processed_files
+from src.preprocess import process_files_in_parallel, combine_processed_files,append_unmatched_to_combined
 from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR
 import pandas as pd
 import numpy as np
 from src.withdrawals_matcher import ReconciliationEngine
 from src.utils import (
-    logging, setup_logger, load_excel_if_exists, safe_concat, drop_cols
+    logging as utils_logging, setup_logger, load_excel_if_exists, safe_concat, drop_cols
 )
-from src.shifts_handler import main as handle_shifts  # Import the shifts_handler main function
+from src.shifts_handler import main as handle_shifts
 import sys
-
 
 # Suppress openpyxl and pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -19,7 +21,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 start_time = time.time()
 
 # --- Configuration ---
-DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-04"  # Use command-line arg or default
+DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02"  # Use command-line arg or default
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---
@@ -55,19 +57,23 @@ process_files_in_parallel(neteller_files, processor_name="neteller", is_crm=Fals
 process_files_in_parallel(zotapay_files, processor_name="zotapay", is_crm=False, transaction_type="deposit")
 process_files_in_parallel(bitpay_files, processor_name="bitpay", is_crm=False, transaction_type="deposit")
 process_files_in_parallel(ezeebill_files, processor_name="ezeebill", is_crm=False, transaction_type="deposit")
-process_files_in_parallel(paymentasia_deposits_files, processor_name="paymentasia", is_crm=False, transaction_type="deposit")  # Process deposits file
+process_files_in_parallel(paymentasia_deposits_files, processor_name="paymentasia", is_crm=False, transaction_type="deposit")
 
 # --- Step 3: Preprocess CRM files for deposits ---
 for processor in PROCESSORS:
     process_files_in_parallel(crm_files, processor_name=processor, is_crm=True, transaction_type="deposit")
 
-# --- Step 3.5: Combine processed files for deposits (no grouping) ---
+# --- Step 3.5: Combine processed files for deposits ---
 combine_processed_files(
     date=DATE,
     processors=PROCESSORS,
     transaction_type="deposit",
     exchange_rate_map={},  # Load rates if needed, else empty dict
 )
+unmatched_shifted_path = str(PROCESSED_CRM_DIR / "unmatched_shifted_deposits" / DATE / "unmatched_shifted_deposits.xlsx")
+append_unmatched_to_combined(DATE, unmatched_shifted_path)
+
+
 # --- Step 4: Generate deposits matching report ---
 combined_crm_path_deposits = PROCESSED_CRM_DIR / "combined" / DATE / "combined_crm_deposits.xlsx"
 combined_proc_path_deposits = PROCESSED_PROCESSOR_DIR / "combined" / DATE / "combined_processor_deposits.xlsx"
@@ -99,14 +105,13 @@ if not unmatched_proc_deposits.empty:
 dfs = [df for df in [matched_deposits, unmatched_crm_deposits, unmatched_proc_deposits] if not df.empty]
 if dfs:
     all_rows_deposits = pd.concat(dfs, ignore_index=True)
-    # Remove crm_type column
     if 'crm_type' in all_rows_deposits.columns:
         all_rows_deposits = all_rows_deposits.drop(columns=['crm_type'])
 else:
     all_rows_deposits = pd.DataFrame()
-all_rows_deposits = all_rows_deposits.sort_values(by='match_status', ascending=False)  # Matched first
+all_rows_deposits = all_rows_deposits.sort_values(by='match_status', ascending=False)
 
-# Save to Excel (single sheet)
+# Save to Excel
 report_dir = LISTS_DIR / DATE
 report_dir.mkdir(parents=True, exist_ok=True)
 report_path_deposits = report_dir / "deposits_matching.xlsx"
@@ -114,10 +119,10 @@ report_path_deposits = report_dir / "deposits_matching.xlsx"
 with pd.ExcelWriter(report_path_deposits, engine='openpyxl') as writer:
     all_rows_deposits.to_excel(writer, sheet_name='Deposits_Matching', index=False)
 
-print(f"✅ Deposits matching report saved to {report_path_deposits}")
+print(f" Deposits matching report saved to {report_path_deposits}")
 
 # --- Apply Shifts Handler ---
-matched_sums = handle_shifts(DATE)  # Capture returned sums
+matched_sums = handle_shifts(DATE)
 if matched_sums:
     print("Matched Shifted Deposits by Currency:")
     for currency, amount in matched_sums.items():
@@ -168,9 +173,9 @@ if safe_concat(zota_pa_dfs).shape[0]:
     combined_df = safe_concat(zota_pa_dfs, ignore_index=True)
     combined_out_dir.mkdir(parents=True, exist_ok=True)
     combined_df.to_excel(combined_out_file, index=False)
-    print(f"✅ Combined Zotapay + PaymentAsia withdrawals saved to {combined_out_file}")
+    print(f"Combined Zotapay + PaymentAsia withdrawals saved to {combined_out_file}")
 else:
-    print("⚠️ No Zotapay or PaymentAsia files found to combine.")
+    print("No Zotapay or PaymentAsia files found to combine.")
 
 # --- Load exchange rates ---
 rates_path = DATA_DIR / "rates" / f"rates_{DATE}.csv"
@@ -226,7 +231,7 @@ else:
     desired_columns = [
         'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
         'crm_processor_name',
-        'regulation',  # Added here
+        'regulation',
         'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_last_name', 'proc_last4', 'proc_currency',
         'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
         'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
@@ -247,7 +252,7 @@ else:
     with pd.ExcelWriter(report_path_withdrawals, engine='openpyxl') as writer:
         matches_df.to_excel(writer, sheet_name='Withdrawals_Matching', index=False)
 
-    print(f"✅ Withdrawals matching report saved to {report_path_withdrawals}")
+    print(f"Withdrawals matching report saved to {report_path_withdrawals}")
 
     # --- Diagnostics JSON ---
     if engine.diagnostics:
@@ -255,7 +260,7 @@ else:
         pd.DataFrame(engine.diagnostics).to_json(diag_path, orient='records', indent=2)
         print(f"Saved diagnostics to {diag_path}")
 
-    print(f"✅ Saved {len(matches_df)} rows for withdrawals")
+    print(f"Saved {len(matches_df)} rows for withdrawals")
 
 end_time = time.time()
-print(f"\n⏱️ Total time: {end_time - start_time:.2f} seconds")
+print(f"\nTotal time: {end_time - start_time:.2f} seconds")

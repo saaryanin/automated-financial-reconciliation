@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR,CRM_DIR
+from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, CRM_DIR, COMBINED_CRM_DIR
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
@@ -826,7 +826,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     # Load and process unmatched_shifted_deposits from the previous day
     previous_unmatched_path = LISTS_DIR / previous_date_str / "unmatched_shifted_deposits.xlsx"
     if previous_unmatched_path.exists():
-        unmatched_df = pd.read_excel(previous_unmatched_path)
+        unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
         logging.info(
             f"Loaded unmatched_shifted_deposits from {previous_unmatched_path} with columns: {unmatched_df.columns.tolist()}")
         # Expanded mapping based on sample unmatched file
@@ -888,20 +888,10 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         # Convert data types
         if 'crm_date' in unmatched_mapped.columns:
             unmatched_mapped['crm_date'] = pd.to_datetime(unmatched_mapped['crm_date'], errors='coerce').fillna(
-                pd.NaT).dt.strftime('%Y-%m-%d %H:%M:%S')
+                pd.NaT).dt.strftime('%m/%d/%Y %I:%M:%S %p')
         for col in ['crm_amount', 'crm_last4']:
             if col in unmatched_mapped.columns:
                 unmatched_mapped[col] = pd.to_numeric(unmatched_mapped[col], errors='coerce').fillna(0)
-        # Log for debugging
-        for idx, row in unmatched_mapped.iterrows():
-            if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
-                logging.debug(
-                    f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
-            # Log for debugging
-        for idx, row in unmatched_mapped.iterrows():
-            if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
-                logging.debug(
-                    f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
         # Standardize crm_currency
         if 'crm_currency' in unmatched_mapped.columns:
             unmatched_mapped['crm_currency'] = unmatched_mapped['crm_currency'].replace({
@@ -930,6 +920,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 
         if 'regulation' in unmatched_mapped.columns:
             unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
+
         # Append to current CRM if new transactions
         existing_transaction_ids = set(df['Internal Comment'].apply(
             lambda x: extract_crm_transaction_id(x, normalized_processor) if pd.notna(x) else None).dropna().unique())
@@ -943,6 +934,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
                     df[col] = pd.NA
             df = pd.concat([df, new_deposits], ignore_index=True)
             logging.info(f"Added {len(new_deposits)} new unmatched deposits from {previous_date_str}")
+
         # Save the processed unmatched data
         if save_clean:
             unmatched_out_path = PROCESSED_CRM_DIR / "unmatched_shifted_deposits" / date_str / "unmatched_shifted_deposits.xlsx"
@@ -1127,7 +1119,6 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
     return df_clean
 
 # Updated combine_processed_files to read with dtype for transaction_id
-
 def combine_processed_files(
     date, processors, processor_name=None,  # Added processor_name as optional parameter
     processed_crm_dir=PROCESSED_CRM_DIR,
@@ -1291,7 +1282,6 @@ def combine_processed_files(
             out_df = pd.DataFrame()
         return out_df
 
-
     # Combine and save
     if crm_dfs:
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
@@ -1329,6 +1319,9 @@ def combine_processed_files(
         combined_crm = combined_crm.loc[:, ~combined_crm.columns.duplicated()]  # Ensure no duplicates
         if 'Approved' in combined_crm.columns:
             combined_crm = combined_crm.drop(columns=['Approved'])
+        if 'crm_date' in combined_crm.columns:
+            combined_crm['crm_date'] = pd.to_datetime(combined_crm['crm_date'], errors='coerce').dt.strftime(
+                '%m/%d/%Y %I:%M:%S %p')
 
         def categorize_regulation(site):
             site = str(site).lower().strip()
@@ -1466,3 +1459,48 @@ def combine_processed_files(
         print(f"Combined proc columns: {combined_proc.columns.tolist()}")  # Debug print
     else:
         print("No processor files found to combine.")
+
+def append_unmatched_to_combined(date_str, unmatched_path_str):
+    combined_path = Path(COMBINED_CRM_DIR) / date_str / "combined_crm_deposits.xlsx"
+    unmatched_path = Path(unmatched_path_str)
+
+    if not combined_path.exists():
+        logging.info(f"Combined CRM file not found: {combined_path}")
+        return
+    if not unmatched_path.exists():
+        logging.info(f"Unmatched shifted deposits file not found: {unmatched_path}")
+        return
+
+    df_combined = pd.read_excel(combined_path, dtype={'crm_transaction_id': str})
+    df_unmatched = pd.read_excel(unmatched_path, dtype={'crm_transaction_id': str})
+
+    combined_cols = set(df_combined.columns)
+    unmatched_cols = set(df_unmatched.columns)
+    if combined_cols != unmatched_cols:
+        logging.warning(f"Column mismatch between combined ({combined_cols}) and unmatched ({unmatched_cols}). Appending anyway.")
+
+    existing_ids = set(df_combined['crm_transaction_id'].dropna().unique())
+
+    if 'crm_transaction_id' in df_unmatched.columns:
+        df_unmatched_to_append = df_unmatched[~df_unmatched['crm_transaction_id'].isin(existing_ids)]
+    else:
+        df_unmatched_to_append = df_unmatched
+
+    logging.info(f"Rows to append after filtering: {df_unmatched_to_append.shape[0]}")
+
+    if not df_unmatched_to_append.empty:
+        df_updated = pd.concat([df_combined, df_unmatched_to_append], ignore_index=True)
+        key_cols = ['crm_transaction_id', 'crm_tp', 'crm_email', 'crm_amount']
+        df_updated = df_updated.drop_duplicates(subset=[col for col in key_cols if col in df_updated.columns])
+        logging.info(f"Updated combined_crm_deposits shape after append and dedup: {df_updated.shape}")
+
+        with pd.ExcelWriter(combined_path, engine='openpyxl') as writer:
+            df_updated.to_excel(writer, index=False, sheet_name='Sheet1')
+            if 'crm_transaction_id' in df_updated.columns:
+                worksheet = writer.sheets['Sheet1']
+                trans_col = df_updated.columns.get_loc('crm_transaction_id') + 1
+                for row in range(2, len(df_updated) + 2):
+                    worksheet.cell(row=row, column=trans_col).number_format = '@'
+        logging.info(f"Appended unmatched shifted deposits to {combined_path}")
+    else:
+        logging.info("No new rows to append.")

@@ -18,6 +18,8 @@ PROCESSED_CRM_DIR = PROCESSED_DIR / "crm"
 PROCESSED_PROCESSOR_DIR = PROCESSED_DIR / "processors"
 RATES_DIR = DATA_DIR / "rates"
 LISTS_DIR =  DATA_DIR /"lists"
+COMBINED_CRM_DIR = PROCESSED_CRM_DIR / "combined"
+PROCESSED_UNMATCHED_SHIFTED_DEPOSITS_DIR = PROCESSED_CRM_DIR / "unmatched_shifted_deposits"
 
 # Training dataset directories
 TRAINING_DATASET_DIR = DATA_DIR / "training_dataset"

@@ -21,7 +21,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 start_time = time.time()
 
 # --- Configuration ---
-DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02"  # Use command-line arg or default
+DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-26"  # Use command-line arg or default
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Step 1: Gather files (use DATE for all) ---

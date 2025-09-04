@@ -7,7 +7,7 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, CR
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
-from src.utils import clean_amount, clean_last4, format_date_no_leading_zero
+from src.utils import clean_amount, clean_last4, load_uk_holidays
 from src.withdrawals_matcher_test import ReconciliationEngine  # Import for enhanced_email_similarity
 import numpy as np
 from datetime import timedelta
@@ -33,7 +33,9 @@ PSP_NAME_MAP = {
     # Add any other known aliases as needed
 }
 
-processed_unmatched_files = set()  # Add this near other global definitions
+
+
+processed_unmatched_files = set()
 
 # ----------------------------
 
@@ -817,7 +819,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     date_str = extract_date_from_filename(filepath)
     current_date = datetime.strptime(date_str, '%Y-%m-%d')
     previous_date = current_date - timedelta(days=1)  # Previous day for unmatched data
-    previous_date_str = previous_date.strftime('%Y-%m-%d')
+    previous_date_str = get_previous_business_day(date_str)
 
     # Load current raw CRM file
     df = pd.read_excel(filepath, engine="openpyxl")
@@ -942,65 +944,94 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             unmatched_mapped.to_excel(unmatched_out_path, index=False)
             logging.info(f"Saved unmatched deposits to {unmatched_out_path}")
 
-        df["PSP name"] = (
-            df["PSP name"]
-            .astype(str)
-            .str.strip()
-            .str.lower()
-            .replace(PSP_NAME_MAP)
+    df["PSP name"] = (
+        df["PSP name"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .replace(PSP_NAME_MAP)
+    )
+    df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
+
+    df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor))
+    df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
+
+    if normalized_processor in ["zotapay", "paymentasia"]:
+        name_has_chinese = (
+                df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
+                df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
         )
-        df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
-
-        df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor))
-        df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
-
-        if normalized_processor in ["zotapay", "paymentasia"]:
-            name_has_chinese = (
-                    df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
-                    df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
-            )
-            name_col_match = df["Name"].str.lower() == "withdrawal"
-            psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
-            method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
-            full_mask = name_col_match & (psp_match | method_match)
-            df = df[full_mask].reset_index(drop=True)
-        else:
-            psp_mask = df["PSP name"] == normalized_processor
-            if transaction_type == "withdrawal":
-                name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])
-                df = df[name_mask & psp_mask].reset_index(drop=True)
-            else:
-                df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
-
-        if "Currency" in df.columns:
-            df["Currency"] = df["Currency"].replace({
-                "Euro": "EUR",
-                "US Dollar": "USD",
-                "Canadian Dollar": "CAD",
-                "Australian Dollar": "AUD"
-            })
-
+        name_col_match = df["Name"].str.lower() == "withdrawal"
+        psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
+        full_mask = name_col_match & (psp_match | method_match)
+        df = df[full_mask].reset_index(drop=True)
+    else:
+        psp_mask = df["PSP name"] == normalized_processor
         if transaction_type == "withdrawal":
-            df = handle_withdrawal_cancellations(df)
-            needed_columns = [
-                "Created On",
-                "First Name (Account) (Account)",
-                "Last Name (Account) (Account)",
-                "Email (Account) (Account)",
-                "tp",
-                "Amount",
-                "Currency",
-                "Method of Payment",
-                "PSP name",
-                "CC Last 4 Digits",
-                "Name",
-                "Site (Account) (Account)"
-            ]
-            df = df[[col for col in needed_columns if col in df.columns]]
-            if "transaction_id" in df.columns:
-                df = df.drop(columns=["transaction_id"])
+            name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])
+            df = df[name_mask & psp_mask].reset_index(drop=True)
+        else:
+            df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
 
-        elif transaction_type == "deposit":
+    if "Currency" in df.columns:
+        df["Currency"] = df["Currency"].replace({
+            "Euro": "EUR",
+            "US Dollar": "USD",
+            "Canadian Dollar": "CAD",
+            "Australian Dollar": "AUD"
+        })
+
+    if transaction_type == "withdrawal":
+        df = handle_withdrawal_cancellations(df)
+        needed_columns = [
+            "Created On",
+            "First Name (Account) (Account)",
+            "Last Name (Account) (Account)",
+            "Email (Account) (Account)",
+            "tp",
+            "Amount",
+            "Currency",
+            "Method of Payment",
+            "PSP name",
+            "CC Last 4 Digits",
+            "Name",
+            "Site (Account) (Account)"
+        ]
+        df = df[[col for col in needed_columns if col in df.columns]]
+        if "transaction_id" in df.columns:
+            df = df.drop(columns=["transaction_id"])
+
+    elif transaction_type == "deposit":
+        needed_columns = [
+            "Created On",
+            "First Name (Account) (Account)",
+            "Last Name (Account) (Account)",
+            "Email (Account) (Account)",
+            "tp",
+            "Amount",
+            "Currency",
+            "Method of Payment",
+            "PSP name",
+            "CC Last 4 Digits",
+            "transaction_id",
+            "Approved",
+            "Name",
+            "Site (Account) (Account)"
+        ]
+        df = df[[col for col in needed_columns if col in df.columns]]
+        df['crm_approved'] = df['Approved'].str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0) if 'Approved' in df.columns else pd.Series(0, index=df.index)
+        df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')
+
+    if save_clean:
+        date_str = extract_date_from_filename(filepath)
+        # Save processed CRM file
+        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
+        folder = f"{folder_name}_{transaction_type}s.xlsx"
+        out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        # If df is empty after filtering, create an empty DataFrame with the needed columns
+        if df.empty:
             needed_columns = [
                 "Created On",
                 "First Name (Account) (Account)",
@@ -1016,27 +1047,31 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
                 "Approved",
                 "Name",
                 "Site (Account) (Account)"
+            ] if transaction_type == "deposit" else [
+                "Created On",
+                "First Name (Account) (Account)",
+                "Last Name (Account) (Account)",
+                "Email (Account) (Account)",
+                "tp",
+                "Amount",
+                "Currency",
+                "Method of Payment",
+                "PSP name",
+                "CC Last 4 Digits",
+                "Name",
+                "Site (Account) (Account)"
             ]
-            df = df[[col for col in needed_columns if col in df.columns]]
-            df['crm_approved'] = df['Approved'].str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0) if 'Approved' in df.columns else pd.Series(0, index=df.index)
-            df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')
+            df = pd.DataFrame(columns=[col for col in needed_columns])
+            logging.info(f"Creating empty processed CRM file for {normalized_processor} {transaction_type}s")
+        with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+            if "transaction_id" in df.columns and transaction_type == "deposit":
+                worksheet = writer.sheets['Sheet1']
+                trans_col = df.columns.get_loc('transaction_id') + 1
+                for row in range(2, len(df) + 2):
+                    worksheet.cell(row=row, column=trans_col).number_format = '@'
 
-        if save_clean:
-            date_str = extract_date_from_filename(filepath)
-            # Save processed CRM file
-            folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
-            folder = f"{folder_name}_{transaction_type}s.xlsx"
-            out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Sheet1')
-                if "transaction_id" in df.columns and transaction_type == "deposit":
-                    worksheet = writer.sheets['Sheet1']
-                    trans_col = df.columns.get_loc('transaction_id') + 1
-                    for row in range(2, len(df) + 2):
-                        worksheet.cell(row=row, column=trans_col).number_format = '@'
-
-        return df.reset_index(drop=True)
+    return df.reset_index(drop=True)
 
 # ----------------------------
 # Utility
@@ -1052,6 +1087,14 @@ def extract_date_from_filename(filepath: str) -> str:
     if match_slash:
         return datetime.strptime(match_slash.group(1), "%d_%m_%Y").strftime("%Y-%m-%d")
     return "unknown_date"
+
+def get_previous_business_day(current_date_str):
+    current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
+    prev_date = current_date - timedelta(days=1)
+    holidays = set(load_uk_holidays())  # Fetch/load dynamic holidays
+    while prev_date.weekday() >= 5 or prev_date.strftime('%Y-%m-%d') in holidays:
+        prev_date -= timedelta(days=1)
+    return prev_date.strftime('%Y-%m-%d')
 
 # ----------------------------
 # Parallel Batch Processor
@@ -1147,7 +1190,7 @@ def combine_processed_files(
     crm_file_template = f"{{}}_{transaction_type}s.xlsx"
     proc_file_template = f"{{}}_{transaction_type}s.xlsx"
 
-    # Load other processed CRM files (excluding unmatched_shifted_deposits for now)
+    # Load other processed CRM files
     for proc in all_processors:
         crm_f = processed_crm_dir / proc / date / f"{proc}_{transaction_type}s.xlsx"
         if crm_f.exists():
@@ -1183,7 +1226,7 @@ def combine_processed_files(
             df[col] = df[col].astype(str).fillna('').str.strip()
         if 'Currency' not in df.columns:
             df['Currency'] = 'USD'
-        if 'Amount' in df.columns:
+        if 'Amount' not in df.columns:
             df['Amount'] = 0.0
 
         # Decide group key: use last 4 if present, fallback to names
@@ -1202,7 +1245,7 @@ def combine_processed_files(
             tgt_cur = choose_target_currency(currencies)
             amounts = []
             for _, row in group.iterrows():
-                amt = float(row['Amount'])
+                amt = -abs(float(row['Amount']))
                 src_cur = row['Currency']
                 if src_cur == tgt_cur:
                     converted = amt
@@ -1288,7 +1331,6 @@ def combine_processed_files(
         if transaction_type == "withdrawal":
             combined_crm = group_crm_withdrawals(combined_crm, exchange_rate_map)
         # No grouping for deposits
-
         if 'crm_transaction_id' in combined_crm.columns:
             combined_crm['crm_transaction_id'] = combined_crm['crm_transaction_id'].astype(str)
 

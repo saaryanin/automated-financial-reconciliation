@@ -2,6 +2,9 @@ import pandas as pd
 import logging
 from pathlib import Path
 import re
+import requests
+import json
+from datetime import datetime
 
 def setup_logger(name, level=logging.INFO):
     """Create and return a logger with the specified name and level."""
@@ -107,3 +110,48 @@ def clean_last4(v):
         return str(v).strip()
 
 
+# Path for caching fetched holidays (in data/ dir, assuming DATA_DIR from config)
+HOLIDAYS_CACHE_FILE = Path(
+    'data/uk_holidays_cache.json')  # Adjust to full path if needed, e.g., DATA_DIR / 'uk_holidays_cache.json'
+
+
+def fetch_uk_holidays_from_api(division='england-and-wales'):
+    """Fetch UK bank holidays from GOV.UK API and return dates for the specified division."""
+    url = 'https://www.gov.uk/bank-holidays.json'
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if division in data:
+            return [event['date'] for event in data[division]['events']]
+        else:
+            logging.error(f"Division '{division}' not found in API response")
+            return []
+    except requests.RequestException as e:
+        logging.error(f"Error fetching UK holidays from API: {e}")
+        return []
+
+
+def load_uk_holidays(use_cache=True):
+    """Load UK holidays: from cache if exists/use_cache=True, else fetch from API and cache."""
+    if use_cache and HOLIDAYS_CACHE_FILE.exists():
+        with open(HOLIDAYS_CACHE_FILE, 'r') as f:
+            data = json.load(f)
+            # Check if cache is recent (e.g., <1 year old); refetch if not
+            cache_date = datetime.fromisoformat(data.get('last_fetched', '1900-01-01'))
+            if (datetime.now() - cache_date).days < 365:
+                logging.info("Loaded UK holidays from cache")
+                return data['holidays']
+
+    logging.info("Fetching fresh UK holidays from API")
+    holidays = fetch_uk_holidays_from_api()
+    if holidays:
+        cache_data = {
+            'last_fetched': datetime.now().isoformat(),
+            'holidays': holidays
+        }
+        HOLIDAYS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(HOLIDAYS_CACHE_FILE, 'w') as f:
+            json.dump(cache_data, f)
+        logging.info(f"Cached UK holidays to {HOLIDAYS_CACHE_FILE}")
+    return holidays

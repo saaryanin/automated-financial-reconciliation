@@ -1091,9 +1091,15 @@ def extract_date_from_filename(filepath: str) -> str:
 def get_previous_business_day(current_date_str):
     current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
     prev_date = current_date - timedelta(days=1)
-    holidays = set(load_uk_holidays())  # Fetch/load dynamic holidays
+    holidays = set(load_uk_holidays())
+    skipped_dates = []  # Track skipped for logging
     while prev_date.weekday() >= 5 or prev_date.strftime('%Y-%m-%d') in holidays:
+        skipped_dates.append(prev_date.strftime('%Y-%m-%d'))  # Log skipped date
         prev_date -= timedelta(days=1)
+    if skipped_dates:
+        logging.info(f"Skipped dates for {current_date_str}: {skipped_dates} (weekends/holidays)")
+    else:
+        logging.info(f"No skips for {current_date_str}; using direct previous: {prev_date.strftime('%Y-%m-%d')}")
     return prev_date.strftime('%Y-%m-%d')
 
 # ----------------------------

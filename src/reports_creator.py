@@ -13,6 +13,7 @@ from src.utils import (
 )
 from src.shifts_handler import main as handle_shifts
 import sys
+from src.processor_renamer import run_renamer  # Import the renamer
 
 # Suppress openpyxl and pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -23,6 +24,9 @@ start_time = time.time()
 # --- Configuration ---
 DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-26"  # Use command-line arg or default
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
+
+# --- Activate Renamer with Forced Date ---
+run_renamer(forced_date=DATE)
 
 # --- Step 1: Gather files (use DATE for all) ---
 crm_files = list(CRM_DIR.glob(f"crm_{DATE}.xlsx"))

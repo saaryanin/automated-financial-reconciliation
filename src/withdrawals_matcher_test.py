@@ -8,6 +8,7 @@ from src.utils import create_cancelled_row,normalize_string,clean_last4
 from difflib import SequenceMatcher
 from collections import defaultdict
 from collections import Counter
+import re
 
 
 class ProcessorConfig:
@@ -629,6 +630,48 @@ class ReconciliationEngine:
                     current_comment = m.get('comment', '')
                     m['comment'] = current_comment + ' . ' + comment if current_comment else comment
                     print(f"Row {i + 1} breaks Rule 5: Processor names differ ({crm_pname} vs {proc_pname})")
+        # Rule 6: Shift4 partial email matches for unmatched rows
+        unmatched_crm_indices = [i for i, m in enumerate(matches) if
+                                 m['match_status'] == 0 and m.get('crm_date') is not None]
+        unmatched_proc_shift4_indices = [i for i, m in enumerate(matches) if
+                                         m['match_status'] == 0 and m.get('crm_date') is None and m.get(
+                                             'proc_processor_name') == 'shift4']
+        flagged_shift4_proc_to_crm = defaultdict(list)
+        for proc_i in unmatched_proc_shift4_indices:
+            proc_email = matches[proc_i].get('proc_email', '')
+            # Normalize proc_email to string
+            if isinstance(proc_email, list):
+                proc_email = proc_email[0] if proc_email else ''
+            if isinstance(proc_email, str):
+                # Clean string representations of lists
+                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+            if not proc_email or not re.match(r'^[a-z]{2}\*+', proc_email, re.IGNORECASE):
+                continue
+            prefix = proc_email[:2].lower()
+            for crm_i in unmatched_crm_indices:
+                crm_email = matches[crm_i].get('crm_email', '').lower()
+                if crm_email.startswith(prefix):
+                    flagged_shift4_proc_to_crm[proc_i].append(crm_i)
+        for proc_i, crm_list in flagged_shift4_proc_to_crm.items():
+            if crm_list:
+                matches[proc_i]['warning'] = True
+                comments_proc = ' . '.join(
+                    [f"Matched similar email :{matches[c].get('crm_email', '')} in row {c + 1}" for c in crm_list])
+                current_proc = matches[proc_i].get('comment', '')
+                matches[proc_i]['comment'] = current_proc + ' . ' + comments_proc if current_proc else comments_proc
+                proc_email = matches[proc_i].get('proc_email', '')
+                # Normalize for display
+                if isinstance(proc_email, str):
+                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+                elif isinstance(proc_email, list):
+                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+                for crm_i in crm_list:
+                    matches[crm_i]['warning'] = True
+                    comment_crm = f"Matched similar email :{proc_email} in row {proc_i + 1}"
+                    current_crm = matches[crm_i].get('comment', '')
+                    matches[crm_i]['comment'] = current_crm + ' . ' + comment_crm if current_crm else comment_crm
+                print(
+                    f"Row {proc_i + 1} breaks Rule 6: Shift4 partial email match with prefix {prefix} to rows {[c + 1 for c in crm_list]}")
 
     def make_cancelled_rows(self, full_crm_df):
         """

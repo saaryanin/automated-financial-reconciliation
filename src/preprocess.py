@@ -838,6 +838,28 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
 
+    # Categorize regulation
+    def categorize_regulation(site):
+        site = str(site).lower().strip()
+        if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
+            return 'belarus'
+        elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
+            return 'australia'
+        elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
+            return 'mauritius'
+        elif site == 'fortrade.ca':
+            return 'canada'
+        elif site == 'fortrade.cy':
+            return 'cyprus'
+        return 'unknown'
+
+    df['regulation'] = df['Site (Account) (Account)'].apply(categorize_regulation)
+
+    # Filter out paypal and inpendium for australia regulation
+    mask_aus = df['regulation'] == 'australia'
+    mask_psp = df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
+    df = df[~(mask_aus & mask_psp)]
+
     # Load and process unmatched_shifted_deposits from the previous day
     previous_unmatched_path = LISTS_DIR / previous_date_str / "unmatched_shifted_deposits.xlsx"
     if previous_unmatched_path.exists():
@@ -919,20 +941,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
                 {'yes': 'Yes', 'no': 'No'}).fillna(0)
 
         # Categorize regulation
-        def categorize_regulation(site):
-            site = str(site).lower().strip()
-            if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
-                return 'belarus'
-            elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
-                return 'australia'
-            elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
-                return 'mauritius'
-            elif site == 'fortrade.ca':
-                return 'canada'
-            elif site == 'fortrade.cy':
-                return 'cyprus'
-            return 'unknown'
-
         if 'regulation' in unmatched_mapped.columns:
             unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
 

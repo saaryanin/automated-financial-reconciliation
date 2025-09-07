@@ -3,7 +3,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 
 import time
 import warnings
-from src.preprocess import process_files_in_parallel, combine_processed_files,append_unmatched_to_combined
+from src.preprocess_test import process_files_in_parallel, combine_processed_files,append_unmatched_to_combined
 from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR
 import pandas as pd
 import numpy as np
@@ -285,6 +285,10 @@ else:
     cancelled = engine.make_cancelled_rows(crm_df_withdrawals)
     if cancelled:
         matches_df = safe_concat([matches_df, pd.DataFrame(cancelled)], ignore_index=True)
+
+    # --- Fix: Populate regulation using crm_index if available and regulation is missing ---
+    if 'crm_index' in matches_df.columns and 'regulation' not in matches_df.columns:
+        matches_df = matches_df.merge(crm_df_withdrawals[['regulation']], left_on='crm_index', right_index=True, how='left')
 
     matches_df = drop_cols(matches_df, ['matched_proc_indices'])
 

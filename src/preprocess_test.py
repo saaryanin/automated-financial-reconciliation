@@ -1523,6 +1523,7 @@ def combine_processed_files(
             'currency': 'proc_currency',
             'date': 'proc_date',
             'last_4cc': 'proc_last4', # Renamed from proc_last4digits to proc_last4
+            'last_4digits': 'proc_last4',
             'email': 'proc_email',
             'first_name': 'proc_firstname',
             'last_name': 'proc_lastname',

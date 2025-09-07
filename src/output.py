@@ -47,7 +47,7 @@ def generate_unmatched_proc_deposits(date_str):
         print(f"Deposits matching file not found: {deposits_matching_path}")
         return
 
-    df = pd.read_excel(deposits_matching_path)
+    df = pd.read_excel(deposits_matching_path, dtype={'proc_transaction_id': str, 'proc_last4': str})
 
     # Filter unmatched processor deposits: match_status == 0 and crm_date is NaN (indicating processor unmatched)
     unmatched_proc = df[(df['match_status'] == 0) & (df['crm_date'].isna())]
@@ -59,7 +59,7 @@ def generate_unmatched_proc_deposits(date_str):
     # Clean processor columns
     columns_to_clean = [
         'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_tp', 'proc_amount', 'proc_currency',
-        'proc_processor_name', 'proc_transaction_id'
+        'proc_processor_name', 'proc_last4', 'proc_transaction_id'
     ]
     for col in columns_to_clean:
         if col in unmatched_proc.columns:
@@ -68,18 +68,34 @@ def generate_unmatched_proc_deposits(date_str):
     # Format proc_date
     unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(format_date)
 
-    # Select specified columns
+    # Ensure proc_transaction_id and proc_last4 are strings
+    unmatched_proc['proc_transaction_id'] = unmatched_proc['proc_transaction_id'].astype(str)
+    unmatched_proc['proc_last4'] = unmatched_proc['proc_last4'].astype(str)
+
+    # Select specified columns in order
     columns = [
         'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_tp', 'proc_amount', 'proc_currency',
-        'proc_processor_name', 'proc_transaction_id'
+        'proc_processor_name', 'proc_last4', 'proc_transaction_id'
     ]
     unmatched_proc = unmatched_proc[columns]
 
-    # Save to output/dated/unmatched_proc_deposits.xlsx
+    # Save to output/dated/unmatched_proc_deposits.xlsx with text format for specific columns
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "unmatched_proc_deposits.xlsx"
-    unmatched_proc.to_excel(output_path, index=False)
+
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        unmatched_proc.to_excel(writer, index=False, sheet_name='Sheet1')
+        worksheet = writer.sheets['Sheet1']
+        # Set text format for proc_transaction_id
+        col_idx_tid = unmatched_proc.columns.get_loc('proc_transaction_id') + 1  # 1-based index
+        for row in range(2, len(unmatched_proc) + 2):  # header is row 1, data starts at row 2
+            worksheet.cell(row=row, column=col_idx_tid).number_format = '@'
+        # Set text format for proc_last4
+        col_idx_last4 = unmatched_proc.columns.get_loc('proc_last4') + 1
+        for row in range(2, len(unmatched_proc) + 2):
+            worksheet.cell(row=row, column=col_idx_last4).number_format = '@'
+
     print(f"Unmatched processor deposits saved to {output_path}")
 
 

@@ -380,6 +380,7 @@ class ReconciliationEngine:
             'crm_currency': crm_currency,
             'crm_amount': -crm_amount if crm_row.get('crm_amount', 0) < 0 else crm_amount,  # Restore sign if negative
             'crm_processor_name': crm_row.get('crm_processor_name'),
+            'regulation': crm_row.get('regulation', ''),
             'proc_date': proc_row.get('proc_date'),
             'proc_email': proc_email,
             'proc_firstname': proc_row.get('proc_firstname', ''),
@@ -980,6 +981,7 @@ class ReconciliationEngine:
                 'crm_currency': crm_cur,
                 'crm_amount': crm_amt,
                 'crm_processor_name': crm_row.get('crm_processor_name'),
+                'regulation': crm_row.get('regulation', ''),
                 'proc_date': proc_date_ts,
                 'proc_email': best['row_data'].get('proc_email'),
                 'proc_firstname': best['row_data'].get('proc_firstname', ''),

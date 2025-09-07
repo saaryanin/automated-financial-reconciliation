@@ -8,6 +8,7 @@ from src.utils import create_cancelled_row,normalize_string,clean_last4
 from difflib import SequenceMatcher
 from collections import defaultdict
 from collections import Counter
+import re
 
 
 class ProcessorConfig:
@@ -510,72 +511,57 @@ class ReconciliationEngine:
             ~processor_df.index.isin(used_real),
             'proc_last4'
         ].dropna().astype(str)
-        dup_last4s = {
-            last4
-            for last4, cnt in Counter(unmatched_last4s).items()
-            if cnt > 1
-        }
         for m in matches:
             m['warning'] = False  # Default: no warning
+        # Rule 1: General email similarity for unmatched rows (above 0.65)
+        unmatched_crm_indices = [i for i, m in enumerate(matches) if
+                                 m['match_status'] == 0 and m.get('crm_date') is not None]
+        unmatched_proc_indices = [i for i, m in enumerate(matches) if
+                                  m['match_status'] == 0 and m.get('crm_date') is None]
+        flagged_email_sim_proc_to_crm = defaultdict(list)
+        thresh_email = 0.65
+        for proc_i in unmatched_proc_indices:
+            proc_email = matches[proc_i].get('proc_email', '')
+            if isinstance(proc_email, str):
+                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+            if isinstance(proc_email, list):
+                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+            if not proc_email:
+                continue
+            for crm_i in unmatched_crm_indices:
+                crm_email = matches[crm_i].get('crm_email', '').lower()
+                sim = self.enhanced_email_similarity(crm_email, proc_email)
+                if sim > thresh_email:
+                    flagged_email_sim_proc_to_crm[proc_i].append((crm_i, sim))
+        for proc_i, crm_list in flagged_email_sim_proc_to_crm.items():
+            if crm_list:
+                matches[proc_i]['warning'] = True
+                comments_proc = ' . '.join(
+                    [f"Matched similar email :{matches[c[0]].get('crm_email', '')} in row {c[0] + 1} (sim {c[1]:.3f})"
+                     for c in crm_list])
+                current_proc = matches[proc_i].get('comment', '')
+                matches[proc_i]['comment'] = current_proc + ' . ' + comments_proc if current_proc else comments_proc
+                proc_email = matches[proc_i].get('proc_email', '')
+                if isinstance(proc_email, str):
+                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+                elif isinstance(proc_email, list):
+                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+                for crm_tuple in crm_list:
+                    crm_i = crm_tuple[0]
+                    matches[crm_i]['warning'] = True
+                    comment_crm = f"Matched similar email :{proc_email} in row {proc_i + 1}"
+                    current_crm = matches[crm_i].get('comment', '')
+                    matches[crm_i]['comment'] = current_crm + ' . ' + comment_crm if current_crm else comment_crm
+                print(
+                    f"Row {proc_i + 1} breaks Rule 1: General email similarity match to rows {[c[0] + 1 for c in crm_list]}")
+        # Rule 2: Last4 digits matching
+        crm_last4s = set()
+        for m in matches:
+            raw = str(m.get('crm_last4', '')).strip()
+            if raw.lower() != 'nan' and raw:
+                crm_last4s.add(raw[:-2] if raw.endswith('.0') else raw)
         flagged_unmatched_last4_rows = defaultdict(list)
         flagged_matched_last4_rows = defaultdict(list)
-        flagged_failed_emails = set()
-        for i, m in enumerate(matches):
-            pname = str(m.get('crm_processor_name', '')).lower()
-            cfg = PROCESSOR_CONFIGS.get(pname)
-            thresh = 0.65
-            # Rule 1: Payment failed + similar unmatched email
-            if m.get('payment_status') == 0 and m.get('match_status') == 1:
-                crm_email = m.get('crm_email') or ''
-                for ue in unmatched_emails:
-                    sim = self.enhanced_email_similarity(crm_email, ue)
-                    if sim >= thresh:
-                        m['warning'] = True  # Trigger warning
-                        flagged_failed_emails.add(ue)
-                        comment = f"Payment failed and email similarity {sim:.3f} >= {thresh} with unmatched email {ue}"
-                        current_comment = m.get('comment', '')
-                        m['comment'] = current_comment + ' . ' + comment if current_comment else comment
-                        print(
-                            f"Row {i + 1} breaks Rule 1: Payment failed and email similarity {sim:.3f} >= {thresh} with unmatched email {ue}")
-                        break
-            # Rule 2: Cross-processor fallback with low email similarity
-            if m.get('cross_processor_fallback') and m.get('email_similarity_avg', 1.0) < 0.5:
-                sim = m.get('email_similarity_avg', 0.0)
-                m['warning'] = True  # Trigger warning
-                comment = f"Cross-processor fallback with low email similarity {sim:.3f} < 0.5"
-                current_comment = m.get('comment', '')
-                m['comment'] = current_comment + ' . ' + comment if current_comment else comment
-                print(f"Row {i + 1} breaks Rule 2: Cross-processor fallback with low email similarity {sim:.3f} < 0.5")
-        if flagged_failed_emails:
-            for i, m in enumerate(matches):
-                if m['warning']:
-                    continue
-                pe = m.get('proc_email')
-                emails = pe if isinstance(pe, list) else [pe] if pe else []
-                for e in emails:
-                    if e in flagged_failed_emails:
-                        m['warning'] = True  # Trigger warning
-                        comment = f"Matching email {e} from failed payment"
-                        current_comment = m.get('comment', '')
-                        m['comment'] = current_comment + ' . ' + comment if current_comment else comment
-                        print(f"Row {i + 1} breaks Rule 1 propagation: Matching email {e} from failed payment")
-                        break
-        if dup_last4s:
-            for i, m in enumerate(matches):
-                crm_l4 = str(m.get('crm_last4', '')).strip()
-                crm_code = crm_l4[:-2] if crm_l4.endswith('.0') else crm_l4
-                if crm_code in dup_last4s and not m['warning']:
-                    m['warning'] = True  # Trigger warning
-                    comment = f"CRM last4 {crm_code} in duplicate unmatched-processor last4s"
-                    current_comment = m.get('comment', '')
-                    m['comment'] = current_comment + ' . ' + comment if current_comment else comment
-                    print(f"Row {i + 1} breaks Rule 3: CRM last4 {crm_code} in duplicate unmatched-processor last4s")
-        crm_raws = {str(m.get('crm_last4', '')).strip() for m in matches if m.get('crm_last4') not in (None, '')}
-        crm_last4s = set()
-        for raw in crm_raws:
-            if raw.lower() == 'nan':
-                continue
-            crm_last4s.add(raw[:-2] if raw.endswith('.0') else raw)
         for i, m in enumerate(matches):
             if m.get('crm_date') is not None:
                 continue
@@ -589,20 +575,18 @@ class ReconciliationEngine:
                 continue
             code = raw_str[:-2] if raw_str.endswith('.0') else raw_str
             if code in crm_last4s and not m['warning']:
-                m['warning'] = True  # Trigger warning
+                m['warning'] = True
                 flagged_unmatched_last4_rows[code].append(i)
-                print(f"Row {i + 1} breaks Rule 4: Unmatched-processor last4 {raw_str} found in CRM last4s")
-        if flagged_unmatched_last4_rows:
-            for i, m in enumerate(matches):
-                if m.get('crm_date') is None:
-                    continue
-                raw = str(m.get('crm_last4', '')).strip()
-                code = raw[:-2] if raw.endswith('.0') else raw
-                if code in flagged_unmatched_last4_rows and not m['warning']:
-                    m['warning'] = True  # Trigger warning
-                    flagged_matched_last4_rows[code].append(i)
-                    print(f"Row {i + 1} breaks Rule 4 propagation: Matching last4 {code}")
-        # Add cross-references for Rule 4
+                print(f"Row {i + 1} breaks Rule 2: Unmatched-processor last4 {raw_str} found in CRM last4s")
+        for i, m in enumerate(matches):
+            if m.get('crm_date') is None:
+                continue
+            raw = str(m.get('crm_last4', '')).strip()
+            code = raw[:-2] if raw.endswith('.0') else raw
+            if code in flagged_unmatched_last4_rows and not m['warning']:
+                m['warning'] = True
+                flagged_matched_last4_rows[code].append(i)
+                print(f"Row {i + 1} breaks Rule 2 propagation: Matching last4 {code}")
         for code in flagged_unmatched_last4_rows:
             unmatched_rows = flagged_unmatched_last4_rows[code]
             matched_rows = flagged_matched_last4_rows.get(code, [])
@@ -619,6 +603,7 @@ class ReconciliationEngine:
                 for m_i in matched_rows:
                     current_comment = matches[m_i].get('comment', '')
                     matches[m_i]['comment'] = current_comment + ' . ' + comment_m if current_comment else comment_m
+        # Rule 3: Cross processors
         for i, m in enumerate(matches):
             if m.get('match_status') == 1:
                 crm_pname = str(m.get('crm_processor_name', '')).lower()
@@ -628,7 +613,46 @@ class ReconciliationEngine:
                     comment = f"Processor names differ ({crm_pname} vs {proc_pname})"
                     current_comment = m.get('comment', '')
                     m['comment'] = current_comment + ' . ' + comment if current_comment else comment
-                    print(f"Row {i + 1} breaks Rule 5: Processor names differ ({crm_pname} vs {proc_pname})")
+                    print(f"Row {i + 1} breaks Rule 3: Processor names differ ({crm_pname} vs {proc_pname})")
+        # Rule 4: Partial email matching for shift4
+        unmatched_crm_indices = [i for i, m in enumerate(matches) if
+                                 m['match_status'] == 0 and m.get('crm_date') is not None]
+        unmatched_proc_shift4_indices = [i for i, m in enumerate(matches) if
+                                         m['match_status'] == 0 and m.get('crm_date') is None and m.get(
+                                             'proc_processor_name') == 'shift4']
+        flagged_shift4_proc_to_crm = defaultdict(list)
+        for proc_i in unmatched_proc_shift4_indices:
+            proc_email = matches[proc_i].get('proc_email', '')
+            if isinstance(proc_email, str):
+                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+            if isinstance(proc_email, list):
+                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+            if not proc_email or not re.match(r'^[a-z]{2}\*+', proc_email, re.IGNORECASE):
+                continue
+            prefix = proc_email[:2].lower()
+            for crm_i in unmatched_crm_indices:
+                crm_email = matches[crm_i].get('crm_email', '').lower()
+                if crm_email.startswith(prefix):
+                    flagged_shift4_proc_to_crm[proc_i].append(crm_i)
+        for proc_i, crm_list in flagged_shift4_proc_to_crm.items():
+            if crm_list:
+                matches[proc_i]['warning'] = True
+                comments_proc = ' . '.join(
+                    [f"Matched similar email :{matches[c].get('crm_email', '')} in row {c + 1}" for c in crm_list])
+                current_proc = matches[proc_i].get('comment', '')
+                matches[proc_i]['comment'] = current_proc + ' . ' + comments_proc if current_proc else comments_proc
+                proc_email = matches[proc_i].get('proc_email', '')
+                if isinstance(proc_email, str):
+                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+                elif isinstance(proc_email, list):
+                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+                for crm_i in crm_list:
+                    matches[crm_i]['warning'] = True
+                    comment_crm = f"Matched similar email :{proc_email} in row {proc_i + 1}"
+                    current_crm = matches[crm_i].get('comment', '')
+                    matches[crm_i]['comment'] = current_crm + ' . ' + comment_crm if current_crm else comment_crm
+                print(
+                    f"Row {proc_i + 1} breaks Rule 4: Shift4 partial email match with prefix {prefix} to rows {[c + 1 for c in crm_list]}")
 
     def make_cancelled_rows(self, full_crm_df):
         """

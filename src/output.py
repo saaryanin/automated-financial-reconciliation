@@ -4,7 +4,7 @@ import sys
 import pandas as pd
 from pathlib import Path
 from src.config import OUTPUT_DIR, LISTS_DIR
-from src.shifts_handler import main as handle_shifts
+from src.shifts_handler import main as handle_shifts, is_bst, get_cutoff_time
 from collections import OrderedDict
 import ast
 from datetime import datetime
@@ -25,6 +25,19 @@ def generate_unmatched_crm_deposits(date_str):
 
     if unmatched_crm.empty:
         print(f"No unmatched CRM deposits found for {date_str}, skipping file creation.")
+        return
+
+    # Convert crm_date to datetime for filtering
+    unmatched_crm['crm_date'] = pd.to_datetime(unmatched_crm['crm_date'], errors='coerce')
+
+    # Get cutoff time for the date
+    cutoff = get_cutoff_time(date_str)
+
+    # Remove rows after the cutoff
+    unmatched_crm = unmatched_crm[unmatched_crm['crm_date'] <= cutoff]
+
+    if unmatched_crm.empty:
+        print(f"No unmatched CRM deposits after cutoff filter for {date_str}, skipping file creation.")
         return
 
     # Select specified columns

@@ -21,6 +21,7 @@ def generate_unmatched_crm_deposits(date_str):
 
     # Filter unmatched CRM deposits: match_status == 0 and proc_date is NaN (indicating CRM unmatched)
     unmatched_crm = df[(df['match_status'] == 0) & (df['proc_date'].isna())]
+    unmatched_crm = unmatched_crm.copy()  # Fix SettingWithCopyWarning
 
     if unmatched_crm.empty:
         print(f"No unmatched CRM deposits found for {date_str}, skipping file creation.")
@@ -51,6 +52,7 @@ def generate_unmatched_proc_deposits(date_str):
 
     # Filter unmatched processor deposits: match_status == 0 and crm_date is NaN (indicating processor unmatched)
     unmatched_proc = df[(df['match_status'] == 0) & (df['crm_date'].isna())]
+    unmatched_proc = unmatched_proc.copy()  # Fix SettingWithCopyWarning
 
     if unmatched_proc.empty:
         print(f"No unmatched processor deposits found for {date_str}, skipping file creation.")
@@ -206,6 +208,7 @@ def generate_warning_withdrawals(date_str):
 
     # Filter rows where warning == True
     warnings_df = df[df['warning'] == True]
+    warnings_df = warnings_df.copy()  # Fix SettingWithCopyWarning
 
     if warnings_df.empty:
         print(f"No warnings found in withdrawals matching for {date_str}, skipping file creation.")
@@ -256,6 +259,7 @@ def generate_unmatched_proc_withdrawals(date_str):
 
     # Filter rows where comment == "No matching CRM row found"
     unmatched_proc = df[df['comment'] == "No matching CRM row found"]
+    unmatched_proc = unmatched_proc.copy()  # Fix SettingWithCopyWarning if needed in future mods
 
     if unmatched_proc.empty:
         print(f"No unmatched processor withdrawals found for {date_str}, skipping file creation.")
@@ -292,9 +296,62 @@ def generate_unmatched_proc_withdrawals(date_str):
     print(f"Unmatched processor withdrawals saved to {output_path}")
 
 
+def remove_compensated_entries(date_str):
+    deposits_path = OUTPUT_DIR / date_str / "unmatched_proc_deposits.xlsx"
+    withdrawals_path = OUTPUT_DIR / date_str / "unmatched_proc_withdrawals.xlsx"
+
+    if not deposits_path.exists() or not withdrawals_path.exists():
+        print(f"Missing files for compensated entries removal in {date_str}, skipping.")
+        return
+
+    deposits_df = pd.read_excel(deposits_path, dtype={'proc_last4': str, 'proc_transaction_id': str})
+    withdrawals_df = pd.read_excel(withdrawals_path, dtype={'proc_last4': str})
+
+    # Normalize proc_last4 for deposits: pad with leading zeros to 4 digits
+    deposits_df['norm_last4'] = deposits_df['proc_last4'].apply(lambda x: str(x).zfill(4) if pd.notna(x) else np.nan)
+
+    # For withdrawals, proc_last4 is already 4 digits with leading zeros
+    withdrawals_df['norm_last4'] = withdrawals_df['proc_last4'].apply(lambda x: str(x) if pd.notna(x) else np.nan)
+
+    # Normalize amounts to absolute values for comparison
+    deposits_df['norm_amount'] = deposits_df['proc_amount'].abs().astype(float)
+    withdrawals_df['norm_amount'] = withdrawals_df['proc_amount'].abs().astype(float)
+
+    # Ensure other merge columns are strings
+    for df in [deposits_df, withdrawals_df]:
+        for col in ['proc_currency', 'proc_processor_name', 'proc_email']:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+
+    # Merge on the matching columns
+    merge_columns = ['norm_amount', 'proc_currency', 'norm_last4', 'proc_processor_name', 'proc_email']
+    matched = pd.merge(deposits_df.reset_index(), withdrawals_df.reset_index(), on=merge_columns, how='inner', suffixes=('_dep', '_wd'))
+
+    if matched.empty:
+        print(f"No compensated entries found for {date_str}.")
+        return
+
+    # Get indices to drop
+    dep_indices_to_drop = matched['index_dep'].unique()
+    wd_indices_to_drop = matched['index_wd'].unique()
+
+    # Drop from deposits
+    deposits_df = deposits_df.drop(dep_indices_to_drop).drop(columns=['norm_last4', 'norm_amount'])
+
+    # Drop from withdrawals
+    withdrawals_df = withdrawals_df.drop(wd_indices_to_drop).drop(columns=['norm_last4', 'norm_amount'])
+
+    # Save updated files
+    deposits_df.to_excel(deposits_path, index=False)
+    print(f"Updated unmatched_proc_deposits.xlsx after removing {len(dep_indices_to_drop)} compensated entries.")
+
+    withdrawals_df.to_excel(withdrawals_path, index=False)
+    print(f"Updated unmatched_proc_withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
+
+
 if __name__ == "__main__":
     DATE = sys.argv[1] if len(
-        sys.argv) > 1 else "2025-08-26"  # Default date for testing; use command-line arg in production
+        sys.argv) > 1 else "2025-09-02"  # Default date for testing; use command-line arg in production
     matched_sums = handle_shifts(DATE)
     if matched_sums:
         output_dir = OUTPUT_DIR / DATE
@@ -318,3 +375,6 @@ if __name__ == "__main__":
 
     # Generate unmatched_proc_withdrawals
     generate_unmatched_proc_withdrawals(DATE)
+
+    # Remove compensated entries
+    remove_compensated_entries(DATE)

@@ -7,13 +7,15 @@ from src.preprocess_test import process_files_in_parallel, combine_processed_fil
 from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR
 import pandas as pd
 import numpy as np
-from src.withdrawals_matcher import ReconciliationEngine
+from src.withdrawals_matcher_test import ReconciliationEngine
 from src.utils import (
     logging as utils_logging, setup_logger, load_excel_if_exists, safe_concat, drop_cols
 )
 from src.shifts_handler import main as handle_shifts
 import sys
 from src.processor_renamer import run_renamer  # Import the renamer
+import re
+from collections import defaultdict
 
 # Suppress openpyxl and pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -22,7 +24,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 start_time = time.time()
 
 # --- Configuration ---
-DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-26"  # Use command-line arg or default
+DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-05"  # Use command-line arg or default
 PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
 # --- Activate Renamer with Forced Date ---
@@ -244,6 +246,40 @@ else:
     ]
 
     matches_df = matches_df[[c for c in desired_columns if c in matches_df.columns]]
+
+    # Parse the report to add comments for Rule 4 warnings
+    report = str(report)  # Ensure report is string to avoid AttributeError
+    unmatched_by_last4 = defaultdict(list)
+    matched_by_last4 = defaultdict(list)
+    # Parse unmatched
+    for match in re.finditer(r'Row (\d+) breaks Rule 4: Unmatched-processor last4 ([\d.]+) found in CRM last4s', report):
+        row_num = int(match.group(1))
+        last4 = match.group(2).rstrip('.0')
+        unmatched_by_last4[last4].append(row_num)
+    # Parse propagation
+    for match in re.finditer(r'Row (\d+) breaks Rule 4 propagation: Matching last4 ([\d.]+)', report):
+        row_num = int(match.group(1))
+        last4 = match.group(2).rstrip('.0')
+        matched_by_last4[last4].append(row_num)
+
+    for last4, unmatched_rows in unmatched_by_last4.items():
+        matched_rows = matched_by_last4.get(last4, [])
+        if matched_rows:
+            matched_str = ', '.join([f"row {r}" for r in matched_rows]) if len(matched_rows) > 1 else f"row {matched_rows[0]}"
+            comment = f"Matched the same last4 :{last4} in {matched_str}"
+            for u_row in unmatched_rows:
+                idx = u_row - 1
+                current = matches_df.at[idx, 'comment']
+                new_com = current + ' . ' + comment if pd.notna(current) and current else comment
+                matches_df.at[idx, 'comment'] = new_com
+
+            unmatched_str = ', '.join([f"row {r}" for r in unmatched_rows]) if len(unmatched_rows) > 1 else f"row {unmatched_rows[0]}"
+            comment_m = f"Matched the same last4 :{last4} in {unmatched_str}"
+            for m_row in matched_rows:
+                idx = m_row - 1
+                current = matches_df.at[idx, 'comment']
+                new_com = current + ' . ' + comment_m if pd.notna(current) and current else comment_m
+                matches_df.at[idx, 'comment'] = new_com
 
     # --- Append cancellations ---
     cancelled = engine.make_cancelled_rows(crm_df_withdrawals)

@@ -6,6 +6,8 @@ import logging, threading, time
 from collections import Counter
 from src.utils import create_cancelled_row,normalize_string,clean_last4
 from difflib import SequenceMatcher
+from collections import defaultdict
+from collections import Counter
 
 
 class ProcessorConfig:
@@ -515,6 +517,9 @@ class ReconciliationEngine:
         }
         for m in matches:
             m['warning'] = False  # Default: no warning
+        flagged_unmatched_last4_rows = defaultdict(list)
+        flagged_matched_last4_rows = defaultdict(list)
+        flagged_failed_emails = set()
         for i, m in enumerate(matches):
             pname = str(m.get('crm_processor_name', '')).lower()
             cfg = PROCESSOR_CONFIGS.get(pname)
@@ -526,26 +531,34 @@ class ReconciliationEngine:
                     sim = self.enhanced_email_similarity(crm_email, ue)
                     if sim >= thresh:
                         m['warning'] = True  # Trigger warning
-                        m['_fail_rule1_email'] = ue
+                        flagged_failed_emails.add(ue)
+                        comment = f"Payment failed and email similarity {sim:.3f} >= {thresh} with unmatched email {ue}"
+                        current_comment = m.get('comment', '')
+                        m['comment'] = current_comment + ' . ' + comment if current_comment else comment
                         print(
-                            f"Row {i} breaks Rule 1: Payment failed and email similarity {sim:.3f} >= {thresh} with unmatched email {ue}")
+                            f"Row {i + 1} breaks Rule 1: Payment failed and email similarity {sim:.3f} >= {thresh} with unmatched email {ue}")
                         break
             # Rule 2: Cross-processor fallback with low email similarity
             if m.get('cross_processor_fallback') and m.get('email_similarity_avg', 1.0) < 0.5:
                 sim = m.get('email_similarity_avg', 0.0)
                 m['warning'] = True  # Trigger warning
-                print(f"Row {i} breaks Rule 2: Cross-processor fallback with low email similarity {sim:.3f} < 0.5")
-        fail_ues = {m.pop('_fail_rule1_email') for m in matches if '_fail_rule1_email' in m}
-        if fail_ues:
+                comment = f"Cross-processor fallback with low email similarity {sim:.3f} < 0.5"
+                current_comment = m.get('comment', '')
+                m['comment'] = current_comment + ' . ' + comment if current_comment else comment
+                print(f"Row {i + 1} breaks Rule 2: Cross-processor fallback with low email similarity {sim:.3f} < 0.5")
+        if flagged_failed_emails:
             for i, m in enumerate(matches):
                 if m['warning']:
                     continue
                 pe = m.get('proc_email')
                 emails = pe if isinstance(pe, list) else [pe] if pe else []
                 for e in emails:
-                    if e in fail_ues:
+                    if e in flagged_failed_emails:
                         m['warning'] = True  # Trigger warning
-                        print(f"Row {i} breaks Rule 1 propagation: Matching email {e} from failed payment")
+                        comment = f"Matching email {e} from failed payment"
+                        current_comment = m.get('comment', '')
+                        m['comment'] = current_comment + ' . ' + comment if current_comment else comment
+                        print(f"Row {i + 1} breaks Rule 1 propagation: Matching email {e} from failed payment")
                         break
         if dup_last4s:
             for i, m in enumerate(matches):
@@ -553,14 +566,16 @@ class ReconciliationEngine:
                 crm_code = crm_l4[:-2] if crm_l4.endswith('.0') else crm_l4
                 if crm_code in dup_last4s and not m['warning']:
                     m['warning'] = True  # Trigger warning
-                    print(f"Row {i} breaks Rule 3: CRM last4 {crm_code} in duplicate unmatched-processor last4s")
+                    comment = f"CRM last4 {crm_code} in duplicate unmatched-processor last4s"
+                    current_comment = m.get('comment', '')
+                    m['comment'] = current_comment + ' . ' + comment if current_comment else comment
+                    print(f"Row {i + 1} breaks Rule 3: CRM last4 {crm_code} in duplicate unmatched-processor last4s")
         crm_raws = {str(m.get('crm_last4', '')).strip() for m in matches if m.get('crm_last4') not in (None, '')}
         crm_last4s = set()
         for raw in crm_raws:
             if raw.lower() == 'nan':
                 continue
             crm_last4s.add(raw[:-2] if raw.endswith('.0') else raw)
-        flagged_codes = set()
         for i, m in enumerate(matches):
             if m.get('crm_date') is not None:
                 continue
@@ -575,24 +590,45 @@ class ReconciliationEngine:
             code = raw_str[:-2] if raw_str.endswith('.0') else raw_str
             if code in crm_last4s and not m['warning']:
                 m['warning'] = True  # Trigger warning
-                print(f"Row {i} breaks Rule 4: Unmatched-processor last4 {raw_str} found in CRM last4s")
-                flagged_codes.add(code)
-        if flagged_codes:
+                flagged_unmatched_last4_rows[code].append(i)
+                print(f"Row {i + 1} breaks Rule 4: Unmatched-processor last4 {raw_str} found in CRM last4s")
+        if flagged_unmatched_last4_rows:
             for i, m in enumerate(matches):
                 if m.get('crm_date') is None:
                     continue
                 raw = str(m.get('crm_last4', '')).strip()
                 code = raw[:-2] if raw.endswith('.0') else raw
-                if code in flagged_codes and not m['warning']:
+                if code in flagged_unmatched_last4_rows and not m['warning']:
                     m['warning'] = True  # Trigger warning
-                    print(f"Row {i} breaks Rule 4 propagation: Matching last4 {code}")
+                    flagged_matched_last4_rows[code].append(i)
+                    print(f"Row {i + 1} breaks Rule 4 propagation: Matching last4 {code}")
+        # Add cross-references for Rule 4
+        for code in flagged_unmatched_last4_rows:
+            unmatched_rows = flagged_unmatched_last4_rows[code]
+            matched_rows = flagged_matched_last4_rows.get(code, [])
+            if matched_rows:
+                matched_str = ', '.join([f"row {r + 1}" for r in matched_rows]) if len(
+                    matched_rows) > 1 else f"row {matched_rows[0] + 1}"
+                comment_u = f"Matched the same last4 :{code} in {matched_str}"
+                for u_i in unmatched_rows:
+                    current_comment = matches[u_i].get('comment', '')
+                    matches[u_i]['comment'] = current_comment + ' . ' + comment_u if current_comment else comment_u
+                unmatched_str = ', '.join([f"row {r + 1}" for r in unmatched_rows]) if len(
+                    unmatched_rows) > 1 else f"row {unmatched_rows[0] + 1}"
+                comment_m = f"Matched the same last4 :{code} in {unmatched_str}"
+                for m_i in matched_rows:
+                    current_comment = matches[m_i].get('comment', '')
+                    matches[m_i]['comment'] = current_comment + ' . ' + comment_m if current_comment else comment_m
         for i, m in enumerate(matches):
             if m.get('match_status') == 1:
                 crm_pname = str(m.get('crm_processor_name', '')).lower()
                 proc_pname = str(m.get('proc_processor_name', '')).lower()
                 if crm_pname != proc_pname:
                     m['warning'] = True  # Trigger warning
-                    print(f"Row {i} breaks Rule 5: Processor names differ ({crm_pname} vs {proc_pname})")
+                    comment = f"Processor names differ ({crm_pname} vs {proc_pname})"
+                    current_comment = m.get('comment', '')
+                    m['comment'] = current_comment + ' . ' + comment if current_comment else comment
+                    print(f"Row {i + 1} breaks Rule 5: Processor names differ ({crm_pname} vs {proc_pname})")
 
     def make_cancelled_rows(self, full_crm_df):
         """

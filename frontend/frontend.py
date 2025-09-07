@@ -403,12 +403,14 @@ class ReconciliationWindow(QWidget):
                 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
                 env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
                 subprocess.run([python_executable, "../src/reports_creator.py", selected_date], env=env, check=True)
+                # Trigger output.py after reports_creator
+                subprocess.run([python_executable, "../src/output.py", selected_date], env=env, check=True)
             except subprocess.CalledProcessError as e:
-                print(f"Error executing reports_creator.py: {e}")
-                QMessageBox.critical(self, "Error", "Failed to run reports creator script.")
+                print(f"Error executing script: {e}")
+                QMessageBox.critical(self, "Error", "Failed to run processing script.")
             except FileNotFoundError as e:
                 print(f"File not found error: {e}")
-                QMessageBox.critical(self, "Error", "Reports creator script not found.")
+                QMessageBox.critical(self, "Error", "Processing script not found.")
         else:
             QMessageBox.warning(self, "Error", "No valid rates entered.")
 

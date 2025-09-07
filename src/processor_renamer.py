@@ -94,6 +94,7 @@ PROCESSOR_PATTERNS = {
         "pattern": r"(?i)crm_(\d{4}-\d{2}-\d{2})(?i:\.xlsx|\.xls)",
         "date_format": "%Y-%m-%d",
         "is_renamed": True,
+
         "type_group": None,
         "date_column": None,
         "header_row": None,

@@ -43,7 +43,9 @@ class DropButton(QPushButton):
                     if len(file_paths) == 1:
                         source_path = file_paths[0]
                         file_name = os.path.basename(source_path)
+
                         dest_path = RAW_ATTACHED_FILES / file_name
+
                         shutil.move(str(source_path), str(dest_path))
                         self.window.crm_file = str(dest_path)
                         self.setText(f"📊 {file_name}")
@@ -111,7 +113,6 @@ class DropButton(QPushButton):
                 border-radius: 8px;
             """)
         event.accept()
-
 
 class ReconciliationWindow(QWidget):
     def __init__(self):
@@ -246,6 +247,7 @@ class ReconciliationWindow(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
 
+
         # Header
         header = QLabel('CRM-Processor Reconciliation System')
         header.setAlignment(Qt.AlignCenter)
@@ -366,6 +368,7 @@ class ReconciliationWindow(QWidget):
         else:
             file_paths, _ = file_dialog.getOpenFileNames(self, "Select Processors Files", "",
                                                          "CSV Files (*.csv *.xlsx *.xls)")
+
             if file_paths:
                 self.processor_files = file_paths
                 names = [os.path.basename(p) for p in file_paths]
@@ -376,6 +379,7 @@ class ReconciliationWindow(QWidget):
         files_ready = bool(self.crm_file and self.processor_files)
         rates_entered = any(float(input_field.text()) if input_field.text() else 0 > 0
                             for input_field, _ in self.rate_inputs.values())
+
         self.process_btn.setEnabled(files_ready and rates_entered)
 
     def save_rates_and_process(self):

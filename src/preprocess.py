@@ -760,28 +760,41 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
 def handle_withdrawal_cancellations(df):
     if "Name" not in df.columns:
         return df
-
-    mask_cancel = df["Name"].str.lower().str.replace(' ', '') == "withdrawalcancelled"
+    # Normalize columns for matching
+    for col in ['tp', 'CC Last 4 Digits', 'Email (Account) (Account)', 'Amount', 'Name']:
+        if col in df.columns:
+            df[col] = df[col].fillna('').astype(str).str.strip()
+    df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+    mask_cancel = df["Name"].str.lower().str.replace(' ', '', regex=False) == "withdrawalcancelled"
     mask_withdrawal = df["Name"].str.lower() == "withdrawal"
     cancels = df[mask_cancel].copy()
     withdrawals = df[mask_withdrawal].copy()
-
     to_drop = set()
-
     for idx_cancel, row_cancel in cancels.iterrows():
-        # Match withdrawals by 'tp'
-        matched = withdrawals[withdrawals["tp"] == row_cancel["tp"]]
+        tp_cancel = str(row_cancel["tp"]).strip()
+        last4_cancel = clean_last4(row_cancel["CC Last 4 Digits"])
+        email_cancel = str(row_cancel["Email (Account) (Account)"]).lower().str.strip()
+        amt_cancel = pd.to_numeric(row_cancel["Amount"], errors='coerce')
+        # Match on TP, last4, email
+        matched = withdrawals[
+            (withdrawals["tp"].astype(str).str.strip() == tp_cancel) &
+            (withdrawals["CC Last 4 Digits"].apply(clean_last4) == last4_cancel) &
+            (withdrawals["Email (Account) (Account)"].astype(str).str.lower().str.strip() == email_cancel)
+        ]
         if matched.empty:
+            # Unmatched cancellation: make amount positive and keep as 'withdrawal cancelled'
+            df.at[idx_cancel, "Amount"] = abs(amt_cancel)
+            df.at[idx_cancel, "Name"] = "Withdrawal Cancelled"  # Ensure crm_type stays
             continue
-        # Find a row where the amounts cancel out
+        # For matched, check if absolute amounts match
         for idx_withdrawal, row_withdrawal in matched.iterrows():
-            amt_cancel = pd.to_numeric(row_cancel["Amount"], errors='coerce')
             amt_withdrawal = pd.to_numeric(row_withdrawal["Amount"], errors='coerce')
-            # If they cancel each other out
-            if abs(amt_cancel + amt_withdrawal) < 1e-6:
+            if abs(abs(amt_cancel) - abs(amt_withdrawal)) < 1e-6:
                 to_drop.update([idx_cancel, idx_withdrawal])
                 break
-
+            else:
+                logging.info(f"Matched on keys but amounts don't match magnitude: cancel={abs(amt_cancel)}, withdrawal={abs(amt_withdrawal)}")
+    # Drop the matched pairs
     df = df.drop(index=list(to_drop))
     return df
 
@@ -1091,9 +1104,15 @@ def extract_date_from_filename(filepath: str) -> str:
 def get_previous_business_day(current_date_str):
     current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
     prev_date = current_date - timedelta(days=1)
-    holidays = set(load_uk_holidays())  # Fetch/load dynamic holidays
+    holidays = set(load_uk_holidays())
+    skipped_dates = []  # Track skipped for logging
     while prev_date.weekday() >= 5 or prev_date.strftime('%Y-%m-%d') in holidays:
+        skipped_dates.append(prev_date.strftime('%Y-%m-%d'))  # Log skipped date
         prev_date -= timedelta(days=1)
+    if skipped_dates:
+        logging.info(f"Skipped dates for {current_date_str}: {skipped_dates} (weekends/holidays)")
+    else:
+        logging.info(f"No skips for {current_date_str}; using direct previous: {prev_date.strftime('%Y-%m-%d')}")
     return prev_date.strftime('%Y-%m-%d')
 
 # ----------------------------
@@ -1245,7 +1264,12 @@ def combine_processed_files(
             tgt_cur = choose_target_currency(currencies)
             amounts = []
             for _, row in group.iterrows():
-                amt = -abs(float(row['Amount']))
+                amt = float(row['Amount'])
+                # Don't negate if it's a cancellation (keep positive if set in preprocessing)
+                if row.get('Name', '').lower() == 'withdrawal cancelled':
+                    amt = abs(amt)  # Ensure positive for cancellations
+                else:
+                    amt = -abs(amt)  # Negate for regular withdrawals
                 src_cur = row['Currency']
                 if src_cur == tgt_cur:
                     converted = amt

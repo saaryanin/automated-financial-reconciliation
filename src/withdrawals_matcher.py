@@ -5,6 +5,8 @@ import pandas as pd
 import logging, threading, time
 from collections import Counter
 from src.utils import create_cancelled_row,normalize_string,clean_last4
+from difflib import SequenceMatcher
+
 
 class ProcessorConfig:
     def __init__(self,
@@ -30,7 +32,7 @@ class ProcessorConfig:
 # Processor-specific configurations
 PROCESSOR_CONFIGS = {
     'safecharge': ProcessorConfig(
-        email_threshold=0.425,
+        email_threshold=0.45,
         require_last4=True,
         require_email=True,
         tolerance=0.1,
@@ -601,7 +603,9 @@ class ReconciliationEngine:
         mask = full_crm_df['crm_type'].str.lower() == 'withdrawal cancelled'
         for _, row in full_crm_df.loc[mask].iterrows():
             out = create_cancelled_row(row)
-            # carry through your TP column
+            # Carry through regulation column
+            out['regulation'] = row.get('regulation', '')  # Added
+            # Carry through your TP column
             out['crm_tp'] = row.get('crm_tp')
             out['warning'] = False  # Explicitly set for cancelled rows
             cancelled.append(out)
@@ -695,7 +699,7 @@ class ReconciliationEngine:
                 base = {
                     'crm_date': None, 'crm_email': None, 'crm_firstname': None, 'crm_lastname': None,
                     'crm_tp': None, 'crm_last4': None, 'crm_currency': None, 'crm_amount': None,
-                    'crm_processor_name': None, 'proc_date': [prow.get('proc_date')],
+                    'crm_processor_name': None, 'regulation': '','proc_date': [prow.get('proc_date')],
                     'proc_email': [prow.get('proc_email')], 'proc_last4': [prow.get('proc_last4')],
                     'proc_currency': [prow.get('proc_currency')], 'proc_amount': [prow.get('proc_amount')],
                     'proc_processor_name': prow.get('proc_processor_name'),
@@ -903,6 +907,7 @@ class ReconciliationEngine:
                 'crm_currency': crm_cur,
                 'crm_amount': crm_amt,
                 'crm_processor_name': crm_row.get('crm_processor_name'),
+                'regulation': crm_row.get('regulation', ''),
                 'proc_date': proc_date_ts,
                 'proc_email': best['row_data'].get('proc_email'),
                 'proc_firstname': best['row_data'].get('proc_firstname', ''),
@@ -1045,6 +1050,7 @@ class ReconciliationEngine:
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
             'crm_processor_name': crm_row.get('crm_processor_name', 'zotapay_paymentasia'),
+            'regulation': crm_row.get('regulation', ''),
             'proc_date': best_candidate['proc_date'],
             'proc_email': best_candidate['proc_email'],
             'proc_firstname': best_candidate['proc_firstname'],
@@ -1172,6 +1178,7 @@ class ReconciliationEngine:
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
             'crm_processor_name': 'bitpay',
+            'regulation': crm_row.get('regulation', ''),
             'proc_date': best['row_data'].get('proc_date'),
             'proc_email': best['row_data'].get('proc_email'),
             'proc_firstname': best['row_data'].get('proc_firstname', ''),
@@ -1302,6 +1309,7 @@ class ReconciliationEngine:
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
             'crm_processor_name': 'shift4',
+            'regulation': crm_row.get('regulation', ''),
             'proc_date': best['row'].get('proc_date'),
             'proc_email': best['row'].get('proc_email'),
             'proc_firstname': best['row'].get('proc_firstname', ''),
@@ -1430,6 +1438,7 @@ class ReconciliationEngine:
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
             'crm_processor_name': crm_row.get('crm_processor_name'),
+            'regulation': crm_row.get('regulation', ''),
             'proc_date': best['row'].get('proc_date'),
             'proc_email': best['row'].get('proc_email'),
             'proc_firstname': best['row'].get('proc_firstname', ''),
@@ -1489,6 +1498,7 @@ class ReconciliationEngine:
                     'crm_currency': crm_cur,
                     'crm_amount': crm_amt,
                     'crm_processor_name': crm_row.get('crm_processor_name'),
+                    'regulation': crm_row.get('regulation', ''),
                     'proc_date': row.get('proc_date'),
                     'proc_email': proc_email,
                     'proc_firstname': row.get('proc_firstname', ''),
@@ -1587,6 +1597,7 @@ class ReconciliationEngine:
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
             'crm_processor_name': crm_row.get('crm_processor_name'),
+            'regulation': crm_row.get('regulation', ''),
             'proc_date': row.get('proc_date'),
             'proc_email': row.get('proc_email'),
             'proc_firstname': row.get('proc_firstname', ''),
@@ -1611,8 +1622,6 @@ class ReconciliationEngine:
         }, {}
 
     def _match_trustpayments_row(self, crm_row, proc_dict, last4_map, used, proc_config):
-        from difflib import SequenceMatcher
-
         def name_similarity(name1, name2):
             return SequenceMatcher(None, name1.lower(), name2.lower()).ratio() > 0.8
 
@@ -1720,6 +1729,7 @@ class ReconciliationEngine:
                     'crm_currency': crm_cur,
                     'crm_amount': crm_amt,
                     'crm_processor_name': "trustpayments",
+                    'regulation': crm_row.get('regulation', ''),
                     'proc_date': proc_row.get('proc_date'),
                     'proc_email': proc_row.get('proc_email'),
                     'proc_firstname': proc_row.get('proc_firstname', ''),
@@ -1754,6 +1764,7 @@ class ReconciliationEngine:
             'crm_currency': crm_row.get('crm_currency'),
             'crm_amount': crm_row.get('crm_amount'),
             'crm_processor_name': crm_row.get('crm_processor_name'),
+            'regulation': crm_row.get('regulation', ''),
             'proc_date': [],
             'proc_email': [],
             'proc_last4': [],

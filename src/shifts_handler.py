@@ -8,7 +8,7 @@ from dateutil.relativedelta import relativedelta
 import numpy as np  # Added for np.nan
 
 from config import LISTS_DIR, CRM_DIR
-from src.preprocess_test import extract_crm_transaction_id  # Import the global function
+from src.preprocess import extract_crm_transaction_id  # Import the global function
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

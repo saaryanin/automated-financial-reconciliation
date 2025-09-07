@@ -35,7 +35,7 @@ class ProcessorConfig:
 # Processor-specific configurations
 PROCESSOR_CONFIGS = {
     'safecharge': ProcessorConfig(
-        email_threshold=0.45,
+        email_threshold=0.6,
         require_last4=True,
         require_email=True,
         tolerance=0.1,
@@ -384,6 +384,7 @@ class ReconciliationEngine:
             'proc_email': proc_email,
             'proc_firstname': proc_row.get('proc_firstname', ''),
             'proc_lastname': proc_row.get('proc_lastname', ''),
+            'proc_tp': proc_row.get('proc_tp', ''),
             'crm_tp': crm_row.get('crm_tp', ''),
             'proc_last4': proc_last4,
             'proc_currency': proc_currency,
@@ -522,10 +523,13 @@ class ReconciliationEngine:
         thresh_email = 0.65
         for proc_i in unmatched_proc_indices:
             proc_email = matches[proc_i].get('proc_email', '')
-            if isinstance(proc_email, str):
-                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
-            if isinstance(proc_email, list):
-                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+            if pd.isna(proc_email):
+                proc_email = ''
+            elif isinstance(proc_email, list):
+                proc_email = proc_email[0] if proc_email else ''
+            else:
+                proc_email = str(proc_email)
+            proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
             if not proc_email:
                 continue
             for crm_i in unmatched_crm_indices:
@@ -542,10 +546,13 @@ class ReconciliationEngine:
                 current_proc = matches[proc_i].get('comment', '')
                 matches[proc_i]['comment'] = current_proc + ' . ' + comments_proc if current_proc else comments_proc
                 proc_email = matches[proc_i].get('proc_email', '')
-                if isinstance(proc_email, str):
-                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+                if pd.isna(proc_email):
+                    proc_email = ''
                 elif isinstance(proc_email, list):
-                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+                    proc_email = proc_email[0] if proc_email else ''
+                else:
+                    proc_email = str(proc_email)
+                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
                 for crm_tuple in crm_list:
                     crm_i = crm_tuple[0]
                     matches[crm_i]['warning'] = True
@@ -623,10 +630,13 @@ class ReconciliationEngine:
         flagged_shift4_proc_to_crm = defaultdict(list)
         for proc_i in unmatched_proc_shift4_indices:
             proc_email = matches[proc_i].get('proc_email', '')
-            if isinstance(proc_email, str):
-                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
-            if isinstance(proc_email, list):
-                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+            if pd.isna(proc_email):
+                proc_email = ''
+            elif isinstance(proc_email, list):
+                proc_email = proc_email[0] if proc_email else ''
+            else:
+                proc_email = str(proc_email)
+            proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
             if not proc_email or not re.match(r'^[a-z]{2}\*+', proc_email, re.IGNORECASE):
                 continue
             prefix = proc_email[:2].lower()
@@ -642,10 +652,13 @@ class ReconciliationEngine:
                 current_proc = matches[proc_i].get('comment', '')
                 matches[proc_i]['comment'] = current_proc + ' . ' + comments_proc if current_proc else comments_proc
                 proc_email = matches[proc_i].get('proc_email', '')
-                if isinstance(proc_email, str):
-                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
+                if pd.isna(proc_email):
+                    proc_email = ''
                 elif isinstance(proc_email, list):
-                    proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email[0]).strip() if proc_email else ''
+                    proc_email = proc_email[0] if proc_email else ''
+                else:
+                    proc_email = str(proc_email)
+                proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
                 for crm_i in crm_list:
                     matches[crm_i]['warning'] = True
                     comment_crm = f"Matched similar email :{proc_email} in row {proc_i + 1}"
@@ -967,7 +980,6 @@ class ReconciliationEngine:
                 'crm_currency': crm_cur,
                 'crm_amount': crm_amt,
                 'crm_processor_name': crm_row.get('crm_processor_name'),
-                'regulation': crm_row.get('regulation', ''),
                 'proc_date': proc_date_ts,
                 'proc_email': best['row_data'].get('proc_email'),
                 'proc_firstname': best['row_data'].get('proc_firstname', ''),
@@ -1101,6 +1113,8 @@ class ReconciliationEngine:
             else:
                 comment = "Amount mismatch"
 
+        name_fallback_used = best_candidate['name_fallback']
+
         match = {
             'crm_date': crm_row.get('crm_date'),
             'crm_email': crm_email,
@@ -1123,7 +1137,7 @@ class ReconciliationEngine:
             'exchange_rate': best_candidate['rate'],
             'email_similarity_avg': round(best_candidate['email_similarity'], 4),
             'last4_match': best_candidate['last4_match'],
-            'name_fallback_used': best_candidate['name_fallback'],
+            'name_fallback_used': name_fallback_used,
             'exact_match_used': best_candidate['exact_match'],
             'converted': best_candidate['proc_currency'] != crm_cur,
             'proc_combo_len': 1,
@@ -1204,17 +1218,17 @@ class ReconciliationEngine:
             })
 
         if not candidates:
-            return None, {'failure_reason': 'No BitPay candidates found'}
+            return None, {'failure_reason': 'No valid BitPay candidate'}
 
-        # Sort candidates: prioritize exact match, last4 match, higher email similarity, then name fallback
+        # Sort candidates: prioritize exact match, higher email similarity, then name fallback
         candidates.sort(key=lambda c: (
             -int(c['exact_match']),
-            -int(c['last4_match']),
             -c['email_score'],
             -int(c['name_fallback'])
         ))
 
         best = candidates[0]
+        received = best['proc_amount_crm_currency']
         amount_diff = best['amount_difference']
 
         if best['amount_match']:
@@ -1237,7 +1251,7 @@ class ReconciliationEngine:
             'crm_last4': crm_last4,
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
-            'crm_processor_name': 'bitpay',
+            'crm_processor_name': crm_row.get('crm_processor_name'),
             'regulation': crm_row.get('regulation', ''),
             'proc_date': best['row_data'].get('proc_date'),
             'proc_email': best['row_data'].get('proc_email'),
@@ -1247,8 +1261,8 @@ class ReconciliationEngine:
             'proc_currency': best['row_data'].get('proc_currency'),
             'proc_amount': best['row_data'].get('proc_amount'),
             'proc_amount_crm_currency': best['proc_amount_crm_currency'],
-            'proc_processor_name': 'bitpay',
-            'exchange_rate': best['rate'],
+            'proc_processor_name': best['row_data'].get('proc_processor_name'),
+            'exchange_rate': best['row_data'].get('exchange_rate', 1.0),
             'email_similarity_avg': round(best['email_score'], 4),
             'last4_match': best['last4_match'],
             'name_fallback_used': best['name_fallback'],
@@ -1368,7 +1382,7 @@ class ReconciliationEngine:
             'crm_last4': crm_last4_raw,
             'crm_currency': crm_cur,
             'crm_amount': crm_amt,
-            'crm_processor_name': 'shift4',
+            'crm_processor_name': crm_row.get('crm_processor_name'),
             'regulation': crm_row.get('regulation', ''),
             'proc_date': best['row'].get('proc_date'),
             'proc_email': best['row'].get('proc_email'),
@@ -1379,7 +1393,7 @@ class ReconciliationEngine:
             'proc_amount': best['row'].get('proc_amount'),
             'proc_amount_crm_currency': best['proc_amount_crm_currency'],
             'proc_processor_name': best['row'].get('proc_processor_name'),
-            'exchange_rate': best['rate'],
+            'exchange_rate': best['row'].get('exchange_rate', 1.0),
             'email_similarity_avg': best['email_score'],
             'last4_match': True,
             'name_fallback_used': False,

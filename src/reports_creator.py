@@ -239,7 +239,7 @@ else:
         'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
         'crm_processor_name',
         'regulation',
-        'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_last_name', 'proc_last4', 'proc_currency',
+        'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency',
         'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
         'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
         'payment_status', 'warning', 'comment'

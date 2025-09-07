@@ -617,10 +617,10 @@ class ReconciliationEngine:
                 proc_pname = str(m.get('proc_processor_name', '')).lower()
                 if crm_pname != proc_pname:
                     m['warning'] = True  # Trigger warning
-                    comment = f"Processor names differ ({crm_pname} vs {proc_pname})"
+                    comment = f"Processor names differ ({crm_pname} matched {proc_pname})"
                     current_comment = m.get('comment', '')
                     m['comment'] = current_comment + ' . ' + comment if current_comment else comment
-                    print(f"Row {i + 1} breaks Rule 3: Processor names differ ({crm_pname} vs {proc_pname})")
+                    print(f"Row {i + 1} breaks Rule 3: Processor names differ ({crm_pname} matched {proc_pname})")
         # Rule 4: Partial email matching for shift4
         unmatched_crm_indices = [i for i, m in enumerate(matches) if
                                  m['match_status'] == 0 and m.get('crm_date') is not None]

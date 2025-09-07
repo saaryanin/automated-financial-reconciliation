@@ -824,6 +824,20 @@ def extract_crm_transaction_id(comment: str, processor: str):
     match = re.search(pattern, text)
     return next((g for g in match.groups() if g), None) if match else None
 
+def clean_crm_amount(amt):
+    if pd.isna(amt):
+        return 0.0
+    if isinstance(amt, (int, float)):
+        return amt
+    amt_str = str(amt).strip()
+    amt_str = re.sub(r'[^\d.-]', '', amt_str)
+    if amt_str.startswith('(') and amt_str.endswith(')'):
+        amt_str = '-' + amt_str[1:-1]
+    try:
+        return float(amt_str)
+    except ValueError:
+        return 0.0
+
 def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
     # Define normalized_processor at the start
     normalized_processor = processor_name.lower()
@@ -980,6 +994,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         if transaction_type == "withdrawal":
             name_mask = df["Name"].str.lower() == "withdrawal"
             df = df[name_mask & psp_mask].reset_index(drop=True)
+
         else:
             df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
     if "Currency" in df.columns:

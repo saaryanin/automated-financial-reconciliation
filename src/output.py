@@ -506,38 +506,41 @@ def generate_unmatched_crm_withdrawals(date_str):
     print(f"Unmatched CRM withdrawals saved to {output_path}")
 
 
-if __name__ == "__main__":
-    DATE = sys.argv[1] if len(
-        sys.argv) > 1 else "2025-09-02"  # Default date for testing; use command-line arg in production
-    matched_sums = handle_shifts(DATE)
+def main(date_str):
+    matched_sums = handle_shifts(date_str)
     if matched_sums:
-        output_dir = OUTPUT_DIR / DATE
+        output_dir = OUTPUT_DIR / date_str
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / "total_shifts_by_currency.csv"
         df = pd.DataFrame([matched_sums])
         if df.empty:
-            print(f"No shifts data for {DATE}, skipping file creation.")
+            print(f"No shifts data for {date_str}, skipping file creation.")
         else:
             df.to_csv(output_path, index=False)
             print(f"Total shifts by currency saved to {output_path}")
 
     # Generate unmatched_crm_deposits
-    generate_unmatched_crm_deposits(DATE)
+    generate_unmatched_crm_deposits(date_str)
 
     # Generate unapproved_crm_deposits
-    generate_unapproved_crm_deposits(DATE)
+    generate_unapproved_crm_deposits(date_str)
 
     # Generate unmatched_proc_deposits
-    generate_unmatched_proc_deposits(DATE)
+    generate_unmatched_proc_deposits(date_str)
 
     # Generate warning_withdrawals
-    generate_warning_withdrawals(DATE)
+    generate_warning_withdrawals(date_str)
 
     # Generate unmatched_proc_withdrawals
-    generate_unmatched_proc_withdrawals(DATE)
+    generate_unmatched_proc_withdrawals(date_str)
 
     # Remove compensated entries
-    remove_compensated_entries(DATE)
+    remove_compensated_entries(date_str)
 
     # Generate unmatched_crm_withdrawals
-    generate_unmatched_crm_withdrawals(DATE)
+    generate_unmatched_crm_withdrawals(date_str)
+
+
+if __name__ == "__main__":
+    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02"  # Default date for testing; use command-line arg in production
+    main(DATE)

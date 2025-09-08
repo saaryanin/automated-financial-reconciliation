@@ -5,6 +5,7 @@ import os
 import shutil
 from src.config import OUTPUT_DIR  # Import OUTPUT_DIR from config
 import sys
+from src import output  # Direct import for bundled call
 
 class SecondWindow(QWidget):
     def __init__(self, date_str):
@@ -79,38 +80,14 @@ class SecondWindow(QWidget):
 
     def run_output_script(self):
         print("Debug: run_output_script started")
-        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src', 'output.py'))
-        if not os.path.exists(script_path):
-            print(f"Error: output.py not found at {script_path}")
-            QMessageBox.critical(self, "Error", f"output.py not found at {script_path}")
-            return
-
-        python_executable = sys.executable  # Use current Python (better for venv)
-        print(f"Debug: Using Python: {python_executable}, Script: {script_path}, Date: {self.date_str}")
-
-        self.process = QProcess(self)
-        self.process.readyReadStandardOutput.connect(self.handle_stdout)
-        self.process.readyReadStandardError.connect(self.handle_stderr)
-        self.process.finished.connect(self.process_finished)
-        self.process.start(python_executable, [script_path, self.date_str])
-        print("Debug: QProcess started")
-
-    def handle_stdout(self):
-        data = self.process.readAllStandardOutput()
-        stdout = bytes(data).decode("utf8")
-        self.console.append(stdout)
-        print("Debug: STDOUT received")
-
-    def handle_stderr(self):
-        data = self.process.readAllStandardError()
-        stderr = bytes(data).decode("utf8")
-        self.console.append(stderr)
-        print("Debug: STDERR received")
-
-    def process_finished(self):
-        print("Debug: process_finished called")
-        self.console.append("output.py completed.")
-        self.export_btn.setEnabled(True)
+        try:
+            output.main(self.date_str)  # Direct call to output.main
+            self.console.append("output completed.")
+            self.export_btn.setEnabled(True)
+        except Exception as e:
+            print(f"Error executing output: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to run output: {e}")
+        print("Debug: run_output_script finished")
 
     def export_files(self):
         print("Debug: export_files started")

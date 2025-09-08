@@ -10,10 +10,10 @@ from second_window import SecondWindow  # Import the new second window class
 import pandas as pd
 import re
 from pathlib import Path
-import subprocess
 # Use direct import from src.config
 from src.config import RATES_DIR, CRM_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
 from src.processor_renamer import run_renamer
+from src import reports_creator  # Direct import for bundled call
 
 
 class DropButton(QPushButton):
@@ -45,15 +45,15 @@ class DropButton(QPushButton):
                     if len(file_paths) == 1:
                         source_path = file_paths[0]
                         file_name = os.path.basename(source_path)
-                        if file_name in self.window.attached_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already attached.")
+                        if file_name in self.window.moved_files:
+                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
                             self.setStyleSheet("")
                             return
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.copy(str(source_path), str(dest_path))
                         self.window.crm_file = str(dest_path)
                         self.setText(f"📊 {file_name}")
-                        self.window.attached_files.add(file_name)
+                        self.window.moved_files.add(file_name)
                         success = True
                     else:
                         self.window.show_warning("Invalid Drop", "Please drop only one file for CRM.")
@@ -74,12 +74,12 @@ class DropButton(QPushButton):
                             self.window.show_warning("Invalid Drop", "CRM files should be dropped in the CRM area.")
                             self.setStyleSheet("")
                             continue  # Reject drop for CRM files
-                        if file_name in self.window.attached_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already attached.")
+                        if file_name in self.window.moved_files:
+                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
                             continue
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.copy(str(source_path), str(dest_path))
-                        self.window.attached_files.add(file_name)
+                        self.window.moved_files.add(file_name)
                         new_files.append(str(dest_path))
                     self.window.processor_files += new_files
                     if new_files:
@@ -127,7 +127,7 @@ class ReconciliationWindow(QWidget):
         self.processor_files = []
         self.date_button = None  # Add this for the custom calendar button
         self.initUI()
-        self.attached_files = set()  # Track attached file names to avoid duplicates
+        self.moved_files = set()  # Track moved file names to avoid duplicates
 
     def initUI(self):
         print(os.path.abspath("frontend/calendar_icon.png"))  # Adjusted debug print to verify full path
@@ -208,7 +208,7 @@ class ReconciliationWindow(QWidget):
                 border-left: 1px solid #667eea; /* Blue border on hover */
             }
             QDateEdit::down-arrow {
-                image: url(frontend/calendar_icon.png); /* Adjusted relative path from working dir (root) */
+                image: url(calendar_icon.png); /* Adjusted to root copy for bundle */
                 width: 16px;
                 height: 16px;
             }
@@ -417,14 +417,14 @@ QMessageBox QPushButton:hover {
             if file_path:
                 # To make consistent with drop, copy the file
                 file_name = os.path.basename(file_path)
-                if file_name in self.attached_files:
+                if file_name in self.moved_files:
                     self.show_warning("Duplicate", f"{file_name} already selected.")
                     return
                 dest_path = RAW_ATTACHED_FILES / file_name
                 shutil.copy(file_path, str(dest_path))
                 self.crm_file = str(dest_path)
                 self.crm_file_btn.setText(f"📊 {file_name}")
-                self.attached_files.add(file_name)
+                self.moved_files.add(file_name)
                 self.crm_file_btn.setStyleSheet("""
                     border: 4px dashed #003366;
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
@@ -442,12 +442,12 @@ QMessageBox QPushButton:hover {
                     if file_name.startswith("crm_"):
                         self.show_warning("Invalid File", "CRM files should be selected in CRM area.")
                         continue
-                    if file_name in self.attached_files:
+                    if file_name in self.moved_files:
                         self.show_warning("Duplicate", f"{file_name} already selected.")
                         continue
                     dest_path = RAW_ATTACHED_FILES / file_name
                     shutil.copy(source_path, str(dest_path))
-                    self.attached_files.add(file_name)
+                    self.moved_files.add(file_name)
                     new_files.append(str(dest_path))
                 self.processor_files += new_files
                 if new_files:
@@ -469,6 +469,8 @@ QMessageBox QPushButton:hover {
 
         self.process_btn.setEnabled(files_ready and rates_entered)
 
+    # ... (keep existing code)
+
     def save_rates_and_process(self):
         selected_date = self.date_edit.date().toString("yyyy-MM-dd")
         rates_data = []
@@ -487,24 +489,20 @@ QMessageBox QPushButton:hover {
             df.to_csv(file_path, index=False)
             self.show_info("Success", f"Rates saved to {file_path}")
 
-            # Trigger reports_creator.py
+            # Rename/move files with selected date
+            run_renamer(
+                forced_date=selected_date)  # This moves from RAW_ATTACHED_FILES to CRM_DIR/PROCESSOR_DIR with date in name
+
+            # Trigger reports_creator
             try:
-                python_executable = sys.executable  # Use the current Python (better for venv)
-                env = os.environ.copy()
-                src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))  # frontend/.. is root
-                env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
-                reports_script = os.path.join(src_path, "reports_creator.py")  # Absolute path
-                subprocess.run([python_executable, reports_script, selected_date], env=env, check=True)
+                reports_creator.main(selected_date)
                 self.show_info("Success", "reports_creator.py completed.")
-
-                QTimer.singleShot(1000, self.open_second_window)  # 1-second delay
-
-            except subprocess.CalledProcessError as e:
-                print(f"Error executing script: {e}")
-                self.show_error("Error", "Failed to run processing script.")
-            except FileNotFoundError as e:
-                print(f"File not found error: {e}")
-                self.show_error("Error", "Processing script not found.")
+                self.hide()
+                self.open_second_window()
+            except Exception as e:
+                print(f"Error executing reports_creator: {e}")
+                self.show_error("Error",
+                                "Failed to run reports_creator. Check if processor files exist for the selected date.")
         else:
             self.show_warning("Error", "No valid rates entered.")
 
@@ -548,7 +546,7 @@ QMessageBox QPushButton:hover {
             if file.is_file() and file.name != ".gitkeep":
                 file.unlink()
 
-        self.attached_files.clear()
+        self.moved_files.clear()
 
         self.show_info("Reset", "All fields and attachments have been reset.")
 

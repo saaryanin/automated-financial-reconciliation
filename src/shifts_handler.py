@@ -7,7 +7,7 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 import numpy as np  # Added for np.nan
 
-from config import LISTS_DIR, CRM_DIR
+from src.config import LISTS_DIR, CRM_DIR
 from src.preprocess import extract_crm_transaction_id  # Import the global function
 
 # Configure logging
@@ -50,7 +50,16 @@ def calculate_matched_sum(shifted_df):
     if 'crm_date' not in shifted_df.columns or 'match_status' not in shifted_df.columns or 'crm_currency' not in shifted_df.columns or 'crm_amount' not in shifted_df.columns:
         logging.warning("Required columns (crm_date, match_status, crm_currency, crm_amount) not found")
         return {}
-    matched_shifted = shifted_df[(shifted_df['match_status'] == 1) & (shifted_df['crm_date'] > get_cutoff_time(shifted_df['crm_date'].min().strftime('%Y-%m-%d')))]
+    if shifted_df.empty:
+        logging.info("Shifted DF is empty, returning empty dict")
+        return {}
+    min_date = shifted_df['crm_date'].min()
+    if pd.isna(min_date):
+        logging.warning("Min crm_date is NaT, skipping calculation")
+        return {}
+    min_date_str = min_date.strftime('%Y-%m-%d')
+    cutoff = get_cutoff_time(min_date_str)
+    matched_shifted = shifted_df[(shifted_df['match_status'] == 1) & (shifted_df['crm_date'] > cutoff)]
     if matched_shifted.empty:
         logging.info("No matched shifted deposits found")
         return {}

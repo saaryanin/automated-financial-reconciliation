@@ -93,7 +93,7 @@ PROCESSOR_PATTERNS = {
         "header_row": 0
     },
     "crm": {
-        "pattern": r"(?i)crm_(\d{4}-\d{2}-\d{2})(?i:\.xlsx|\.xls)",
+        "pattern": r"(?i)crm_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
         "date_format": "%Y-%m-%d",
         "is_renamed": True,
 
@@ -217,6 +217,20 @@ PROCESSOR_PATTERNS.update({
         "dest_dir": PROCESSOR_DIR
     },
 })
+
+def detect_processor_from_name(filename):
+    """Detect processor name from filename based on keywords."""
+    filename_lower = filename.lower()
+    if filename_lower.startswith("crm_"):
+        return "crm"
+    processors = [
+        "safecharge", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
+        "trustpayments", "paysafe", "skrill", "neteller", "shift4"
+    ]
+    for processor in processors:
+        if processor in filename_lower:
+            return processor
+    return "unknown"
 
 def extract_date_from_file(file_path: Path, date_column: str = None, header_row: int = 0, processor=None, config=None):
     """
@@ -354,11 +368,42 @@ def run_renamer(incoming_dir: Path = INCOMING_DIR, forced_date: str = None):
     for file in incoming_dir.glob("*.*"):
         if file.is_file() and file.suffix.lower() in ['.csv', '.xlsx', '.xls']:
             logging.info(f"Checking file: {file} (suffix: {file.suffix}, lower: {file.suffix.lower()})")
+            renamed = False
             try:
                 if rename_raw_file(file, forced_date=forced_date):
+                    renamed = True
                     renamed_count += 1
             except Exception as e:
                 logging.error(f"Unexpected error processing {file}: {e}")
+            if not renamed and forced_date:
+                filename_lower = file.name.lower()
+                processor = detect_processor_from_name(filename_lower)
+                if processor == "crm":
+                    # Handle CRM fallback
+                    match = re.match(r"(?i)crm_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)", filename_lower)
+                    if match and match.group(1) != forced_date:
+                        new_name = f"crm_{forced_date}{file.suffix.lower()}"
+                    else:
+                        new_name = f"crm_{forced_date}{file.suffix.lower()}"
+                    dest_path = CRM_DIR / new_name
+                    if not dest_path.exists():
+                        move(str(file), str(dest_path))
+                        logging.info(f"Fallback renamed CRM {file.name} to {dest_path}")
+                        renamed_count += 1
+                elif processor != "unknown":
+                    # Handle processor fallback
+                    type_suffix = ""
+                    if processor == "paymentasia":
+                        if "payout" in filename_lower or "withdrawal" in filename_lower or "withdraw" in filename_lower:
+                            type_suffix = "_withdrawals"
+                        else:
+                            type_suffix = "_deposits"
+                    new_name = f"{processor}{type_suffix}_{forced_date}{file.suffix.lower()}"
+                    dest_path = PROCESSOR_DIR / new_name
+                    if not dest_path.exists():
+                        move(str(file), str(dest_path))
+                        logging.info(f"Fallback renamed {file.name} to {dest_path}")
+                        renamed_count += 1
     logging.info(f"{('Renamed' if any(p.get('date_column') for p in PROCESSOR_PATTERNS.values()) else 'Moved')} {renamed_count} files. Unrecognized files remain in {incoming_dir}.")
 if __name__ == "__main__":
     run_renamer()

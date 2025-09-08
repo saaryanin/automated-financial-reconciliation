@@ -20,3 +20,9 @@ output/**
 # Ignore PyInstaller build artifacts
 build/
 dist/
+
+# Ignore all files inside temp/, but not the folders themselves or .gitkeep files
+temp/**
+!temp/
+!temp/**/
+!temp/**/.gitkeep

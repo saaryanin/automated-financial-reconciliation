@@ -5,8 +5,8 @@ a = Analysis(
     pathex=['.', 'src', 'frontend'],
     binaries=[],
     datas=[
-        ('data', 'data'),  # If you have initial data files; remove if empty
-        ('frontend/calendar_icon.png', '.'),
+        ('data', 'data'),
+        ('frontend/calendar_icon.png', '.'),  # Copies to bundle root
     ],
     hiddenimports=[
         'PyQt5.sip',
@@ -19,7 +19,7 @@ a = Analysis(
         'src.preprocess',
         'src.utils',
         'src.shifts_handler',
-        'src.output',  # For second_window
+        'src.output',
     ],
     hookspath=[],
     hooksconfig={},
@@ -43,7 +43,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    #console=True,  # Change to True for debugging (shows console with prints)
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

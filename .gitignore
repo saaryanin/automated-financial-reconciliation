@@ -26,4 +26,3 @@ temp/**
 !temp/
 !temp/**/
 !temp/**/.gitkeep
-!temp/**/**/.gitkeep

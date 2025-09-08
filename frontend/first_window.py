@@ -45,7 +45,7 @@ class DropButton(QPushButton):
                         source_path = file_paths[0]
                         file_name = os.path.basename(source_path)
                         if file_name in self.window.moved_files:
-                            QMessageBox.warning(self, "Duplicate Drop", f"{file_name} already moved.")
+                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
                             return
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.move(str(source_path), str(dest_path))
@@ -53,15 +53,16 @@ class DropButton(QPushButton):
                         self.setText(f"📊 {file_name}")
                         self.window.moved_files.add(file_name)
                     else:
-                        QMessageBox.warning(self, "Invalid Drop", "Please drop only one file for CRM.")
+                        self.window.show_warning("Invalid Drop", "Please drop only one file for CRM.")
                 else:  # Processors button
                     for source_path in file_paths:
                         file_name = os.path.basename(source_path)
                         if file_name.startswith("crm_"):  # Detect CRM file
-                            QMessageBox.warning(self, "Invalid Drop", "CRM files should be dropped in the CRM area.")
+                            self.window.show_warning("Invalid Drop", "CRM files should be dropped in the CRM area.")
+                            self.dragLeaveEvent(None) # Manually reset style after warning
                             continue  # Reject drop for CRM files
                         if file_name in self.window.moved_files:
-                            QMessageBox.warning(self, "Duplicate Drop", f"{file_name} already moved.")
+                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
                             continue
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.move(str(source_path), str(dest_path))
@@ -73,7 +74,7 @@ class DropButton(QPushButton):
                 self.window.check_files_ready()
             except Exception as e:
                 print(f"Drop error: {e}")
-                QMessageBox.critical(self, "Error", f"Failed to process drop: {e}")
+                self.window.show_error("Error", f"Failed to process drop: {e}")
             finally:
                 if self.objectName() == "crm-button":
                     self.setStyleSheet("""
@@ -123,7 +124,8 @@ class DropButton(QPushButton):
                 min-width: 200px;
                 border-radius: 8px;
             """)
-        event.accept()
+        if event is not None:
+            event.accept()
 
 class ReconciliationWindow(QWidget):
     def __init__(self):
@@ -137,7 +139,8 @@ class ReconciliationWindow(QWidget):
     def initUI(self):
         print(os.path.abspath("./calendar_icon.png"))  # Debug print to verify file path
         self.setWindowTitle('CRM-Processor Reconciliation System')
-        self.setStyleSheet("""
+        app = QApplication.instance()
+        app.setStyleSheet("""
             QWidget {
                 font-family: 'Segoe UI', Arial, sans-serif;
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4a90e2, stop:1 #d3d8e8);
@@ -248,7 +251,26 @@ class ReconciliationWindow(QWidget):
                 color: #ffffff;
 
             }
-        """)
+QMessageBox {
+    background-color: #ffffff;
+    border: 2px solid #4a90e2;
+    border-radius: 8px;
+    padding: 10px;
+}
+QMessageBox QLabel {
+    color: #1a252f;
+}
+QMessageBox QPushButton {
+    background: #4a90e2;
+    color: #ffffff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+}
+QMessageBox QPushButton:hover {
+    background: #357abd;
+}
+""")
         # Adjust window position and size
         screen = QApplication.desktop().screenGeometry()
         self.setGeometry((screen.width() - 900) // 2, 50, 900, 600)
@@ -364,6 +386,27 @@ class ReconciliationWindow(QWidget):
         button_layout.addStretch(1)  # Stretch to center the buttons
         main_layout.addLayout(button_layout)
 
+    def show_warning(self, title, text):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.NoIcon)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.exec_()
+
+    def show_error(self, title, text):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.NoIcon)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.exec_()
+
+    def show_info(self, title, text):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.NoIcon)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.exec_()
+
     def update_reciprocal_rates(self):
         for key, (input_field, calc_label) in self.rate_inputs.items():
             from_curr, to_curr = key.split('_')
@@ -414,7 +457,7 @@ class ReconciliationWindow(QWidget):
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
             file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
-            QMessageBox.information(self, "Success", f"Rates saved to {file_path}")
+            self.show_info("Success", f"Rates saved to {file_path}")
 
             # Trigger reports_creator.py
             try:
@@ -423,18 +466,18 @@ class ReconciliationWindow(QWidget):
                 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
                 env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
                 subprocess.run([python_executable, "../src/reports_creator.py", selected_date], env=env, check=True)
-                QMessageBox.information(self, "Success", "reports_creator.py completed.")
+                self.show_info("Success", "reports_creator.py completed.")
 
                 QTimer.singleShot(1000, self.open_second_window)  # 1-second delay
 
             except subprocess.CalledProcessError as e:
                 print(f"Error executing script: {e}")
-                QMessageBox.critical(self, "Error", "Failed to run processing script.")
+                self.show_error("Error", "Failed to run processing script.")
             except FileNotFoundError as e:
                 print(f"File not found error: {e}")
-                QMessageBox.critical(self, "Error", "Processing script not found.")
+                self.show_error("Error", "Processing script not found.")
         else:
-            QMessageBox.warning(self, "Error", "No valid rates entered.")
+            self.show_warning("Error", "No valid rates entered.")
 
     def rename_processor_files(self, file_paths):
         selected_date = self.date_edit.date().toString("yyyy-MM-dd")
@@ -476,7 +519,7 @@ class ReconciliationWindow(QWidget):
             if file.is_file() and file.name != ".gitkeep":
                 file.unlink()
 
-        QMessageBox.information(self, "Reset", "All fields and attachments have been reset.")
+        self.show_info("Reset", "All fields and attachments have been reset.")
 
     def open_second_window(self):
         print("Debug: Creating SecondWindow")
@@ -484,4 +527,3 @@ class ReconciliationWindow(QWidget):
         self.second_window.show()
         print("Debug: SecondWindow shown")
         self.close()  # Close first window
-

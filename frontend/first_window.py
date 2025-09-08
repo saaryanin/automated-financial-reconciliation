@@ -40,26 +40,36 @@ class DropButton(QPushButton):
         if mime_data.hasUrls():
             file_paths = [u.toLocalFile() for u in mime_data.urls()]
             try:
-                if self.text().startswith("📊"):  # CRM File
+                if self.objectName() == "crm-button":  # CRM button
                     if len(file_paths) == 1:
                         source_path = file_paths[0]
                         file_name = os.path.basename(source_path)
-
+                        if file_name in self.window.moved_files:
+                            QMessageBox.warning(self, "Duplicate Drop", f"{file_name} already moved.")
+                            return
                         dest_path = RAW_ATTACHED_FILES / file_name
-
                         shutil.move(str(source_path), str(dest_path))
                         self.window.crm_file = str(dest_path)
                         self.setText(f"📊 {file_name}")
+                        self.window.moved_files.add(file_name)
                     else:
                         QMessageBox.warning(self, "Invalid Drop", "Please drop only one file for CRM.")
-                elif self.text().startswith("💳"):  # Processors Files
+                else:  # Processors button
                     for source_path in file_paths:
                         file_name = os.path.basename(source_path)
+                        if file_name.startswith("crm_"):  # Detect CRM file
+                            QMessageBox.warning(self, "Invalid Drop", "CRM files should be dropped in the CRM area.")
+                            continue  # Reject drop for CRM files
+                        if file_name in self.window.moved_files:
+                            QMessageBox.warning(self, "Duplicate Drop", f"{file_name} already moved.")
+                            continue
                         dest_path = RAW_ATTACHED_FILES / file_name
-                        shutil.move(str(source_path), str(dest_path))  # Move to RAW_ATTACHED_FILES first
-                    self.window.processor_files = [str(RAW_ATTACHED_FILES / n) for n in
-                                                   [os.path.basename(p) for p in file_paths]]
-                    self.setText(f"💳 {', '.join([os.path.basename(p) for p in file_paths])}")
+                        shutil.move(str(source_path), str(dest_path))
+                        self.window.moved_files.add(file_name)
+                    self.window.processor_files = [str(RAW_ATTACHED_FILES / os.path.basename(p)) for p in file_paths if
+                                                   not os.path.basename(p).startswith("crm_")]
+                    names = [os.path.basename(p) for p in self.window.processor_files]
+                    self.setText(f"💳 {', '.join(names)}")
                 self.window.check_files_ready()
             except Exception as e:
                 print(f"Drop error: {e}")
@@ -122,6 +132,7 @@ class ReconciliationWindow(QWidget):
         self.processor_files = []
         self.date_button = None  # Add this for the custom calendar button
         self.initUI()
+        self.moved_files = set()  # Track moved file names to avoid duplicates
 
     def initUI(self):
         print(os.path.abspath("./calendar_icon.png"))  # Debug print to verify file path
@@ -298,7 +309,11 @@ class ReconciliationWindow(QWidget):
         date_label = QLabel("Date:")
         date_label.setStyleSheet("font-size: 12px; margin-right: 0px;")
         self.date_edit = QDateEdit()
-        self.date_edit.setDate(QDate.currentDate())  # Set to 01/09/2025
+        today = QDate.currentDate()
+        yesterday = today.addDays(-1)
+        if today.dayOfWeek() == 1:  # Monday (Qt: 1=Mon)
+            yesterday = today.addDays(-3)  # Last Friday
+        self.date_edit.setDate(yesterday)
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("dd/MM/yyyy")
         self.date_edit.setMaximumWidth(90)

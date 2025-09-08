@@ -1,5 +1,6 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTextEdit, QFileDialog, QMessageBox, QDesktopWidget
-from PyQt5.QtCore import QProcess
+from PyQt5.QtCore import QProcess, Qt
+from PyQt5.QtGui import QLinearGradient, QBrush, QPalette
 import os
 import shutil
 from src.config import OUTPUT_DIR  # Import OUTPUT_DIR from config
@@ -38,6 +39,42 @@ class SecondWindow(QWidget):
         layout.addWidget(self.console)
 
         self.setLayout(layout)
+        self.setStyleSheet("""
+            QWidget {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4a90e2, stop:1 #d3d8e8);
+                border-radius: 10px;
+                padding: 10px;
+            }
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4a90e2, stop:1 #357abd);
+                color: #ffffff;
+                border: none;
+                padding: 12px 25px;
+                border-radius: 6px;
+                font-size: 16px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #357abd, stop:1 #2a609d);
+                box-shadow: 0 4px 10px rgba(74, 144, 226, 0.4);
+            }
+            QPushButton:disabled {
+                background: #b0b7c3;
+                color: #ffffff;
+                cursor: not-allowed;
+                box-shadow: none;
+            }
+            QTextEdit {
+                background: #ffffff;
+                border: 1px solid #dfe6e9;
+                border-radius: 4px;
+                padding: 10px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 12px;
+                color: #2c3e50;
+            }
+        """)
         print("Debug: initUI finished")
 
     def run_output_script(self):

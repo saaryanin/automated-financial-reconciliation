@@ -130,7 +130,7 @@ class ReconciliationWindow(QWidget):
         self.moved_files = set()  # Track moved file names to avoid duplicates
 
     def initUI(self):
-        print(os.path.abspath("./calendar_icon.png"))  # Debug print to verify file path
+        print(os.path.abspath("frontend/calendar_icon.png"))  # Adjusted debug print to verify full path
         self.setWindowTitle('CRM-Processor Reconciliation System')
         app = QApplication.instance()
         app.setStyleSheet("""
@@ -208,7 +208,7 @@ class ReconciliationWindow(QWidget):
                 border-left: 1px solid #667eea; /* Blue border on hover */
             }
             QDateEdit::down-arrow {
-                image: url(./calendar_icon.png); /* Relative path from frontend.py */
+                image: url(frontend/calendar_icon.png); /* Adjusted relative path from working dir (root) */
                 width: 16px;
                 height: 16px;
             }
@@ -489,11 +489,12 @@ QMessageBox QPushButton:hover {
 
             # Trigger reports_creator.py
             try:
-                python_executable = os.path.join(os.path.dirname(sys.executable), "python.exe")
+                python_executable = sys.executable  # Use the current Python (better for venv)
                 env = os.environ.copy()
-                src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+                src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))  # frontend/.. is root
                 env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
-                subprocess.run([python_executable, "../src/reports_creator.py", selected_date], env=env, check=True)
+                reports_script = os.path.join(src_path, "reports_creator.py")  # Absolute path
+                subprocess.run([python_executable, reports_script, selected_date], env=env, check=True)
                 self.show_info("Success", "reports_creator.py completed.")
 
                 QTimer.singleShot(1000, self.open_second_window)  # 1-second delay

@@ -3,6 +3,8 @@
 import sys
 import pandas as pd
 from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(BASE_DIR))
 from src.config import OUTPUT_DIR, LISTS_DIR
 from src.shifts_handler import main as handle_shifts, is_bst, get_cutoff_time
 from collections import OrderedDict
@@ -56,6 +58,53 @@ def generate_unmatched_crm_deposits(date_str):
     output_path = output_dir / "unmatched_crm_deposits.xlsx"
     unmatched_crm.to_excel(output_path, index=False)
     print(f"Unmatched CRM deposits saved to {output_path}")
+
+
+def generate_unapproved_crm_deposits(date_str):
+    deposits_matching_path = LISTS_DIR / date_str / "deposits_matching.xlsx"
+    if not deposits_matching_path.exists():
+        print(f"Deposits matching file not found: {deposits_matching_path}")
+        return
+
+    df = pd.read_excel(deposits_matching_path)
+
+    # Filter unapproved CRM deposits: match_status == 1 and crm_approved == 'No'
+    unapproved_crm = df[(df['match_status'] == 1) & (df['crm_approved'] == 'No')]
+    unapproved_crm = unapproved_crm.copy()  # Fix SettingWithCopyWarning
+
+    if unapproved_crm.empty:
+        print(f"No unapproved CRM deposits found for {date_str}, skipping file creation.")
+        return
+
+    # Convert crm_date to datetime for filtering and sorting
+    unapproved_crm['crm_date'] = pd.to_datetime(unapproved_crm['crm_date'], errors='coerce')
+
+    # Get cutoff time for the date
+    cutoff = get_cutoff_time(date_str)
+
+    # Remove rows after the cutoff
+    unapproved_crm = unapproved_crm[unapproved_crm['crm_date'] <= cutoff]
+
+    if unapproved_crm.empty:
+        print(f"No unapproved CRM deposits after cutoff filter for {date_str}, skipping file creation.")
+        return
+
+    # Sort by crm_date from newest to oldest
+    unapproved_crm = unapproved_crm.sort_values(by='crm_date', ascending=False)
+
+    # Select specified columns
+    columns = [
+        'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount', 'crm_currency',
+        'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4', 'regulation', 'crm_transaction_id'
+    ]
+    unapproved_crm = unapproved_crm[columns]
+
+    # Save to output/dated/unapproved_crm_deposits.xlsx
+    output_dir = OUTPUT_DIR / date_str
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "unapproved_crm_deposits.xlsx"
+    unapproved_crm.to_excel(output_path, index=False)
+    print(f"Unapproved CRM deposits saved to {output_path}")
 
 
 def generate_unmatched_proc_deposits(date_str):
@@ -474,6 +523,9 @@ if __name__ == "__main__":
 
     # Generate unmatched_crm_deposits
     generate_unmatched_crm_deposits(DATE)
+
+    # Generate unapproved_crm_deposits
+    generate_unapproved_crm_deposits(DATE)
 
     # Generate unmatched_proc_deposits
     generate_unmatched_proc_deposits(DATE)

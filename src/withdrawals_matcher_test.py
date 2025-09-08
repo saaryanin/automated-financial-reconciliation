@@ -622,12 +622,13 @@ class ReconciliationEngine:
                     current_comment = m.get('comment', '')
                     m['comment'] = current_comment + ' . ' + comment if current_comment else comment
                     print(f"Row {i + 1} breaks Rule 3: Processor names differ ({crm_pname} matched {proc_pname})")
-        # Rule 4: Partial email matching for shift4
+        # Rule 4: Partial email matching for shift4, only for rows where crm_processor_name is shift4
         unmatched_crm_indices = [i for i, m in enumerate(matches) if
-                                 m['match_status'] == 0 and m.get('crm_date') is not None]
+                                 m['match_status'] == 0 and m.get('crm_date') is not None and
+                                 str(m.get('crm_processor_name', '')).lower() == 'shift4']
         unmatched_proc_shift4_indices = [i for i, m in enumerate(matches) if
-                                         m['match_status'] == 0 and m.get('crm_date') is None and m.get(
-                                             'proc_processor_name') == 'shift4']
+                                         m['match_status'] == 0 and m.get('crm_date') is None and
+                                         str(m.get('proc_processor_name', '')).lower() == 'shift4']
         flagged_shift4_proc_to_crm = defaultdict(list)
         for proc_i in unmatched_proc_shift4_indices:
             proc_email = matches[proc_i].get('proc_email', '')

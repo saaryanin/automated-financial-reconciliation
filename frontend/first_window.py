@@ -45,15 +45,15 @@ class DropButton(QPushButton):
                     if len(file_paths) == 1:
                         source_path = file_paths[0]
                         file_name = os.path.basename(source_path)
-                        if file_name in self.window.moved_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
+                        if file_name in self.window.attached_files:
+                            self.window.show_warning("Duplicate Drop", f"{file_name} already attached.")
                             self.setStyleSheet("")
                             return
                         dest_path = RAW_ATTACHED_FILES / file_name
-                        shutil.move(str(source_path), str(dest_path))
+                        shutil.copy(str(source_path), str(dest_path))
                         self.window.crm_file = str(dest_path)
                         self.setText(f"📊 {file_name}")
-                        self.window.moved_files.add(file_name)
+                        self.window.attached_files.add(file_name)
                         success = True
                     else:
                         self.window.show_warning("Invalid Drop", "Please drop only one file for CRM.")
@@ -74,12 +74,12 @@ class DropButton(QPushButton):
                             self.window.show_warning("Invalid Drop", "CRM files should be dropped in the CRM area.")
                             self.setStyleSheet("")
                             continue  # Reject drop for CRM files
-                        if file_name in self.window.moved_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
+                        if file_name in self.window.attached_files:
+                            self.window.show_warning("Duplicate Drop", f"{file_name} already attached.")
                             continue
                         dest_path = RAW_ATTACHED_FILES / file_name
-                        shutil.move(str(source_path), str(dest_path))
-                        self.window.moved_files.add(file_name)
+                        shutil.copy(str(source_path), str(dest_path))
+                        self.window.attached_files.add(file_name)
                         new_files.append(str(dest_path))
                     self.window.processor_files += new_files
                     if new_files:
@@ -127,7 +127,7 @@ class ReconciliationWindow(QWidget):
         self.processor_files = []
         self.date_button = None  # Add this for the custom calendar button
         self.initUI()
-        self.moved_files = set()  # Track moved file names to avoid duplicates
+        self.attached_files = set()  # Track attached file names to avoid duplicates
 
     def initUI(self):
         print(os.path.abspath("frontend/calendar_icon.png"))  # Adjusted debug print to verify full path
@@ -415,16 +415,16 @@ QMessageBox QPushButton:hover {
         if file_type == 'crm':
             file_path, _ = file_dialog.getOpenFileName(self, "Select CRM File", "", "CSV Files (*.csv *.xlsx *.xls)")
             if file_path:
-                # To make consistent with drop, move the file
+                # To make consistent with drop, copy the file
                 file_name = os.path.basename(file_path)
-                if file_name in self.moved_files:
+                if file_name in self.attached_files:
                     self.show_warning("Duplicate", f"{file_name} already selected.")
                     return
                 dest_path = RAW_ATTACHED_FILES / file_name
-                shutil.move(file_path, str(dest_path))
+                shutil.copy(file_path, str(dest_path))
                 self.crm_file = str(dest_path)
                 self.crm_file_btn.setText(f"📊 {file_name}")
-                self.moved_files.add(file_name)
+                self.attached_files.add(file_name)
                 self.crm_file_btn.setStyleSheet("""
                     border: 4px dashed #003366;
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
@@ -442,12 +442,12 @@ QMessageBox QPushButton:hover {
                     if file_name.startswith("crm_"):
                         self.show_warning("Invalid File", "CRM files should be selected in CRM area.")
                         continue
-                    if file_name in self.moved_files:
+                    if file_name in self.attached_files:
                         self.show_warning("Duplicate", f"{file_name} already selected.")
                         continue
                     dest_path = RAW_ATTACHED_FILES / file_name
-                    shutil.move(source_path, str(dest_path))
-                    self.moved_files.add(file_name)
+                    shutil.copy(source_path, str(dest_path))
+                    self.attached_files.add(file_name)
                     new_files.append(str(dest_path))
                 self.processor_files += new_files
                 if new_files:
@@ -548,7 +548,7 @@ QMessageBox QPushButton:hover {
             if file.is_file() and file.name != ".gitkeep":
                 file.unlink()
 
-        self.moved_files.clear()
+        self.attached_files.clear()
 
         self.show_info("Reset", "All fields and attachments have been reset.")
 

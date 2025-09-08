@@ -21,8 +21,9 @@ PROCESSOR_PATTERNS = {
         "header_row": 11
     },
     "bitpay": {
-        "pattern": r"bitpay-export-[a-z]{3}-\d{1,2}-\d{1,2}-\d{4}-_to_(\d{1,2}-\d{1,2}-\d{4})(?:\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
+        "pattern": r"(?i)bitpay-export-[a-zA-Z]{3}-\d{1,2}-\d{1,2}-\d{4}-_to_(\d{1,2}-\d{1,2}-\d{4})(?:\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
         "date_format": "%m-%d-%Y",
+        "date_group": 1,
         "type_group": None,
         "date_column": "date",
         "header_row": 0
@@ -35,8 +36,9 @@ PROCESSOR_PATTERNS = {
         "header_row": 17
     },
     "paypal": {
-        "pattern": r"(?:download|Download)\s+-\s+.*(?i:\.csv|\.xlsx|\.xls)",
-        "date_format": None,
+        "pattern": r"(?:download|Download)(?:\s*-\s*(\d{4}-\d{2}-\d{2})[Tt]\d{6}\.\d{3})?(?i:\.csv|\.xlsx|\.xls)",
+        "date_format": "%Y-%m-%d",
+        "date_group": 1,
         "type_group": None,
         "date_column": "Date",
         "header_row": 0
@@ -298,23 +300,21 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
                 date_raw = match.group(date_group)
                 date_str = datetime.strptime(date_raw, config["date_format"]).strftime('%Y-%m-%d')
             else:
-                if config.get("date_format") and match and len(match.groups()) > 0:
-                    date_group = 1  # Default to first group for date
+                date_group = config.get("date_group")
+                if date_group is not None and match and len(match.groups()) >= date_group:
                     date_raw = match.group(date_group)
-                    date_str = datetime.strptime(date_raw, config["date_format"]).strftime('%Y-%m-%d')
-                elif config["date_column"] and config["header_row"] is not None: # Rename logic
+                    if config["date_format"]:
+                        date_str = datetime.strptime(date_raw, config["date_format"]).strftime('%Y-%m-%d')
+                    else:
+                        date_str = date_raw  # already in format
+                elif config["date_column"] and config["header_row"] is not None:
                     date_str = extract_date_from_file(file_path, config["date_column"], config["header_row"], processor_original,
                                                       config)
                     if not date_str:
                         logging.warning(f"No date found for {filename} with {processor_original}, skipping")
                         continue
-
             if forced_date:
-                if date_str and date_str != forced_date:
-                    logging.warning(f"Extracted date {date_str} does not match forced date {forced_date} for {filename}, skipping.")
-                    continue
-                if not date_str:
-                    date_str = forced_date
+                date_str = forced_date
 
             # If no date_str and not a move-only (like crm without rename), skip unless forced_date set it
             if not date_str and not config.get("dest_dir"):
@@ -324,7 +324,7 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
             if config.get("is_renamed"):
                 new_name = file_path.name
             else:
-                if processor_original == "paymentasia" and config["type_group"] and match.group(config["type_group"]):
+                if processor_original == "paymentasia" and config["type_group"] and match.group(config['type_group']):
                     new_name = f"{processor_original}_{'deposits' if match.group(config['type_group']) == 'transactions' else 'withdrawals'}_{date_str}{file_path.suffix.lower()}" if date_str else file_path.name
                 else:
                     new_name = f"{processor_original}_{date_str}{file_path.suffix.lower()}" if date_str else file_path.name

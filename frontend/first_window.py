@@ -120,6 +120,7 @@ class DropButton(QPushButton):
         if event is not None:
             event.accept()
 
+
 class ReconciliationWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -132,6 +133,13 @@ class ReconciliationWindow(QWidget):
     def initUI(self):
         print(os.path.abspath("frontend/calendar_icon.png"))  # Adjusted debug print to verify full path
         self.setWindowTitle('CRM-Processor Reconciliation System')
+
+        # Dynamic icon path for stylesheet (works in script and EXE)
+        if getattr(sys, 'frozen', False):
+            icon_path = "calendar_icon.png"  # Bundled to root via spec datas
+        else:
+            icon_path = "frontend/calendar_icon.png"  # Relative to root in script mode
+
         app = QApplication.instance()
         app.setStyleSheet("""
             QWidget {
@@ -208,7 +216,7 @@ class ReconciliationWindow(QWidget):
                 border-left: 1px solid #667eea; /* Blue border on hover */
             }
             QDateEdit::down-arrow {
-                image: url(calendar_icon.png); /* Adjusted to root copy for bundle */
+                image: url(%s);  /* Dynamic path */
                 width: 16px;
                 height: 16px;
             }
@@ -263,7 +271,8 @@ QMessageBox QPushButton {
 QMessageBox QPushButton:hover {
     background: #357abd;
 }
-""")
+""" % icon_path)  # Format the dynamic path into the stylesheet
+
         # Adjust window position and size
         screen = QApplication.desktop().screenGeometry()
         self.setGeometry((screen.width() - 900) // 2, 50, 900, 600)
@@ -273,7 +282,6 @@ QMessageBox QPushButton:hover {
         main_layout.setSpacing(20)
         main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
-
 
         # Header
         header = QLabel('CRM-Processor Reconciliation System')
@@ -469,8 +477,6 @@ QMessageBox QPushButton:hover {
 
         self.process_btn.setEnabled(files_ready and rates_entered)
 
-    # ... (keep existing code)
-
     def save_rates_and_process(self):
         selected_date = self.date_edit.date().toString("yyyy-MM-dd")
         rates_data = []
@@ -489,13 +495,9 @@ QMessageBox QPushButton:hover {
             df.to_csv(file_path, index=False)
             self.show_info("Success", f"Rates saved to {file_path}")
 
-            # Rename/move files with selected date
-            run_renamer(
-                forced_date=selected_date)  # This moves from RAW_ATTACHED_FILES to CRM_DIR/PROCESSOR_DIR with date in name
-
-            # Trigger reports_creator
+            # Trigger reports_creator directly with selected date
             try:
-                reports_creator.main(selected_date)
+                reports_creator.main(selected_date)  # Pass GUI-selected date
                 self.show_info("Success", "reports_creator.py completed.")
                 self.hide()
                 self.open_second_window()

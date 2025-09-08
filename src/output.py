@@ -27,7 +27,7 @@ def generate_unmatched_crm_deposits(date_str):
         print(f"No unmatched CRM deposits found for {date_str}, skipping file creation.")
         return
 
-    # Convert crm_date to datetime for filtering
+    # Convert crm_date to datetime for filtering and sorting
     unmatched_crm['crm_date'] = pd.to_datetime(unmatched_crm['crm_date'], errors='coerce')
 
     # Get cutoff time for the date
@@ -39,6 +39,9 @@ def generate_unmatched_crm_deposits(date_str):
     if unmatched_crm.empty:
         print(f"No unmatched CRM deposits after cutoff filter for {date_str}, skipping file creation.")
         return
+
+    # Sort by crm_date from newest to oldest
+    unmatched_crm = unmatched_crm.sort_values(by='crm_date', ascending=False)
 
     # Select specified columns
     columns = [
@@ -361,6 +364,98 @@ def remove_compensated_entries(date_str):
     withdrawals_df.to_excel(withdrawals_path, index=False)
     print(f"Updated unmatched_proc_withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
 
+def generate_unmatched_crm_withdrawals(date_str):
+    withdrawals_matching_path = LISTS_DIR / date_str / "withdrawals_matching.xlsx"
+    if not withdrawals_matching_path.exists():
+        print(f"Withdrawals matching file not found: {withdrawals_matching_path}")
+        return
+
+    df = pd.read_excel(withdrawals_matching_path)
+
+    # Apply warning == False to all groups
+    df = df[df['warning'] == False]
+
+    # Group 1: match_status == 0 and payment_status == 0 and comment == "No matching processor row found"
+    group1 = df[(df['match_status'] == 0) & (df['payment_status'] == 0) & (df['comment'] == "No matching processor row found")].copy()
+
+    # Group 2: match_status == 1 and payment_status == 0 and (comment contains "Overpaid" or "Underpaid")
+    group2 = df[(df['match_status'] == 1) & (df['payment_status'] == 0) & (df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
+
+    # Group 3: comment == "Withdrawal cancelled with no matching withdrawal found"
+    group3 = df[df['comment'] == "Withdrawal cancelled with no matching withdrawal found"].copy()
+
+    # Process Group 1
+    if not group1.empty:
+        group1['comment'] = ''  # Blank comment
+        # Ensure crm_amount is negative
+        group1['crm_amount'] = group1['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+
+    # Process Group 3 like Group 1 but crm_amount positive and comment "Withdrawal cancellation"
+    if not group3.empty:
+        group3['comment'] = "Withdrawal cancellation"
+        # Make crm_amount positive
+        group3['crm_amount'] = group3['crm_amount'].apply(lambda x: abs(x) if pd.notna(x) else x)
+
+    # Process Group 2: Parse comment for underpaid/overpaid amount and update crm_amount and comment
+    if not group2.empty:
+        def format_amount(amt):
+            if pd.isna(amt):
+                return ''
+            if float(amt).is_integer():
+                return int(amt)
+            return amt
+
+        def parse_adjustment(row):
+            comment = row['comment']
+            if "Underpaid by" in comment:
+                # Extract amount after "Underpaid by "
+                amount_str = comment.split("Underpaid by ")[1].split(" ")[0]
+                amount = float(amount_str)
+                sign = -1  # Negative for underpaid
+            elif "Overpaid by" in comment:
+                # Extract amount after "Overpaid by "
+                amount_str = comment.split("Overpaid by ")[1].split(" ")[0]
+                amount = float(amount_str)
+                sign = 1  # Positive for overpaid
+            else:
+                return row['crm_amount'], row['comment']  # No change if parse fails
+
+            # Update crm_amount
+            new_amount = sign * amount
+
+            # Update comment to "Client requested {original crm_amount} {crm_currency} and received {original proc_amount} {proc_currency}."
+            orig_crm_amount = format_amount(row['crm_amount'])
+            orig_proc_amount = format_amount(row['proc_amount'])
+            crm_curr = row['crm_currency']
+            proc_curr = row['proc_currency']
+            new_comment = f"Client requested {orig_crm_amount} {crm_curr} and received {orig_proc_amount} {proc_curr}."
+
+            return new_amount, new_comment
+
+        # Apply parsing
+        group2[['crm_amount', 'comment']] = group2.apply(parse_adjustment, axis=1, result_type='expand')
+
+    # Combine all groups (OR between them)
+    unmatched_crm = pd.concat([group1, group2, group3], ignore_index=True)
+
+    if unmatched_crm.empty:
+        print(f"No unmatched CRM withdrawals found for {date_str}, skipping file creation.")
+        return
+
+    # Select specified columns
+    columns = [
+        'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
+        'crm_processor_name', 'regulation', 'comment'
+    ]
+    unmatched_crm = unmatched_crm[columns]
+
+    # Save to output/dated/unmatched_crm_withdrawals.xlsx
+    output_dir = OUTPUT_DIR / date_str
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "unmatched_crm_withdrawals.xlsx"
+    unmatched_crm.to_excel(output_path, index=False)
+    print(f"Unmatched CRM withdrawals saved to {output_path}")
+
 
 if __name__ == "__main__":
     DATE = sys.argv[1] if len(
@@ -391,3 +486,6 @@ if __name__ == "__main__":
 
     # Remove compensated entries
     remove_compensated_entries(DATE)
+
+    # Generate unmatched_crm_withdrawals
+    generate_unmatched_crm_withdrawals(DATE)

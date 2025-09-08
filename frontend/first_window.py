@@ -41,25 +41,38 @@ class DropButton(QPushButton):
             file_paths = [u.toLocalFile() for u in mime_data.urls()]
             try:
                 if self.objectName() == "crm-button":  # CRM button
+                    success = False
                     if len(file_paths) == 1:
                         source_path = file_paths[0]
                         file_name = os.path.basename(source_path)
                         if file_name in self.window.moved_files:
                             self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
+                            self.setStyleSheet("")
                             return
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.move(str(source_path), str(dest_path))
                         self.window.crm_file = str(dest_path)
                         self.setText(f"📊 {file_name}")
                         self.window.moved_files.add(file_name)
+                        success = True
                     else:
                         self.window.show_warning("Invalid Drop", "Please drop only one file for CRM.")
+                        self.setStyleSheet("")
+                    if success:
+                        self.setStyleSheet("""
+                            border: 4px dashed #003366;
+                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
+                            min-height: 100px;
+                            min-width: 200px;
+                            border-radius: 8px;
+                        """)
                 else:  # Processors button
+                    new_files = []
                     for source_path in file_paths:
                         file_name = os.path.basename(source_path)
                         if file_name.startswith("crm_"):  # Detect CRM file
                             self.window.show_warning("Invalid Drop", "CRM files should be dropped in the CRM area.")
-                            self.dragLeaveEvent(None) # Manually reset style after warning
+                            self.setStyleSheet("")
                             continue  # Reject drop for CRM files
                         if file_name in self.window.moved_files:
                             self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
@@ -67,31 +80,26 @@ class DropButton(QPushButton):
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.move(str(source_path), str(dest_path))
                         self.window.moved_files.add(file_name)
-                    self.window.processor_files = [str(RAW_ATTACHED_FILES / os.path.basename(p)) for p in file_paths if
-                                                   not os.path.basename(p).startswith("crm_")]
-                    names = [os.path.basename(p) for p in self.window.processor_files]
-                    self.setText(f"💳 {', '.join(names)}")
+                        new_files.append(str(dest_path))
+                    self.window.processor_files += new_files
+                    if new_files:
+                        names = [os.path.basename(p) for p in self.window.processor_files]
+                        self.setText(f"💳 {', '.join(names)}")
+                    if len(self.window.processor_files) > 0:
+                        self.setStyleSheet("""
+                            border: 4px dashed #006600;
+                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
+                            min-height: 100px;
+                            min-width: 200px;
+                            border-radius: 8px;
+                        """)
+                    else:
+                        self.setStyleSheet("")
                 self.window.check_files_ready()
             except Exception as e:
                 print(f"Drop error: {e}")
                 self.window.show_error("Error", f"Failed to process drop: {e}")
-            finally:
-                if self.objectName() == "crm-button":
-                    self.setStyleSheet("""
-                        border: 4px dashed #003366;
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
-                        min-height: 100px;
-                        min-width: 200px;
-                        border-radius: 8px;
-                    """)
-                else:
-                    self.setStyleSheet("""
-                        border: 4px dashed #006600;
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
-                        min-height: 100px;
-                        min-width: 200px;
-                        border-radius: 8px;
-                    """)
+                self.setStyleSheet("")
         event.accept()
 
     def _detect_processor(self, filename):
@@ -108,22 +116,7 @@ class DropButton(QPushButton):
             event.acceptProposedAction()
 
     def dragLeaveEvent(self, event):
-        if self.objectName() == "crm-button":
-            self.setStyleSheet("""
-                border: 4px dashed #003366;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
-                min-height: 100px;
-                min-width: 200px;
-                border-radius: 8px;
-            """)
-        else:
-            self.setStyleSheet("""
-                border: 4px dashed #006600;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
-                min-height: 100px;
-                min-width: 200px;
-                border-radius: 8px;
-            """)
+        self.setStyleSheet("")
         if event is not None:
             event.accept()
 
@@ -422,16 +415,51 @@ QMessageBox QPushButton:hover {
         if file_type == 'crm':
             file_path, _ = file_dialog.getOpenFileName(self, "Select CRM File", "", "CSV Files (*.csv *.xlsx *.xls)")
             if file_path:
-                self.crm_file = file_path
-                self.crm_file_btn.setText(f"📊 {os.path.basename(file_path)}")
+                # To make consistent with drop, move the file
+                file_name = os.path.basename(file_path)
+                if file_name in self.moved_files:
+                    self.show_warning("Duplicate", f"{file_name} already selected.")
+                    return
+                dest_path = RAW_ATTACHED_FILES / file_name
+                shutil.move(file_path, str(dest_path))
+                self.crm_file = str(dest_path)
+                self.crm_file_btn.setText(f"📊 {file_name}")
+                self.moved_files.add(file_name)
+                self.crm_file_btn.setStyleSheet("""
+                    border: 4px dashed #003366;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
+                    min-height: 100px;
+                    min-width: 200px;
+                    border-radius: 8px;
+                """)
         else:
             file_paths, _ = file_dialog.getOpenFileNames(self, "Select Processors Files", "",
                                                          "CSV Files (*.csv *.xlsx *.xls)")
-
             if file_paths:
-                self.processor_files = file_paths
-                names = [os.path.basename(p) for p in file_paths]
-                self.processor_file_btn.setText(f"💳 {', '.join(names)}")
+                new_files = []
+                for source_path in file_paths:
+                    file_name = os.path.basename(source_path)
+                    if file_name.startswith("crm_"):
+                        self.show_warning("Invalid File", "CRM files should be selected in CRM area.")
+                        continue
+                    if file_name in self.moved_files:
+                        self.show_warning("Duplicate", f"{file_name} already selected.")
+                        continue
+                    dest_path = RAW_ATTACHED_FILES / file_name
+                    shutil.move(source_path, str(dest_path))
+                    self.moved_files.add(file_name)
+                    new_files.append(str(dest_path))
+                self.processor_files += new_files
+                if new_files:
+                    names = [os.path.basename(p) for p in self.processor_files]
+                    self.processor_file_btn.setText(f"💳 {', '.join(names)}")
+                    self.processor_file_btn.setStyleSheet("""
+                        border: 4px dashed #006600;
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
+                        min-height: 100px;
+                        min-width: 200px;
+                        border-radius: 8px;
+                    """)
         self.check_files_ready()
 
     def check_files_ready(self):
@@ -518,6 +546,8 @@ QMessageBox QPushButton:hover {
         for file in RAW_ATTACHED_FILES.glob("*.*"):
             if file.is_file() and file.name != ".gitkeep":
                 file.unlink()
+
+        self.moved_files.clear()
 
         self.show_info("Reset", "All fields and attachments have been reset.")
 

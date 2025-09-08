@@ -16,3 +16,7 @@ output/**
 !output/
 !output/**/
 !output/**/.gitkeep
+
+# Ignore PyInstaller build artifacts
+build/
+dist/

@@ -3,6 +3,7 @@
 import sys
 import pandas as pd
 from pathlib import Path
+import shutil
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 from src.config import OUTPUT_DIR, LISTS_DIR
@@ -529,7 +530,7 @@ def remove_compensated_entries(date_str):
     print(f"Updated Unmatched Processors Deposits.xlsx after removing {len(dep_indices_to_drop)} compensated entries.")
 
     save_excel(withdrawals_df, withdrawals_path, text_columns=['Last 4 Digits'])
-    print(f"Updated Unmatched Processor Withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
+    print(f"Updated Unmatched Processors Withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
 
 
 def generate_unmatched_crm_withdrawals(date_str):
@@ -643,6 +644,15 @@ def generate_unmatched_crm_withdrawals(date_str):
 
 
 def main(date_str):
+
+    #Clearing the output/dated folder before exporting the reports
+
+    output_dir = OUTPUT_DIR / date_str
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+        print(f"Cleared old output directory: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     matched_sums = handle_shifts(date_str)
     if matched_sums:
         output_dir = OUTPUT_DIR / date_str

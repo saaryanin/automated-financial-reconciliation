@@ -1,3 +1,7 @@
+# Modified first_window.py
+# Changes:
+# - Removed self.show_info("Success", f"Rates saved to {file_path}") to eliminate the rates alert.
+
 import sys
 import os
 import shutil
@@ -6,14 +10,15 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QL
                              QToolButton)
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QDate, QMimeData, QProcess, QTimer
-from second_window import SecondWindow  # Import the new second window class
+from fourth_window import FourthWindow  # Import the fourth window class
+from second_window import SecondWindow  # NEW: Import the new second window class
 import pandas as pd
 import re
 from pathlib import Path
 # Use direct import from src.config
 from src.config import RATES_DIR, CRM_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
 from src.processor_renamer import run_renamer
-from src import reports_creator  # Direct import for bundled call
+from src import reports_creator  # Direct import for bundled call (not used here anymore)
 
 
 class DropButton(QPushButton):
@@ -493,18 +498,11 @@ QMessageBox QPushButton:hover {
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
             file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
-            self.show_info("Success", f"Rates saved to {file_path}")
+            # Removed: self.show_info("Success", f"Rates saved to {file_path}")
 
-            # Trigger reports_creator directly with selected date
-            try:
-                reports_creator.main(selected_date)  # Pass GUI-selected date
-                self.show_info("Success", "reports_creator.py completed.")
-                self.hide()
-                self.open_second_window()
-            except Exception as e:
-                print(f"Error executing reports_creator: {e}")
-                self.show_error("Error",
-                                "Failed to run reports_creator. Check if processor files exist for the selected date.")
+            # NEW: Hide and open second window instead of running reports_creator
+            self.hide()
+            self.open_second_window()
         else:
             self.show_warning("Error", "No valid rates entered.")
 

@@ -297,6 +297,15 @@ def main(date=None):
 
         matches_df = drop_cols(matches_df, ['matched_proc_indices'])
 
+        #Adding a crm_type column to withdrawals_matching report
+        matches_df['crm_type'] = np.nan
+        matches_df.loc[matches_df['crm_date'].notna(), 'crm_type'] = 'Withdrawal'
+        matches_df.loc[matches_df[
+                           'comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
+        columns = list(matches_df.columns)
+        columns.insert(0, columns.pop(columns.index('crm_type')))
+        matches_df = matches_df[columns]
+
         # --- Save withdrawals matching report ---
         report_path_withdrawals = report_dir / "withdrawals_matching.xlsx"
         with pd.ExcelWriter(report_path_withdrawals, engine='openpyxl') as writer:

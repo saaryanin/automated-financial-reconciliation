@@ -177,27 +177,49 @@ def generate_unmatched_proc_deposits(date_str):
     unmatched_proc['proc_transaction_id'] = unmatched_proc['proc_transaction_id'].astype(str)
     unmatched_proc['proc_last4'] = unmatched_proc['proc_last4'].astype(str)
 
+    # Pad proc_last4 with leading zeros to make it 4 digits
+    unmatched_proc['proc_last4'] = unmatched_proc['proc_last4'].apply(lambda x: x.zfill(4) if x else '')
+
+    # Manually add crm_type as 'Deposit' since it doesn't exist for processor rows
+    unmatched_proc['crm_type'] = 'Deposit'
+
     # Select specified columns in order
     columns = [
-        'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_tp', 'proc_amount', 'proc_currency',
-        'proc_processor_name', 'proc_last4', 'proc_transaction_id'
+        'crm_type', 'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_amount', 'proc_currency',
+        'proc_tp', 'proc_processor_name', 'proc_last4', 'proc_transaction_id'
     ]
     unmatched_proc = unmatched_proc[columns]
+
+    # Rename columns
+    rename_dict = {
+        'crm_type': 'Type',
+        'proc_date': 'Date',
+        'proc_firstname': 'First Name',
+        'proc_lastname': 'Last Name',
+        'proc_email': 'Email',
+        'proc_amount': 'Amount',
+        'proc_currency': 'Currency',
+        'proc_tp': 'TP',
+        'proc_processor_name': 'Processor Name',
+        'proc_last4': 'Last 4 Digits',
+        'proc_transaction_id': 'Transaction ID'
+    }
+    unmatched_proc.rename(columns=rename_dict, inplace=True)
 
     # Save to output/dated/unmatched_proc_deposits.xlsx with text format for specific columns
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "unmatched_proc_deposits.xlsx"
+    output_path = output_dir / "Unmatched Processors Deposits.xlsx"
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         unmatched_proc.to_excel(writer, index=False, sheet_name='Sheet1')
         worksheet = writer.sheets['Sheet1']
-        # Set text format for proc_transaction_id
-        col_idx_tid = unmatched_proc.columns.get_loc('proc_transaction_id') + 1  # 1-based index
+        # Set text format for Transaction ID
+        col_idx_tid = unmatched_proc.columns.get_loc('Transaction ID') + 1  # 1-based index
         for row in range(2, len(unmatched_proc) + 2):  # header is row 1, data starts at row 2
             worksheet.cell(row=row, column=col_idx_tid).number_format = '@'
-        # Set text format for proc_last4
-        col_idx_last4 = unmatched_proc.columns.get_loc('proc_last4') + 1
+        # Set text format for Last 4 Digits
+        col_idx_last4 = unmatched_proc.columns.get_loc('Last 4 Digits') + 1
         for row in range(2, len(unmatched_proc) + 2):
             worksheet.cell(row=row, column=col_idx_last4).number_format = '@'
 
@@ -531,15 +553,32 @@ def generate_unmatched_crm_withdrawals(date_str):
 
     # Select specified columns
     columns = [
-        'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
-        'crm_processor_name', 'regulation', 'comment'
+        'crm_type', 'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_amount', 'crm_currency',
+        'crm_tp', 'regulation', 'crm_processor_name', 'crm_last4', 'comment'
     ]
     unmatched_crm = unmatched_crm[columns]
+
+    # Rename columns
+    rename_dict = {
+        'crm_type': 'Type',
+        'crm_date': 'Date',
+        'crm_firstname': 'First Name',
+        'crm_lastname': 'Last Name',
+        'crm_email': 'Email',
+        'crm_amount': 'Amount',
+        'crm_currency': 'Currency',
+        'crm_tp': 'TP',
+        'regulation': 'Regulation',
+        'crm_processor_name': 'Processor Name',
+        'crm_last4': 'Last 4 Digits',
+        'comment': 'Comment'
+    }
+    unmatched_crm.rename(columns=rename_dict, inplace=True)
 
     # Save to output/dated/unmatched_crm_withdrawals.xlsx
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "unmatched_crm_withdrawals.xlsx"
+    output_path = output_dir / "Unmatched CRM Withdrawals.xlsx"
     unmatched_crm.to_excel(output_path, index=False)
     print(f"Unmatched CRM withdrawals saved to {output_path}")
 

@@ -47,15 +47,34 @@ def generate_unmatched_crm_deposits(date_str):
 
     # Select specified columns
     columns = [
-        'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount', 'crm_currency',
-        'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4', 'regulation', 'crm_transaction_id'
+        'crm_type', 'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_amount', 'crm_currency',
+        'crm_approved', 'crm_tp', 'payment_method', 'regulation', 'crm_processor_name', 'crm_last4','crm_transaction_id'
     ]
     unmatched_crm = unmatched_crm[columns]
+
+    # Rename columns: strip crm_ prefix, capitalize first letter, and apply specific overrides
+    rename_dict = {
+        'crm_type': 'Type',
+        'crm_date': 'Date',
+        'crm_firstname': 'First Name',
+        'crm_lastname': 'Last Name',
+        'crm_email': 'Email',
+        'crm_amount': 'Amount',
+        'crm_currency': 'Currency',
+        'crm_approved': 'Approved',
+        'crm_tp': 'TP',
+        'payment_method': 'Payment Method',
+        'regulation': 'Regulation',
+        'crm_processor_name': 'Processor Name',
+        'crm_last4': 'Last 4 Digits',
+        'crm_transaction_id': 'Transaction ID'
+    }
+    unmatched_crm.rename(columns=rename_dict, inplace=True)
 
     # Save to output/dated/unmatched_crm_deposits.xlsx
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "unmatched_crm_deposits.xlsx"
+    output_path = output_dir / "Unmatched CRM Deposits.xlsx"
     unmatched_crm.to_excel(output_path, index=False)
     print(f"Unmatched CRM deposits saved to {output_path}")
 
@@ -94,15 +113,34 @@ def generate_unapproved_crm_deposits(date_str):
 
     # Select specified columns
     columns = [
-        'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount', 'crm_currency',
-        'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4', 'regulation', 'crm_transaction_id'
+        'crm_type', 'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_amount', 'crm_currency',
+        'crm_approved', 'crm_tp', 'payment_method', 'regulation', 'crm_processor_name', 'crm_last4','crm_transaction_id'
     ]
     unapproved_crm = unapproved_crm[columns]
+
+    # Rename columns: strip crm_ prefix, capitalize first letter, and apply specific overrides
+    rename_dict = {
+        'crm_type': 'Type',
+        'crm_date': 'Date',
+        'crm_firstname': 'First Name',
+        'crm_lastname': 'Last Name',
+        'crm_email': 'Email',
+        'crm_amount': 'Amount',
+        'crm_currency': 'Currency',
+        'crm_approved': 'Approved',
+        'crm_tp': 'TP',
+        'payment_method': 'Payment Method',
+        'regulation': 'Regulation',
+        'crm_processor_name': 'Processor Name',
+        'crm_last4': 'Last 4 Digits',
+        'crm_transaction_id': 'Transaction ID'
+    }
+    unapproved_crm.rename(columns=rename_dict, inplace=True)
 
     # Save to output/dated/unapproved_crm_deposits.xlsx
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "unapproved_crm_deposits.xlsx"
+    output_path = output_dir / "Unapproved Deposits.xlsx"
     unapproved_crm.to_excel(output_path, index=False)
     print(f"Unapproved CRM deposits saved to {output_path}")
 
@@ -542,5 +580,5 @@ def main(date_str):
 
 
 if __name__ == "__main__":
-    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02"  # Default date for testing; use command-line arg in production
+    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-26"  # Default date for testing; use command-line arg in production
     main(DATE)

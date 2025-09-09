@@ -13,6 +13,31 @@ from datetime import datetime
 import numpy as np
 
 
+def save_excel(df, path, text_columns=None):
+    if text_columns is None:
+        text_columns = []
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with pd.ExcelWriter(path, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+        worksheet = writer.sheets['Sheet1']
+        # Set text format for specified columns
+        for col in text_columns:
+            if col in df.columns:
+                col_idx = df.columns.get_loc(col) + 1
+                for row_idx in range(2, len(df) + 2):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    cell.number_format = '@'
+        # Auto-adjust column widths
+        for column in worksheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                if cell.value is not None:
+                    max_length = max(max_length, len(str(cell.value)))
+            adjusted_width = max_length + 2
+            worksheet.column_dimensions[column_letter].width = adjusted_width
+
+
 def generate_unmatched_crm_deposits(date_str):
     deposits_matching_path = LISTS_DIR / date_str / "deposits_matching.xlsx"
     if not deposits_matching_path.exists():
@@ -75,7 +100,7 @@ def generate_unmatched_crm_deposits(date_str):
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "Unmatched CRM Deposits.xlsx"
-    unmatched_crm.to_excel(output_path, index=False)
+    save_excel(unmatched_crm, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
     print(f"Unmatched CRM deposits saved to {output_path}")
 
 
@@ -141,7 +166,7 @@ def generate_unapproved_crm_deposits(date_str):
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "Unapproved Deposits.xlsx"
-    unapproved_crm.to_excel(output_path, index=False)
+    save_excel(unapproved_crm, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
     print(f"Unapproved CRM deposits saved to {output_path}")
 
 
@@ -210,19 +235,7 @@ def generate_unmatched_proc_deposits(date_str):
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "Unmatched Processors Deposits.xlsx"
-
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        unmatched_proc.to_excel(writer, index=False, sheet_name='Sheet1')
-        worksheet = writer.sheets['Sheet1']
-        # Set text format for Transaction ID
-        col_idx_tid = unmatched_proc.columns.get_loc('Transaction ID') + 1  # 1-based index
-        for row in range(2, len(unmatched_proc) + 2):  # header is row 1, data starts at row 2
-            worksheet.cell(row=row, column=col_idx_tid).number_format = '@'
-        # Set text format for Last 4 Digits
-        col_idx_last4 = unmatched_proc.columns.get_loc('Last 4 Digits') + 1
-        for row in range(2, len(unmatched_proc) + 2):
-            worksheet.cell(row=row, column=col_idx_last4).number_format = '@'
-
+    save_excel(unmatched_proc, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
     print(f"Unmatched processor deposits saved to {output_path}")
 
 
@@ -370,7 +383,7 @@ def generate_warning_withdrawals(date_str):
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "warnings_withdrawals.xlsx"
-    warnings_df.to_excel(output_path, index=False)
+    save_excel(warnings_df, output_path, text_columns=['crm_last4', 'proc_last4'])
     print(f"Warnings withdrawals saved to {output_path}")
 
 
@@ -417,22 +430,32 @@ def generate_unmatched_proc_withdrawals(date_str):
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "unmatched_proc_withdrawals.xlsx"
-    unmatched_proc.to_excel(output_path, index=False)
+    save_excel(unmatched_proc, output_path, text_columns=['proc_last4'])
     print(f"Unmatched processor withdrawals saved to {output_path}")
 
 
 def remove_compensated_entries(date_str):
-    deposits_path = OUTPUT_DIR / date_str / "unmatched_proc_deposits.xlsx"
+    deposits_path = OUTPUT_DIR / date_str / "Unmatched Processors Deposits.xlsx"
     withdrawals_path = OUTPUT_DIR / date_str / "unmatched_proc_withdrawals.xlsx"
 
     if not deposits_path.exists() or not withdrawals_path.exists():
         print(f"Missing files for compensated entries removal in {date_str}, skipping.")
         return
 
-    deposits_df = pd.read_excel(deposits_path, dtype={'proc_last4': str, 'proc_transaction_id': str})
+    deposits_df = pd.read_excel(deposits_path, dtype={'Last 4 Digits': str, 'Transaction ID': str})
     withdrawals_df = pd.read_excel(withdrawals_path, dtype={'proc_last4': str})
 
-    # Normalize proc_last4 for deposits: pad with leading zeros to 4 digits
+    # Temporarily rename deposits_df columns to match withdrawals_df for merging
+    original_columns = {
+        'Amount': 'proc_amount',
+        'Currency': 'proc_currency',
+        'Last 4 Digits': 'proc_last4',
+        'Processor Name': 'proc_processor_name',
+        'Email': 'proc_email'
+    }
+    deposits_df = deposits_df.rename(columns=original_columns)
+
+    # Normalize last4 for deposits: pad with leading zeros to 4 digits
     deposits_df['norm_last4'] = deposits_df['proc_last4'].apply(lambda x: str(x).zfill(4) if pd.notna(x) else np.nan)
 
     # For withdrawals, proc_last4 is already 4 digits with leading zeros
@@ -463,15 +486,20 @@ def remove_compensated_entries(date_str):
     # Drop from deposits
     deposits_df = deposits_df.drop(dep_indices_to_drop).drop(columns=['norm_last4', 'norm_amount'])
 
+    # Rename deposits_df columns back to original
+    reverse_columns = {v: k for k, v in original_columns.items()}
+    deposits_df = deposits_df.rename(columns=reverse_columns)
+
     # Drop from withdrawals
     withdrawals_df = withdrawals_df.drop(wd_indices_to_drop).drop(columns=['norm_last4', 'norm_amount'])
 
     # Save updated files
-    deposits_df.to_excel(deposits_path, index=False)
-    print(f"Updated unmatched_proc_deposits.xlsx after removing {len(dep_indices_to_drop)} compensated entries.")
+    save_excel(deposits_df, deposits_path, ['Last 4 Digits', 'Transaction ID'])
+    print(f"Updated Unmatched Processors Deposits.xlsx after removing {len(dep_indices_to_drop)} compensated entries.")
 
-    withdrawals_df.to_excel(withdrawals_path, index=False)
+    save_excel(withdrawals_df, withdrawals_path, ['proc_last4'])
     print(f"Updated unmatched_proc_withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
+
 
 def generate_unmatched_crm_withdrawals(date_str):
     withdrawals_matching_path = LISTS_DIR / date_str / "withdrawals_matching.xlsx"
@@ -579,7 +607,7 @@ def generate_unmatched_crm_withdrawals(date_str):
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "Unmatched CRM Withdrawals.xlsx"
-    unmatched_crm.to_excel(output_path, index=False)
+    save_excel(unmatched_crm, output_path, text_columns=['Last 4 Digits'])
     print(f"Unmatched CRM withdrawals saved to {output_path}")
 
 

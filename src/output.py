@@ -406,7 +406,7 @@ def generate_unmatched_proc_withdrawals(date_str):
     # Clean processor columns
     columns_to_clean = [
         'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname',
-        'proc_last4', 'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name'
+        'proc_last4', 'proc_currency', 'proc_amount', 'proc_processor_name'
     ]
     for col in columns_to_clean:
         if col in unmatched_proc.columns:
@@ -417,48 +417,75 @@ def generate_unmatched_proc_withdrawals(date_str):
 
     # Make amounts negative
     unmatched_proc.loc[:, 'proc_amount'] = unmatched_proc['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
-    unmatched_proc.loc[:, 'proc_amount_crm_currency'] = unmatched_proc['proc_amount_crm_currency'].apply(lambda x: -abs(x) if pd.notna(x) else x)
 
-    # Select specified columns (excluding comment)
+    # Manually add Type as 'Withdrawal'
+    unmatched_proc['Type'] = 'Withdrawal'
+
+    # Select specified columns in order (excluding comment and proc_amount_crm_currency)
     columns = [
-        'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4',
-        'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name'
+        'Type', 'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email',
+        'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4'
     ]
     unmatched_proc = unmatched_proc[columns]
+
+    # Rename columns
+    rename_dict = {
+        'Type': 'Type',
+        'proc_date': 'Date',
+        'proc_firstname': 'First Name',
+        'proc_lastname': 'Last Name',
+        'proc_email': 'Email',
+        'proc_amount': 'Amount',
+        'proc_currency': 'Currency',
+        'proc_tp': 'TP',
+        'proc_processor_name': 'Processor Name',
+        'proc_last4': 'Last 4 Digits'
+    }
+    unmatched_proc.rename(columns=rename_dict, inplace=True)
 
     # Save to output/dated/unmatched_proc_withdrawals.xlsx
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "unmatched_proc_withdrawals.xlsx"
-    save_excel(unmatched_proc, output_path, text_columns=['proc_last4'])
+    output_path = output_dir / "Unmatched Processors Withdrawals.xlsx"
+    save_excel(unmatched_proc, output_path, text_columns=['Last 4 Digits'])
     print(f"Unmatched processor withdrawals saved to {output_path}")
 
 
 def remove_compensated_entries(date_str):
     deposits_path = OUTPUT_DIR / date_str / "Unmatched Processors Deposits.xlsx"
-    withdrawals_path = OUTPUT_DIR / date_str / "unmatched_proc_withdrawals.xlsx"
+    withdrawals_path = OUTPUT_DIR / date_str / "Unmatched Processors Withdrawals.xlsx"
 
     if not deposits_path.exists() or not withdrawals_path.exists():
         print(f"Missing files for compensated entries removal in {date_str}, skipping.")
         return
 
     deposits_df = pd.read_excel(deposits_path, dtype={'Last 4 Digits': str, 'Transaction ID': str})
-    withdrawals_df = pd.read_excel(withdrawals_path, dtype={'proc_last4': str})
+    withdrawals_df = pd.read_excel(withdrawals_path, dtype={'Last 4 Digits': str})
 
-    # Temporarily rename deposits_df columns to match withdrawals_df for merging
-    original_columns = {
+    # Temporarily rename deposits_df columns to match proc_ prefix for merging
+    original_columns_deposits = {
         'Amount': 'proc_amount',
         'Currency': 'proc_currency',
         'Last 4 Digits': 'proc_last4',
         'Processor Name': 'proc_processor_name',
         'Email': 'proc_email'
     }
-    deposits_df = deposits_df.rename(columns=original_columns)
+    deposits_df = deposits_df.rename(columns=original_columns_deposits)
+
+    # Temporarily rename withdrawals_df columns to match proc_ prefix for merging
+    original_columns_withdrawals = {
+        'Amount': 'proc_amount',
+        'Currency': 'proc_currency',
+        'Last 4 Digits': 'proc_last4',
+        'Processor Name': 'proc_processor_name',
+        'Email': 'proc_email'
+    }
+    withdrawals_df = withdrawals_df.rename(columns=original_columns_withdrawals)
 
     # Normalize last4 for deposits: pad with leading zeros to 4 digits
     deposits_df['norm_last4'] = deposits_df['proc_last4'].apply(lambda x: str(x).zfill(4) if pd.notna(x) else np.nan)
 
-    # For withdrawals, proc_last4 is already 4 digits with leading zeros
+    # For withdrawals, last4 is already 4 digits with leading zeros
     withdrawals_df['norm_last4'] = withdrawals_df['proc_last4'].apply(lambda x: str(x) if pd.notna(x) else np.nan)
 
     # Normalize amounts to absolute values for comparison
@@ -487,18 +514,22 @@ def remove_compensated_entries(date_str):
     deposits_df = deposits_df.drop(dep_indices_to_drop).drop(columns=['norm_last4', 'norm_amount'])
 
     # Rename deposits_df columns back to original
-    reverse_columns = {v: k for k, v in original_columns.items()}
-    deposits_df = deposits_df.rename(columns=reverse_columns)
+    reverse_columns_deposits = {v: k for k, v in original_columns_deposits.items()}
+    deposits_df = deposits_df.rename(columns=reverse_columns_deposits)
 
     # Drop from withdrawals
     withdrawals_df = withdrawals_df.drop(wd_indices_to_drop).drop(columns=['norm_last4', 'norm_amount'])
 
+    # Rename withdrawals_df columns back to original
+    reverse_columns_withdrawals = {v: k for k, v in original_columns_withdrawals.items()}
+    withdrawals_df = withdrawals_df.rename(columns=reverse_columns_withdrawals)
+
     # Save updated files
-    save_excel(deposits_df, deposits_path, ['Last 4 Digits', 'Transaction ID'])
+    save_excel(deposits_df, deposits_path, text_columns=['Last 4 Digits', 'Transaction ID'])
     print(f"Updated Unmatched Processors Deposits.xlsx after removing {len(dep_indices_to_drop)} compensated entries.")
 
-    save_excel(withdrawals_df, withdrawals_path, ['proc_last4'])
-    print(f"Updated unmatched_proc_withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
+    save_excel(withdrawals_df, withdrawals_path, text_columns=['Last 4 Digits'])
+    print(f"Updated Unmatched Processor Withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
 
 
 def generate_unmatched_crm_withdrawals(date_str):
@@ -647,5 +678,5 @@ def main(date_str):
 
 
 if __name__ == "__main__":
-    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-26"  # Default date for testing; use command-line arg in production
+    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02"  # Default date for testing; use command-line arg in production
     main(DATE)

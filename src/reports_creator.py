@@ -26,7 +26,7 @@ def main(date=None):
 
     # --- Configuration ---
     if date is None:
-        date = sys.argv[1] if len(sys.argv) > 1 else "2025-08-26"  # Default only for standalone
+        date = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02"  # Default only for standalone
     PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
     # --- Activate Renamer with Forced Date ---

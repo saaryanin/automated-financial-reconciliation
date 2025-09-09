@@ -26,7 +26,7 @@ def main(date=None):
 
     # --- Configuration ---
     if date is None:
-        date = sys.argv[1] if len(sys.argv) > 1 else "2025-09-03"  # Default only for standalone
+        date = sys.argv[1] if len(sys.argv) > 1 else "2025-08-26"  # Default only for standalone
     PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
     # --- Activate Renamer with Forced Date ---
@@ -113,11 +113,14 @@ def main(date=None):
     dfs = [df for df in [matched_deposits, unmatched_crm_deposits, unmatched_proc_deposits] if not df.empty]
     if dfs:
         all_rows_deposits = pd.concat(dfs, ignore_index=True)
-        if 'crm_type' in all_rows_deposits.columns:
-            all_rows_deposits = all_rows_deposits.drop(columns=['crm_type'])
     else:
         all_rows_deposits = pd.DataFrame()
     all_rows_deposits = all_rows_deposits.sort_values(by='match_status', ascending=False)
+
+    columns = list(all_rows_deposits.columns)
+    if 'crm_type' in columns:
+        columns.insert(0, columns.pop(columns.index('crm_type')))
+    all_rows_deposits = all_rows_deposits[columns]
 
 
     # Save to Excel

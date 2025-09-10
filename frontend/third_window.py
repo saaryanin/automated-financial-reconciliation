@@ -8,43 +8,23 @@ import os
 from pathlib import Path
 from src.config import LISTS_DIR, OUTPUT_DIR
 from src.output import clean_value, format_date, process_comment, save_excel
-from src.shifts_handler import main as handle_shifts
-import shutil
 from fourth_window import FourthWindow  # Import to open next window
 
 class ThirdWindow(QWidget):
     def __init__(self, date_str):
         super().__init__()
         self.date_str = date_str
+        self.screen_width = QApplication.desktop().screenGeometry().width()
+        self.available_height = QApplication.desktop().availableGeometry().height()
         self.initUI()
         self.run_initial_phase()
+        self.adjust_tables_and_window()
 
     def initUI(self):
-        self.setWindowTitle('Review Shifts and Warnings')
-        screen_width = QApplication.desktop().screenGeometry().width()
-        self.resize(screen_width, 800)
-        qr = self.frameGeometry()
-        cp = QDesktopWidget().availableGeometry().center()
-        qr.moveCenter(cp)
-        self.move(qr.topLeft())
+        self.setWindowTitle('Review Warning Withdrawals')
         layout = QVBoxLayout()
-        # Shifts summary (read-only, made shorter and smaller)
-        shifts_label_hbox = QHBoxLayout()
-        shifts_label = QLabel('Total Shifts by Currency (Read-Only):')
-        shifts_label.setFixedWidth(220)  # 10% wider than text (200 + 20)
-        shifts_label_hbox.addStretch(1)
-        shifts_label_hbox.addWidget(shifts_label)
-        shifts_label_hbox.addStretch(1)
-        layout.addLayout(shifts_label_hbox)
-        shifts_hbox = QHBoxLayout()
-        self.shifts_text = QTextEdit()
-        self.shifts_text.setReadOnly(True)
-        self.shifts_text.setFixedHeight(80)  # Fixed shorter height
-        self.shifts_text.setFixedWidth(200)  # Narrow width
-        shifts_hbox.addStretch(1)
-        shifts_hbox.addWidget(self.shifts_text)
-        shifts_hbox.addStretch(1)
-        layout.addLayout(shifts_hbox)
+        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
         # Placeholder for warnings tables
         self.layout = layout
         # Buttons
@@ -111,7 +91,7 @@ class ThirdWindow(QWidget):
                 image: none;
             }
             QTableView::item {
-                padding-left: 4px;
+                padding: 4px;
             }
             QPushButton#row_button {
                 border-radius: 0;
@@ -128,16 +108,7 @@ class ThirdWindow(QWidget):
     def run_initial_phase(self):
         try:
             output_dir = OUTPUT_DIR / self.date_str
-            if output_dir.exists():
-                shutil.rmtree(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            matched_sums = handle_shifts(self.date_str)
-            if matched_sums:
-                output_path = output_dir / "total_shifts_by_currency.csv"
-                df = pd.DataFrame([matched_sums])
-                df.to_csv(output_path, index=False)
-                shifts_str = "\n".join([f"{curr}: {amt}" for curr, amt in matched_sums.items()])
-                self.shifts_text.setText(shifts_str)
             # Load and prepare warnings
             withdrawals_matching_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
             if not withdrawals_matching_path.exists():
@@ -334,6 +305,62 @@ class ThirdWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
 
+    def adjust_tables_and_window(self):
+        tables = []
+        if hasattr(self, 'differ_table') and self.differ_table:
+            tables.append(self.differ_table)
+        if hasattr(self, 'crm_table') and self.crm_table:
+            tables.append(self.crm_table)
+        if hasattr(self, 'proc_table') and self.proc_table:
+            tables.append(self.proc_table)
+        # First, set base heights without extra
+        for table in tables:
+            table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            table.resizeRowsToContents()
+            height = table.horizontalHeader().height()
+            for i in range(table.rowCount()):
+                height += table.rowHeight(i)
+            height += 2  # For borders/margins
+            table.setFixedHeight(height)
+        self.adjustSize()
+        base_height = self.height()
+        frame_overhead = self.frameGeometry().height() - self.height()
+        buffer = 30
+        max_content_height = self.available_height - frame_overhead - buffer
+        total_rows = sum(table.rowCount() for table in tables)
+        desired_extra_per_row = 10
+        desired_extra_window = 50
+        projected_height = base_height + (total_rows * desired_extra_per_row) + desired_extra_window
+        if projected_height > max_content_height:
+            if total_rows > 0:
+                max_extra_per_row = max(0, (max_content_height - base_height - desired_extra_window) // total_rows)
+                extra_per_row = min(desired_extra_per_row, max_extra_per_row)
+                extra_window = max_content_height - base_height - (total_rows * extra_per_row)
+                if extra_window < 0:
+                    extra_window = 0
+            else:
+                extra_per_row = 0
+                extra_window = min(desired_extra_window, max_content_height - base_height)
+        else:
+            extra_per_row = desired_extra_per_row
+            extra_window = desired_extra_window
+        # Apply extra per row
+        for table in tables:
+            for i in range(table.rowCount()):
+                table.setRowHeight(i, table.rowHeight(i) + extra_per_row)
+            height = table.horizontalHeader().height()
+            for i in range(table.rowCount()):
+                height += table.rowHeight(i)
+            height += 2  # For borders/margins
+            table.setFixedHeight(height)
+        self.adjustSize()
+        available = QDesktopWidget().availableGeometry(QDesktopWidget().primaryScreen())
+        self.setFixedWidth(available.width())
+        self.adjustSize()
+        final_height = min(self.height() + extra_window, max_content_height)
+        self.setFixedHeight(final_height)
+        self.setGeometry(available.x() - 5, 30, available.width(), final_height)
+
     def toggle_accept(self, table, row):
         if row in self.accepted_rows[table]:
             self.accepted_rows[table].remove(row)
@@ -355,6 +382,7 @@ class ThirdWindow(QWidget):
                     orig_idx = int(idx_item.text())
                     self.remove_rows_by_index(orig_idx)
             self.accepted_rows[table].clear()
+        self.adjust_tables_and_window()
 
     def remove_rows_by_index(self, orig_idx):
         for t in [getattr(self, attr, None) for attr in ['differ_table', 'crm_table', 'proc_table']]:

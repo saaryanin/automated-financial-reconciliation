@@ -108,6 +108,9 @@ class ThirdWindow(QWidget):
                 padding: 0px;
                 text-align: center;
             }
+            QLabel {
+                max-height: 30px;
+            }
         """)
 
     def run_initial_phase(self):
@@ -159,8 +162,11 @@ class ThirdWindow(QWidget):
                     differ_label_text = 'Warnings - Cross Processor Withdrawal Detected'
                 else:
                     differ_label_text = 'Warnings - Cross Processors Withdrawals Detected'
-                differ_label = QLabel(differ_label_text)
-                self.layout.addWidget(differ_label)
+                self.differ_label = QLabel(differ_label_text)
+                self.differ_label.setFixedHeight(30)
+                self.differ_sub_layout = QVBoxLayout()
+                self.differ_sub_layout.setSpacing(0)
+                self.differ_sub_layout.addWidget(self.differ_label)
                 self.differ_table = QTableWidget()
                 self.differ_table.setSelectionMode(QTableWidget.NoSelection)
                 self.differ_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -201,7 +207,8 @@ class ThirdWindow(QWidget):
                 self.differ_table.setWordWrap(True)
                 self.differ_table.resizeRowsToContents()
                 self.differ_table.setColumnWidth(1, 40)  # Narrow button column with space
-                self.layout.addWidget(self.differ_table)
+                self.differ_sub_layout.addWidget(self.differ_table)
+                self.layout.addLayout(self.differ_sub_layout)
             # Add other CRM and Proc tables if not empty
             if not other_df.empty:
                 crm_columns = ['crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4',
@@ -220,8 +227,11 @@ class ThirdWindow(QWidget):
                 print("Proc display shape:", proc_display.shape)
                 # CRM table
                 if not crm_display.empty:
-                    crm_label = QLabel('Warnings - CRM Side')
-                    self.layout.addWidget(crm_label)
+                    self.crm_label = QLabel('Warnings - CRM Side')
+                    self.crm_label.setFixedHeight(30)
+                    self.crm_sub_layout = QVBoxLayout()
+                    self.crm_sub_layout.setSpacing(0)
+                    self.crm_sub_layout.addWidget(self.crm_label)
                     self.crm_table = QTableWidget()
                     self.crm_table.setSelectionMode(QTableWidget.NoSelection)
                     self.crm_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -263,11 +273,15 @@ class ThirdWindow(QWidget):
                     self.crm_table.setWordWrap(True)
                     self.crm_table.resizeRowsToContents()
                     self.crm_table.setColumnWidth(1, 40)  # Narrow button column with space
-                    self.layout.addWidget(self.crm_table)
+                    self.crm_sub_layout.addWidget(self.crm_table)
+                    self.layout.addLayout(self.crm_sub_layout)
                 # Proc table
                 if not proc_display.empty:
-                    proc_label = QLabel('Warnings - Processor Side')
-                    self.layout.addWidget(proc_label)
+                    self.proc_label = QLabel('Warnings - Processor Side')
+                    self.proc_label.setFixedHeight(30)
+                    self.proc_sub_layout = QVBoxLayout()
+                    self.proc_sub_layout.setSpacing(0)
+                    self.proc_sub_layout.addWidget(self.proc_label)
                     self.proc_table = QTableWidget()
                     self.proc_table.setSelectionMode(QTableWidget.NoSelection)
                     self.proc_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -309,7 +323,8 @@ class ThirdWindow(QWidget):
                     self.proc_table.setWordWrap(True)
                     self.proc_table.resizeRowsToContents()
                     self.proc_table.setColumnWidth(1, 40)  # Narrow button column with space
-                    self.layout.addWidget(self.proc_table)
+                    self.proc_sub_layout.addWidget(self.proc_table)
+                    self.layout.addLayout(self.proc_sub_layout)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
 
@@ -329,14 +344,32 @@ class ThirdWindow(QWidget):
 
     def adjust_tables_and_window(self):
         tables = []
+        labels = []
+        sub_layouts = []
         if hasattr(self, 'differ_table') and self.differ_table:
             tables.append(self.differ_table)
+            labels.append(self.differ_label if hasattr(self, 'differ_label') else None)
+            sub_layouts.append(self.differ_sub_layout if hasattr(self, 'differ_sub_layout') else None)
         if hasattr(self, 'crm_table') and self.crm_table:
             tables.append(self.crm_table)
+            labels.append(self.crm_label if hasattr(self, 'crm_label') else None)
+            sub_layouts.append(self.crm_sub_layout if hasattr(self, 'crm_sub_layout') else None)
         if hasattr(self, 'proc_table') and self.proc_table:
             tables.append(self.proc_table)
+            labels.append(self.proc_label if hasattr(self, 'proc_label') else None)
+            sub_layouts.append(self.proc_sub_layout if hasattr(self, 'proc_sub_layout') else None)
         # First, set base heights without extra
-        for table in tables:
+        for idx, table in enumerate(tables):
+            label = labels[idx]
+            sub_layout = sub_layouts[idx]
+            if table.rowCount() == 0:
+                table.hide()
+                if label:
+                    label.hide()
+            else:
+                table.show()
+                if label:
+                    label.show()
             table.resizeRowsToContents()
             height = table.horizontalHeader().height()
             for i in range(table.rowCount()):

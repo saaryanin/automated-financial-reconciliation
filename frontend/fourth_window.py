@@ -1,12 +1,12 @@
+# Modified fourth_window.py (changes: run phase 2 functions instead of full main)
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTextEdit, QFileDialog, QMessageBox, QDesktopWidget
 from PyQt5.QtCore import QProcess, Qt
 from PyQt5.QtGui import QLinearGradient, QBrush, QPalette
 import os
 import shutil
-from src.config import OUTPUT_DIR  # Import OUTPUT_DIR from config
+from src.config import OUTPUT_DIR # Import OUTPUT_DIR from config
 import sys
-from src import output  # Direct import for bundled call
-
+from src.output import generate_unmatched_crm_deposits, generate_unapproved_crm_deposits, generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals, remove_compensated_entries, generate_unmatched_crm_withdrawals  # Import modular functions
 class FourthWindow(QWidget):
     def __init__(self, date_str):
         super().__init__()
@@ -16,29 +16,24 @@ class FourthWindow(QWidget):
         print("Debug: initUI completed")
         self.run_output_script()
         print("Debug: run_output_script called")
-
     def initUI(self):
         print("Debug: initUI started")
         self.setWindowTitle('Processing Output')
-        self.setGeometry(300, 300, 800, 600)  # Adjust size as needed
+        self.setGeometry(300, 300, 800, 600) # Adjust size as needed
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
-
         layout = QVBoxLayout()
-
         # Export button (initially disabled)
         self.export_btn = QPushButton('Export')
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self.export_files)
         layout.addWidget(self.export_btn)
-
         # Console output (QTextEdit)
         self.console = QTextEdit()
         self.console.setReadOnly(True)
         layout.addWidget(self.console)
-
         self.setLayout(layout)
         self.setStyleSheet("""
             QWidget {
@@ -77,18 +72,21 @@ class FourthWindow(QWidget):
             }
         """)
         print("Debug: initUI finished")
-
     def run_output_script(self):
         print("Debug: run_output_script started")
         try:
-            output.main(self.date_str)  # Direct call to output.main
-            self.console.append("output completed.")
+            generate_unmatched_crm_deposits(self.date_str)
+            generate_unapproved_crm_deposits(self.date_str)
+            generate_unmatched_proc_deposits(self.date_str)
+            generate_unmatched_proc_withdrawals(self.date_str)
+            remove_compensated_entries(self.date_str)
+            generate_unmatched_crm_withdrawals(self.date_str)
+            self.console.append("Output phase 2 completed.")
             self.export_btn.setEnabled(True)
         except Exception as e:
-            print(f"Error executing output: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to run output: {e}")
+            print(f"Error executing output phase 2: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to run output phase 2: {e}")
         print("Debug: run_output_script finished")
-
     def export_files(self):
         print("Debug: export_files started")
         dest_folder = QFileDialog.getExistingDirectory(self, "Select Folder to Export To")

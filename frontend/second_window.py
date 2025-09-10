@@ -1,7 +1,7 @@
+# Modified second_window.py (changes: open_third_window instead of open_fourth_window)
 # Modified second_window.py
 # Changes:
 # - Resized window to 600x150 and centered it.
-
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTextEdit, QFileDialog, QMessageBox, QDesktopWidget, QApplication, QProgressBar
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QLinearGradient, QBrush, QPalette
@@ -10,18 +10,15 @@ import shutil
 import sys
 import re
 from io import StringIO
-from src.config import OUTPUT_DIR  # Import OUTPUT_DIR from config (if needed; not used here)
-from src import reports_creator  # Direct import for bundled call
-from fourth_window import FourthWindow  # Import to open next window
-
+from src.config import OUTPUT_DIR # Import OUTPUT_DIR from config (if needed; not used here)
+from src import reports_creator # Direct import for bundled call
+from third_window import ThirdWindow # CHANGED: Import ThirdWindow instead of FourthWindow
 class StdoutRedirector(object):
     def __init__(self, progress_bar):
         self.progress_bar = progress_bar
         self.combined_count = 0
-
     def write(self, message):
         cleaned_message = message.strip()
-
         # Update progress based on milestones
         if re.search(r"Debug: combined_crm type: <class 'pandas\.core\.frame\.DataFrame'>, shape: \(\d+, \d+\), columns: \[.*\]", cleaned_message):
             self.combined_count += 1
@@ -41,12 +38,9 @@ class StdoutRedirector(object):
             self.progress_bar.setValue(95)
         elif re.search(r"Total time: \d+\.\d+ seconds", cleaned_message):
             self.progress_bar.setValue(100)
-
-        QApplication.processEvents()  # Update UI immediately
-
+        QApplication.processEvents() # Update UI immediately
     def flush(self):
-        pass  # Needed for compatibility with sys.stdout
-
+        pass # Needed for compatibility with sys.stdout
 class SecondWindow(QWidget):
     def __init__(self, date_str):
         super().__init__()
@@ -57,23 +51,19 @@ class SecondWindow(QWidget):
         # Delay the run to after the window is shown
         QTimer.singleShot(0, self.run_reports_creator_script)
         print("Debug: QTimer set for run_reports_creator_script")
-
     def initUI(self):
         print("Debug: initUI started")
         self.setWindowTitle('Reports Creator Processing')
-        self.resize(600, 150)  # Set smaller size
+        self.resize(600, 150) # Set smaller size
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
-
         layout = QVBoxLayout()
-
         # Continue button (initially disabled; enabled when processing done)
         self.continue_btn = QPushButton('Next')
         self.continue_btn.setEnabled(False)
-        self.continue_btn.clicked.connect(self.open_fourth_window)
-
+        self.continue_btn.clicked.connect(self.open_third_window)  # CHANGED: open_third_window
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
@@ -81,13 +71,11 @@ class SecondWindow(QWidget):
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p%")
-
         # Add to layout: progress and button (no console)
-        layout.addStretch(1)  # Center vertically
+        layout.addStretch(1) # Center vertically
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.continue_btn)
         layout.addStretch(1)
-
         self.setLayout(layout)
         self.setStyleSheet("""
             QWidget {
@@ -129,28 +117,24 @@ class SecondWindow(QWidget):
             }
         """)
         print("Debug: initUI finished")
-
     def run_reports_creator_script(self):
         print("Debug: run_reports_creator_script started")
         # Redirect stdout to the console
         old_stdout = sys.stdout
         redirector = StdoutRedirector(self.progress_bar)
         sys.stdout = redirector
-
         try:
-            reports_creator.main(self.date_str)  # Direct call to reports_creator.main
+            reports_creator.main(self.date_str) # Direct call to reports_creator.main
             # No append since no console
             self.continue_btn.setEnabled(True)
         except Exception as e:
             print(f"Error executing reports_creator: {e}")
             QMessageBox.critical(self, "Error", f"Failed to run reports_creator: {e}")
         finally:
-            sys.stdout = old_stdout  # Restore stdout
-
+            sys.stdout = old_stdout # Restore stdout
         print("Debug: run_reports_creator_script finished")
-
-    def open_fourth_window(self):
-        print("Debug: Opening FourthWindow")
-        self.fourth_window = FourthWindow(self.date_str)
-        self.fourth_window.show()
-        self.close()  # Close second window
+    def open_third_window(self):  # CHANGED: Open third
+        print("Debug: Opening ThirdWindow")
+        self.third_window = ThirdWindow(self.date_str)
+        self.third_window.show()
+        self.close() # Close second window

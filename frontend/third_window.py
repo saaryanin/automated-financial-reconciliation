@@ -31,6 +31,7 @@ class ThirdWindow(QWidget):
         button_layout = QHBoxLayout()
         self.remove_btn = QPushButton('Remove Selected (Accept Match)')
         self.remove_btn.clicked.connect(self.remove_selected)
+        self.remove_btn.setEnabled(False)
         button_layout.addWidget(self.remove_btn)
         next_btn = QPushButton('Next')
         next_btn.clicked.connect(self.on_next)
@@ -59,6 +60,10 @@ class ThirdWindow(QWidget):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #357abd, stop:1 #2a609d);
                 box-shadow: 0 4px 10px rgba(74, 144, 226, 0.4);
             }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
             QTextEdit {
                 background: #ffffff;
                 border: 1px solid #dfe6e9;
@@ -82,7 +87,7 @@ class ThirdWindow(QWidget):
             }
             QHeaderView::section {
                 background-color: #f0f0f0;
-                padding: 4px 8px 4px 4px;
+                padding: 4px;
                 border: 1px solid #dfe6e9;
                 font-size: 12px;
                 height:38px;
@@ -172,7 +177,7 @@ class ThirdWindow(QWidget):
                     button = QPushButton('✅')
                     button.setObjectName('row_button')
                     button.setStyleSheet("color: green; background: transparent; border: none;")
-                    button.clicked.connect(lambda checked, tbl=self.differ_table, rw=i: self.toggle_accept(tbl, rw))
+                    button.clicked.connect(self.make_toggle_accept(self.differ_table))
                     container = QWidget()
                     container_layout = QHBoxLayout()
                     container_layout.addStretch(1)
@@ -234,7 +239,7 @@ class ThirdWindow(QWidget):
                         button = QPushButton('✅')
                         button.setObjectName('row_button')
                         button.setStyleSheet("color: green; background: transparent; border: none;")
-                        button.clicked.connect(lambda checked, tbl=self.crm_table, rw=i: self.toggle_accept(tbl, rw))
+                        button.clicked.connect(self.make_toggle_accept(self.crm_table))
                         container = QWidget()
                         container_layout = QHBoxLayout()
                         container_layout.addStretch(1)
@@ -280,7 +285,7 @@ class ThirdWindow(QWidget):
                         button = QPushButton('✅')
                         button.setObjectName('row_button')
                         button.setStyleSheet("color: green; background: transparent; border: none;")
-                        button.clicked.connect(lambda checked, tbl=self.proc_table, rw=i: self.toggle_accept(tbl, rw))
+                        button.clicked.connect(self.make_toggle_accept(self.proc_table))
                         container = QWidget()
                         container_layout = QHBoxLayout()
                         container_layout.addStretch(1)
@@ -307,6 +312,20 @@ class ThirdWindow(QWidget):
                     self.layout.addWidget(self.proc_table)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
+
+    def make_toggle_accept(self, table):
+        def handler():
+            button = self.sender()
+            row = self.get_row_from_button(table, button)
+            if row != -1:
+                self.toggle_accept(table, row)
+        return handler
+
+    def get_row_from_button(self, table, button):
+        for r in range(table.rowCount()):
+            if table.cellWidget(r, 1).layout().itemAt(1).widget() == button:
+                return r
+        return -1
 
     def adjust_tables_and_window(self):
         tables = []
@@ -386,6 +405,11 @@ class ThirdWindow(QWidget):
             button = table.cellWidget(row, 1).layout().itemAt(1).widget() if table.cellWidget(row,1).layout() else table.cellWidget(row, 1)
             button.setText('X')
             button.setStyleSheet("color: white; background: red; border: none; font-size: 16px;")
+        self.update_remove_button_state()
+
+    def update_remove_button_state(self):
+        total_selected = sum(len(self.accepted_rows[t]) for t in self.accepted_rows)
+        self.remove_btn.setEnabled(total_selected > 0)
 
     def remove_selected(self):
         for table in self.accepted_rows:
@@ -397,6 +421,7 @@ class ThirdWindow(QWidget):
                     self.remove_rows_by_index(orig_idx)
             self.accepted_rows[table].clear()
         self.adjust_tables_and_window()
+        self.update_remove_button_state()
 
     def remove_rows_by_index(self, orig_idx):
         for t in [getattr(self, attr, None) for attr in ['differ_table', 'crm_table', 'proc_table']]:

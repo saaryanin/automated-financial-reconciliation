@@ -181,6 +181,7 @@ class ThirdWindow(QWidget):
                     container_layout.setAlignment(Qt.AlignCenter)
                     container_layout.setContentsMargins(0, 0, 0, 0)
                     container.setLayout(container_layout)
+                    container.setStyleSheet("background-color: #ffffff;")
                     self.differ_table.setCellWidget(i, 1, container)
                     # Data columns
                     for j, col in enumerate(display_columns):
@@ -242,6 +243,7 @@ class ThirdWindow(QWidget):
                         container_layout.setAlignment(Qt.AlignCenter)
                         container_layout.setContentsMargins(0, 0, 0, 0)
                         container.setLayout(container_layout)
+                        container.setStyleSheet("background-color: #ffffff;")
                         self.crm_table.setCellWidget(i, 1, container)
                         # Data columns
                         for j, col in enumerate(crm_columns):
@@ -287,6 +289,7 @@ class ThirdWindow(QWidget):
                         container_layout.setAlignment(Qt.AlignCenter)
                         container_layout.setContentsMargins(0, 0, 0, 0)
                         container.setLayout(container_layout)
+                        container.setStyleSheet("background-color: #ffffff;")
                         self.proc_table.setCellWidget(i, 1, container)
                         # Data columns
                         for j, col in enumerate(proc_columns):
@@ -315,18 +318,17 @@ class ThirdWindow(QWidget):
             tables.append(self.proc_table)
         # First, set base heights without extra
         for table in tables:
-            table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             table.resizeRowsToContents()
             height = table.horizontalHeader().height()
             for i in range(table.rowCount()):
                 height += table.rowHeight(i)
-            height += 2  # For borders/margins
+            height += 20  # Increased buffer for full row visibility
             table.setFixedHeight(height)
         self.adjustSize()
         base_height = self.height()
         frame_overhead = self.frameGeometry().height() - self.height()
-        buffer = 30
-        max_content_height = self.available_height - frame_overhead - buffer
+        taskbar_and_program_bar_size = 30
+        max_content_height = self.available_height - frame_overhead - taskbar_and_program_bar_size
         total_rows = sum(table.rowCount() for table in tables)
         desired_extra_per_row = 10
         desired_extra_window = 50
@@ -348,18 +350,30 @@ class ThirdWindow(QWidget):
         for table in tables:
             for i in range(table.rowCount()):
                 table.setRowHeight(i, table.rowHeight(i) + extra_per_row)
-            height = table.horizontalHeader().height()
-            for i in range(table.rowCount()):
-                height += table.rowHeight(i)
-            height += 2  # For borders/margins
-            table.setFixedHeight(height)
+        # Now adjust table heights with potential scrolling
+        max_visible_rows = 4
+        for table in tables:
+            row_count = table.rowCount()
+            if row_count > max_visible_rows:
+                table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                height = table.horizontalHeader().height()
+                for i in range(min(row_count, max_visible_rows)):
+                    height += table.rowHeight(i)
+                height += 20  # Increased buffer for full row visibility
+                table.setFixedHeight(height)
+            else:
+                table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                height = table.horizontalHeader().height()
+                for i in range(row_count):
+                    height += table.rowHeight(i)
+                height += 20  # Increased buffer for full row visibility
+                table.setFixedHeight(height)
         self.adjustSize()
-        available = QDesktopWidget().availableGeometry(QDesktopWidget().primaryScreen())
-        self.setFixedWidth(available.width())
+        self.setFixedWidth(self.screen_width)
         self.adjustSize()
         final_height = min(self.height() + extra_window, max_content_height)
         self.setFixedHeight(final_height)
-        self.setGeometry(available.x() - 5, 30, available.width(), final_height)
+        self.setGeometry(-5, taskbar_and_program_bar_size, self.screen_width, final_height)
 
     def toggle_accept(self, table, row):
         if row in self.accepted_rows[table]:

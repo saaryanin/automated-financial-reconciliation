@@ -1,4 +1,3 @@
-# Modified output.py (changes: remove main's initial calls for phase1, as handled in third_window; main can remain for standalone testing but not used in frontend)
 # src/output.py
 import sys
 import pandas as pd
@@ -334,8 +333,8 @@ def generate_unmatched_proc_withdrawals(date_str):
         print(f"Withdrawals matching file not found: {withdrawals_matching_path}")
         return
     df = pd.read_excel(withdrawals_matching_path)
-    # Filter rows where comment == "No matching CRM row found"
-    unmatched_proc = df[df['comment'] == "No matching CRM row found"]
+    # Filter rows where comment contains "No matching CRM row found"
+    unmatched_proc = df[df['comment'].str.contains("No matching CRM row found", na=False)]
     unmatched_proc = unmatched_proc.copy() # Fix SettingWithCopyWarning if needed in future mods
     if unmatched_proc.empty:
         print(f"No unmatched processor withdrawals found for {date_str}, skipping file creation.")
@@ -456,6 +455,8 @@ def generate_unmatched_crm_withdrawals(date_str):
     group2 = df[(df['match_status'] == 1) & (df['payment_status'] == 0) & (df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
     # Group 3: comment == "Withdrawal cancelled with no matching withdrawal found"
     group3 = df[df['comment'] == "Withdrawal cancelled with no matching withdrawal found"].copy()
+    # Group 4: comment contains "Unmatched due to warning"
+    group4 = df[df['comment'].str.contains("Unmatched due to warning", na=False)].copy()
     # Process Group 1
     if not group1.empty:
         group1['comment'] = '' # Blank comment
@@ -499,8 +500,11 @@ def generate_unmatched_crm_withdrawals(date_str):
             return new_amount, new_comment
         # Apply parsing
         group2[['crm_amount', 'comment']] = group2.apply(parse_adjustment, axis=1, result_type='expand')
-    # Combine all groups (OR between them)
-    unmatched_crm = pd.concat([group1, group2, group3], ignore_index=True)
+    # Process Group 4: Keep as is, crm_amount negative
+    if not group4.empty:
+        group4['crm_amount'] = group4['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+    # Combine all groups
+    unmatched_crm = pd.concat([group1, group2, group3, group4], ignore_index=True)
     if unmatched_crm.empty:
         print(f"No unmatched CRM withdrawals found for {date_str}, skipping file creation.")
         return

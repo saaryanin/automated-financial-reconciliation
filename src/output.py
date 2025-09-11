@@ -287,6 +287,23 @@ def process_comment(comment):
         last4_str = "Matched the same last4 :" + " , ".join(last4s.values())
         new_parts.append(last4_str)
     return ' . '.join(new_parts)
+def process_unmatched_comment(comment):
+    if pd.isna(comment):
+        return ''
+    comment_str = str(comment)
+    if comment_str.startswith("Unmatched due to warning: "):
+        return comment_str[len("Unmatched due to warning: "):]
+    elif "No matching CRM row found (due to warning: " in comment_str:
+        start = comment_str.find("due to warning: ") + len("due to warning: ")
+        end = comment_str.rfind(")")
+        if end != -1:
+            return comment_str[start:end]
+        else:
+            return comment_str[start:]
+    elif comment_str == "No matching CRM row found":
+        return ''
+    else:
+        return comment_str
 def generate_warning_withdrawals(date_str):
     withdrawals_matching_path = LISTS_DIR / date_str / "withdrawals_matching.xlsx"
     if not withdrawals_matching_path.exists():
@@ -337,10 +354,10 @@ def generate_unmatched_proc_withdrawals(date_str):
     # Filter rows where warning == False
     df = df[df['warning'] == False]
     print(f"Rows after warning == False: {len(df)}")
-    # Filter unmatched processor withdrawals: match_status == 0 and comment == "No matching CRM row found"
-    unmatched_proc = df[(df['match_status'] == 0) & (df['comment'] == "No matching CRM row found")]
+    # Filter unmatched processor withdrawals: match_status == 0 and comment contains "No matching CRM row found"
+    unmatched_proc = df[(df['match_status'] == 0) & (df['comment'].str.contains("No matching CRM row found", na=False))]
     unmatched_proc = unmatched_proc.copy() # Fix SettingWithCopyWarning if needed in future mods
-    print(f"Rows after match_status==0 and comment=='No matching CRM row found': {len(unmatched_proc)}")
+    print(f"Rows after match_status==0 and comment contains 'No matching CRM row found': {len(unmatched_proc)}")
     print(f"Number of rows with proc_email NaN: {unmatched_proc['proc_email'].isna().sum()}")
     if not unmatched_proc.empty:
         nan_proc_rows = unmatched_proc[unmatched_proc['proc_email'].isna()][['proc_email', 'comment', 'match_status', 'proc_amount']]
@@ -353,6 +370,8 @@ def generate_unmatched_proc_withdrawals(date_str):
     if unmatched_proc.empty:
         print(f"No unmatched processor withdrawals found for {date_str}, skipping file creation.")
         return
+    # Process comments for unmatched (strips prefixes for warnings, sets non-warning to empty)
+    unmatched_proc.loc[:, 'comment'] = unmatched_proc['comment'].apply(process_unmatched_comment)
     # Clean processor columns
     columns_to_clean = [
         'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname',
@@ -367,10 +386,10 @@ def generate_unmatched_proc_withdrawals(date_str):
     unmatched_proc.loc[:, 'proc_amount'] = unmatched_proc['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
     # Manually add Type as 'Withdrawal'
     unmatched_proc['Type'] = 'Withdrawal'
-    # Select specified columns in order (excluding comment and proc_amount_crm_currency)
+    # Select specified columns in order (including comment)
     columns = [
         'Type', 'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email',
-        'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4'
+        'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment'
     ]
     unmatched_proc = unmatched_proc[columns]
     # Rename columns
@@ -384,7 +403,8 @@ def generate_unmatched_proc_withdrawals(date_str):
         'proc_currency': 'Currency',
         'proc_tp': 'TP',
         'proc_processor_name': 'Processor Name',
-        'proc_last4': 'Last 4 Digits'
+        'proc_last4': 'Last 4 Digits',
+        'comment': 'Comment'
     }
     unmatched_proc.rename(columns=rename_dict, inplace=True)
     # Save to output/dated/unmatched_proc_withdrawals.xlsx
@@ -514,9 +534,10 @@ def generate_unmatched_crm_withdrawals(date_str):
             return new_amount, new_comment
         # Apply parsing
         group2[['crm_amount', 'comment']] = group2.apply(parse_adjustment, axis=1, result_type='expand')
-    # Process Group 4: Keep as is, crm_amount negative
+    # Process Group 4: Keep as is, crm_amount negative, but process comment to strip prefix
     if not group4.empty:
         group4['crm_amount'] = group4['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+        group4['comment'] = group4['comment'].apply(process_unmatched_comment)
     # Combine all groups
     unmatched_crm = pd.concat([group1, group2, group3, group4], ignore_index=True)
     if unmatched_crm.empty:

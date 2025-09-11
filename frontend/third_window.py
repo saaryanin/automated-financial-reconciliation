@@ -511,7 +511,7 @@ class ThirdWindow(QWidget):
                 proc_row['match_status'] = 0
                 proc_row['payment_status'] = 0
                 proc_row['warning'] = False
-                proc_row['comment'] = "No matching CRM row found"
+                proc_row['comment'] = f"No matching CRM row found (due to warning: {row['comment']})"
                 matching_df = pd.concat([matching_df, pd.DataFrame([proc_row])], ignore_index=True)
         matching_df.to_excel(withdrawals_matching_path, index=False)
         # Save accepted warnings (removed) as full rows

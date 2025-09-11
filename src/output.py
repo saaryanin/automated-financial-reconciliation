@@ -333,9 +333,23 @@ def generate_unmatched_proc_withdrawals(date_str):
         print(f"Withdrawals matching file not found: {withdrawals_matching_path}")
         return
     df = pd.read_excel(withdrawals_matching_path)
-    # Filter rows where comment contains "No matching CRM row found"
-    unmatched_proc = df[df['comment'].str.contains("No matching CRM row found", na=False)]
+    print(f"Total rows in withdrawals_matching: {len(df)}")
+    # Filter rows where warning == False
+    df = df[df['warning'] == False]
+    print(f"Rows after warning == False: {len(df)}")
+    # Filter unmatched processor withdrawals: match_status == 0 and comment == "No matching CRM row found"
+    unmatched_proc = df[(df['match_status'] == 0) & (df['comment'] == "No matching CRM row found")]
     unmatched_proc = unmatched_proc.copy() # Fix SettingWithCopyWarning if needed in future mods
+    print(f"Rows after match_status==0 and comment=='No matching CRM row found': {len(unmatched_proc)}")
+    print(f"Number of rows with proc_email NaN: {unmatched_proc['proc_email'].isna().sum()}")
+    if not unmatched_proc.empty:
+        nan_proc_rows = unmatched_proc[unmatched_proc['proc_email'].isna()][['proc_email', 'comment', 'match_status', 'proc_amount']]
+        if not nan_proc_rows.empty:
+            print("Sample NaN proc_email rows:")
+            print(nan_proc_rows.head())
+    # Filter out rows with NaN proc_email
+    unmatched_proc = unmatched_proc[unmatched_proc['proc_email'].notna()].copy()
+    print(f"Rows after filtering NaN proc_email: {len(unmatched_proc)}")
     if unmatched_proc.empty:
         print(f"No unmatched processor withdrawals found for {date_str}, skipping file creation.")
         return

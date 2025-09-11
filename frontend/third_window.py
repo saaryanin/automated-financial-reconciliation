@@ -480,51 +480,54 @@ class ThirdWindow(QWidget):
         withdrawals_matching_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
         matching_df = pd.read_excel(withdrawals_matching_path)
         for idx in removed_indices:
-            matching_df.at[idx, 'warning'] = False
+            if idx in matching_df.index:
+                matching_df.at[idx, 'warning'] = False
+                matching_df.at[idx, 'match_status'] = 1
+                matching_df.at[idx, 'payment_status'] = 1
+                matching_df.at[idx, 'comment'] = "Warning accepted as match"
         for idx in sorted(list(remaining_indices), reverse=True):
-            row = matching_df.loc[idx]
-            crm_row = row.copy()
-            proc_cols = [c for c in matching_df.columns if c.startswith('proc_')]
-            crm_row[proc_cols] = np.nan
-            crm_row['match_status'] = 0
-            crm_row['payment_status'] = 0
-            crm_row['warning'] = False
-            crm_row['comment'] = f"Unmatched due to warning: {row['comment']}"
-            proc_row = row.copy()
-            crm_cols = [c for c in matching_df.columns if c.startswith('crm_') and c != 'crm_type']
-            proc_row[crm_cols] = np.nan
-            proc_row['match_status'] = 0
-            proc_row['payment_status'] = 0
-            proc_row['warning'] = False
-            proc_row['comment'] = "No matching CRM row found (due to warning)"
-            matching_df = matching_df.drop(idx)
-            matching_df = pd.concat([matching_df, pd.DataFrame([crm_row]), pd.DataFrame([proc_row])], ignore_index=True)
+            if idx not in self.warnings_df.index:
+                continue
+            row = self.warnings_df.loc[idx]
+            has_crm = pd.notna(row.get('crm_email', np.nan))
+            has_proc = pd.notna(row.get('proc_email', np.nan))
+            if idx in matching_df.index:
+                matching_df = matching_df.drop(idx)
+            if has_crm:
+                crm_row = row.copy()
+                proc_cols = [c for c in matching_df.columns if c.startswith('proc_')]
+                for col in proc_cols:
+                    crm_row[col] = np.nan
+                crm_row['match_status'] = 0
+                crm_row['payment_status'] = 0
+                crm_row['warning'] = False
+                crm_row['comment'] = f"Unmatched due to warning: {row['comment']}"
+                matching_df = pd.concat([matching_df, pd.DataFrame([crm_row])], ignore_index=True)
+            if has_proc:
+                proc_row = row.copy()
+                crm_cols = [c for c in matching_df.columns if c.startswith('crm_') and c != 'crm_type']
+                for col in crm_cols:
+                    proc_row[col] = np.nan
+                proc_row['match_status'] = 0
+                proc_row['payment_status'] = 0
+                proc_row['warning'] = False
+                proc_row['comment'] = "No matching CRM row found"
+                matching_df = pd.concat([matching_df, pd.DataFrame([proc_row])], ignore_index=True)
         matching_df.to_excel(withdrawals_matching_path, index=False)
-        # Save kept warnings, splitting other
+        # Save accepted warnings (removed) as full rows
         display_columns = [
             'crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4',
             'proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment'
         ]
-        kept_df = pd.DataFrame(columns=display_columns)
-        differ_mask = self.warnings_df['comment'].str.contains("Processor names differ", na=False)
-        differ_remaining = [idx for idx in remaining_indices if differ_mask.loc[idx]]
-        other_remaining = [idx for idx in remaining_indices if not differ_mask.loc[idx]]
-        for idx in differ_remaining:
-            row = self.warnings_df.loc[idx][display_columns]
-            kept_df = pd.concat([kept_df, pd.DataFrame([row])], ignore_index=True)
-        crm_cols = ['crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4', 'comment']
-        proc_cols = ['proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment']
-        for idx in other_remaining:
-            full_row = self.warnings_df.loc[idx][display_columns]
-            crm_row = pd.Series(np.nan, index=display_columns)
-            crm_row[crm_cols] = full_row[crm_cols]
-            proc_row = pd.Series(np.nan, index=display_columns)
-            proc_row[proc_cols] = full_row[proc_cols]
-            kept_df = pd.concat([kept_df, pd.DataFrame([crm_row]), pd.DataFrame([proc_row])], ignore_index=True)
+        accepted_df = pd.DataFrame(columns=display_columns)
+        for idx in removed_indices:
+            if idx in self.warnings_df.index:
+                row = self.warnings_df.loc[idx][display_columns]
+                accepted_df = pd.concat([accepted_df, pd.DataFrame([row])], ignore_index=True)
         output_dir = OUTPUT_DIR / self.date_str
         output_path = output_dir / "warnings_withdrawals.xlsx"
-        if not kept_df.empty:
-            save_excel(kept_df, output_path, text_columns=['crm_last4', 'proc_last4'])
+        if not accepted_df.empty:
+            save_excel(accepted_df, output_path, text_columns=['crm_last4', 'proc_last4'])
         # Proceed to fourth window
         self.fourth_window = FourthWindow(self.date_str)
         self.fourth_window.show()

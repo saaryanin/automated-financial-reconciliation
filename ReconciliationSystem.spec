@@ -6,7 +6,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('data', 'data'),
-        ('frontend/calendar_icon.png', '.'),  # Copies to bundle root
+        ('frontend/calendar_icon.png', '.'),  # Keep this to copy to temp root
     ],
     hiddenimports=[
         'PyQt5.sip',
@@ -43,7 +43,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # Change to True for debugging (shows console with prints)
+    console=True,  # Change to True for debugging (shows console with prints)
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -248,26 +248,26 @@ class ReconciliationWindow(QWidget):
                 color: #ffffff;
 
             }
-QMessageBox {
-    background-color: #ffffff;
-    border: 2px solid #4a90e2;
-    border-radius: 8px;
-    padding: 10px;
-}
-QMessageBox QLabel {
-    color: #1a252f;
-}
-QMessageBox QPushButton {
-    background: #4a90e2;
-    color: #ffffff;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-}
-QMessageBox QPushButton:hover {
-    background: #357abd;
-}
-""" % icon_path)  # Format the dynamic path into the stylesheet
+            QMessageBox {
+                background-color: #ffffff;
+                border: 2px solid #4a90e2;
+                border-radius: 8px;
+                padding: 10px;
+            }
+            QMessageBox QLabel {
+                color: #1a252f;
+            }
+            QMessageBox QPushButton {
+                background: #4a90e2;
+                color: #ffffff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QMessageBox QPushButton:hover {
+                background: #357abd;
+            }
+            """ % icon_path)  # Format the dynamic path into the stylesheet
 
         # Adjust window position and size
         screen = QApplication.desktop().screenGeometry()

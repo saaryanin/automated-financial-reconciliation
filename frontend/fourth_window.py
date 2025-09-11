@@ -188,23 +188,54 @@ class FourthWindow(QWidget):
         qr.moveCenter(cp)
         self.move(qr.topLeft())
         print(f"Debug: Window resized to {window_width}x{window_height}")
+
     def run_output_script(self):
         print("Debug: run_output_script started")
         try:
-            # Skip generation functions for standalone testing (files already exist in temp/output/2025-08-05)
-            # generate_unmatched_crm_deposits(self.date_str)
-            # generate_unapproved_crm_deposits(self.date_str)
-            # generate_unmatched_proc_deposits(self.date_str)
-            # generate_unmatched_proc_withdrawals(self.date_str)
-            # remove_compensated_entries(self.date_str)
-            # generate_unmatched_crm_withdrawals(self.date_str)
+            from src.output import (
+                generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
+                generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
+                remove_compensated_entries, generate_unmatched_crm_withdrawals
+            )
+            from src.shifts_handler import main as handle_shifts  # Import for CSV save
+            from src.config import OUTPUT_DIR
+
+            output_dir = OUTPUT_DIR / self.date_str
+            output_dir.mkdir(parents=True,
+                             exist_ok=True)  # Ensure dir exists (no rmtree—avoids overwriting warnings.xlsx)
+
+            # Save shifts CSV (idempotent; re-runs handle_shifts safely)
+            matched_sums = handle_shifts(self.date_str)
+            if matched_sums:
+                output_path = output_dir / "total_shifts_by_currency.csv"
+                df = pd.DataFrame([matched_sums])
+                if not df.empty:
+                    df.to_csv(output_path, index=False)
+                    print(f"Debug: Shifts CSV saved: {output_path}")
+                else:
+                    print("Debug: No shifts data—skipping CSV")
+            else:
+                print("Debug: handle_shifts returned None/empty—skipping CSV")
+
+            # Phase 2: Generate all output files (unmatched/unapproved/etc.)
+            generate_unmatched_crm_deposits(self.date_str)
+            generate_unapproved_crm_deposits(self.date_str)
+            generate_unmatched_proc_deposits(self.date_str)
+            generate_unmatched_proc_withdrawals(self.date_str)
+            remove_compensated_entries(self.date_str)
+            generate_unmatched_crm_withdrawals(self.date_str)
+
+            # Now populate UI (table will show if CSV exists)
             self.populate_shifts_table()
             self.shifts_label.show()
             self.table_container.show()
             self.export_btn.setEnabled(True)
-            self.adjust_window_size() # Dynamically fit window to content
+            self.adjust_window_size()
+            print("Debug: Phase 2 complete—all files generated")
         except Exception as e:
             print(f"Error executing output phase 2: {e}")
+            import traceback
+            traceback.print_exc()  # For EXE console debug
             QMessageBox.critical(self, "Error", f"Failed to run output phase 2: {e}")
         print("Debug: run_output_script finished")
     def export_files(self):

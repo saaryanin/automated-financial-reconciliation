@@ -1,4 +1,3 @@
-# src/third_window.py
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel, QTableWidget, QTableWidgetItem, QMessageBox, QDesktopWidget, QApplication, QHeaderView
 from PyQt5.QtCore import Qt, QItemSelectionModel, QItemSelection
 import pandas as pd
@@ -354,7 +353,7 @@ class ThirdWindow(QWidget):
                     self.crm_table.setColumnWidth(1, 40)  # Narrow button column with space
                     self.crm_sub_layout.addWidget(self.crm_table)
                     self.layout.addLayout(self.crm_sub_layout)
-                # Proc table
+                # PSP table
                 if not self.proc_display.empty:
                     self.proc_label = QLabel('Warnings - Processors Side')
                     self.proc_label.setFixedHeight(30)

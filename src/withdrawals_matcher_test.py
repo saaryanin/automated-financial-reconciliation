@@ -1,13 +1,12 @@
-from difflib import SequenceMatcher
+#Changes in _flag_warnings and cross_processors functions in order to make the withdrawals_matching file look as it should be before third_window destroys it.
+
 from datetime import datetime, timedelta
 from functools import lru_cache
 import pandas as pd
 import logging, threading, time
-from collections import Counter
 from src.utils import create_cancelled_row,normalize_string,clean_last4
 from difflib import SequenceMatcher
 from collections import defaultdict
-from collections import Counter
 import re
 
 
@@ -427,6 +426,7 @@ class ReconciliationEngine:
         # Default: not better (keep old)
         return False
 
+    #Handles matched unmatched rows of different processors
     def _cross_processor_last_chance(self, crm_df, processor_df, used_crm, used_proc, matches):
         card_group = {"safecharge", "shift4", "powercash", "trustpayments"}
         ewallet_group = {"paypal", "skrill", "neteller"}
@@ -486,8 +486,10 @@ class ReconciliationEngine:
             if best_match:
                 used_proc.add(proc_idx)
                 used_crm.add(best_match['crm_row_index'])
-                best_match['comment'] = (best_match.get('comment', '') + " [Cross-processor fallback]").strip()
-                best_match['cross_processor_fallback'] = True
+                # Fixed comment: Set directly to include processor names (CRM first, then PROC), no duplication or brackets
+                fallback_comment = f"Cross-processor fallback match - {best_match.get('crm_processor_name', 'unknown')} matched {proc_row['proc_processor_name']}"
+                best_match['comment'] = fallback_comment  # Override any existing comment to avoid duplication
+                best_match['cross_processor_fallback'] = True  # Flag for Rule 3 to skip adding "differ" comment
                 matches.append(best_match)
                 self.metrics['matched_fallback'] += 1
                 self.metrics['unmatched'] -= 1
@@ -498,6 +500,8 @@ class ReconciliationEngine:
                 else:
                     self.metrics['incorrect_payments'] += 1
 
+    # Modified _flag_warning function in src/withdrawals_matcher.py
+    # (Only the Rule 3 section is changed; rest remains identical)
     def _flag_warning(self, matches, processor_df):
         used_real = {
             idx
@@ -611,17 +615,23 @@ class ReconciliationEngine:
                 for m_i in matched_rows:
                     current_comment = matches[m_i].get('comment', '')
                     matches[m_i]['comment'] = current_comment + ' . ' + comment_m if current_comment else comment_m
-        # Rule 3: Cross processors
-        for i, m in enumerate(matches):
-            if m.get('match_status') == 1:
-                crm_pname = str(m.get('crm_processor_name', '')).lower()
-                proc_pname = str(m.get('proc_processor_name', '')).lower()
-                if crm_pname != proc_pname:
-                    m['warning'] = True  # Trigger warning
-                    comment = f"Processor names differ ({crm_pname} matched {proc_pname})"
-                    current_comment = m.get('comment', '')
-                    m['comment'] = current_comment + ' . ' + comment if current_comment else comment
-                    print(f"Row {i + 1} breaks Rule 3: Processor names differ ({crm_pname} matched {proc_pname})")
+        # Rule 3: Cross processors (modified to handle fallback without duplicate comment)
+            for i, m in enumerate(matches):
+                if m.get('match_status') == 1:
+                    crm_pname = str(m.get('crm_processor_name', '')).lower()
+                    proc_pname = str(m.get('proc_processor_name', '')).lower()
+                    if crm_pname != proc_pname:
+                        m['warning'] = True  # Still flag warning for cross-processor
+                        if not m.get('cross_processor_fallback', False):
+                            # Only add differ comment if not fallback (avoids duplication with fallback comment)
+                            comment = f"Processor names differ ({crm_pname} matched {proc_pname})"
+                            current_comment = m.get('comment', '')
+                            m['comment'] = current_comment + ' . ' + comment if current_comment else comment
+                            print(
+                                f"Row {i + 1} breaks Rule 3: Processor names differ ({crm_pname} matched {proc_pname})")
+                        else:
+                            # For fallback, comment is already set; just log without adding
+                            print(f"Row {i + 1} is cross-processor fallback (warning flagged, comment preset)")
         # Rule 4: Partial email matching for shift4, only for rows where crm_processor_name is shift4
         unmatched_crm_indices = [i for i, m in enumerate(matches) if
                                  m['match_status'] == 0 and m.get('crm_date') is not None and

@@ -113,6 +113,23 @@ class ThirdWindow(QWidget):
             }
         """)
 
+    def format_cell_value(self, val, col):
+        if pd.isna(val):
+            return ''
+        if col in ['CRM Amount', 'PSP Amount']:
+            if isinstance(val, (int, float)):
+                if isinstance(val, float) and val.is_integer():
+                    return str(int(val))
+                else:
+                    return f"{val:.1f}"
+            return str(val)
+        elif col in ['CRM TP', 'PSP TP', 'CRM Last 4 Digits', 'PSP Last 4 Digits']:
+            if isinstance(val, (int, float)):
+                return str(int(val))
+            return str(val)
+        else:
+            return str(val)
+
     def run_initial_phase(self):
         try:
             output_dir = OUTPUT_DIR / self.date_str
@@ -127,10 +144,11 @@ class ThirdWindow(QWidget):
             print("Warnings DF columns:", list(self.warnings_df.columns))
             if self.warnings_df.empty:
                 return
-            # Clean and process as before
+            # Clean processor columns
             columns_to_clean = [
                 'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname',
-                'proc_last4', 'proc_currency', 'proc_amount', 'proc_amount_crm_currency'
+                'proc_last4', 'proc_currency', 'proc_amount', 'proc_amount_crm_currency',
+                'crm_amount', 'crm_tp', 'crm_last4'
             ]
             for col in columns_to_clean:
                 if col in self.warnings_df.columns:
@@ -141,21 +159,54 @@ class ThirdWindow(QWidget):
             self.warnings_df['proc_amount'] = self.warnings_df['proc_amount'].apply(
                 lambda x: -abs(x) if pd.notna(x) else x)
             self.warnings_df['comment'] = self.warnings_df['comment'].apply(process_comment)
-            # Select display columns
+            # Rename columns for display
+            rename_dict = {
+                'crm_email': 'CRM Email',
+                'crm_amount': 'CRM Amount',
+                'crm_currency': 'CRM Currency',
+                'crm_tp': 'CRM TP',
+                'crm_processor_name': 'CRM Processor Name',
+                'crm_last4': 'CRM Last 4 Digits',
+                'proc_email': 'PSP Email',
+                'proc_amount': 'PSP Amount',
+                'proc_currency': 'PSP Currency',
+                'proc_tp': 'PSP TP',
+                'proc_processor_name': 'PSP Processor Name',
+                'proc_last4': 'PSP Last 4 Digits',
+            }
+            self.warnings_df.rename(columns=rename_dict, inplace=True)
+            # Define display columns with new names
             display_columns = [
-                'crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4',
-                'proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment'
+                'CRM Email', 'CRM Amount', 'CRM Currency', 'CRM TP', 'CRM Processor Name', 'CRM Last 4 Digits',
+                'PSP Email', 'PSP Amount', 'PSP Currency', 'PSP TP', 'PSP Processor Name',
+                'PSP Last 4 Digits', 'comment'
             ]
-            display_df = self.warnings_df[display_columns]
+            # Select display columns
+            self.display_df = self.warnings_df[display_columns].copy()
             # Split into differ and other
             differ_mask = self.warnings_df['comment'].str.contains("Processor names differ", na=False)
-            differ_df = display_df[differ_mask]
-            other_df = display_df[~differ_mask]
+            differ_df = self.display_df[differ_mask]
+            other_df = self.display_df[~differ_mask]
             self.differ_indices = self.warnings_df.index[differ_mask].tolist()
             self.other_indices = self.warnings_df.index[~differ_mask].tolist()
             print("Differ indices:", self.differ_indices)
             print("Other indices:", self.other_indices)
             self.accepted_rows = {}
+            # Define CRM and Proc columns with new names
+            crm_columns = ['CRM Email', 'CRM Amount', 'CRM Currency', 'CRM TP', 'CRM Processor Name', 'CRM Last 4 Digits',
+                           'comment']
+            proc_columns = ['PSP Email', 'PSP Amount', 'PSP Currency', 'PSP TP', 'PSP Processor Name',
+                            'PSP Last 4 Digits', 'comment']
+            # Filter rows for CRM table: where CRM Email is not nan
+            crm_mask = other_df['CRM Email'].notna()
+            crm_display = other_df[crm_mask]
+            crm_indices = [self.other_indices[i] for i in range(len(other_df)) if crm_mask.iloc[i]]
+            # Filter rows for Proc table: where PSP Email is not na
+            proc_mask = other_df['PSP Email'].notna()
+            proc_display = other_df[proc_mask]
+            proc_indices = [self.other_indices[i] for i in range(len(other_df)) if proc_mask.iloc[i]]
+            print("CRM display shape:", crm_display.shape)
+            print("Proc display shape:", proc_display.shape)
             # Add differ table if not empty
             if not differ_df.empty:
                 if len(differ_df) == 1:
@@ -177,6 +228,7 @@ class ThirdWindow(QWidget):
                 self.differ_table.verticalHeader().setVisible(False)
                 self.differ_table.setRowCount(len(differ_df))
                 self.accepted_rows[self.differ_table] = set()
+                center_cols = ['CRM Email', 'PSP Email', 'CRM Amount', 'PSP Amount', 'CRM TP', 'PSP TP', 'CRM Last 4 Digits', 'PSP Last 4 Digits', 'CRM Currency', 'PSP Currency', 'CRM Processor Name', 'PSP Processor Name']
                 for i, row_idx in enumerate(self.differ_indices):
                     self.differ_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
                     # Button column
@@ -197,9 +249,11 @@ class ThirdWindow(QWidget):
                     # Data columns
                     for j, col in enumerate(display_columns):
                         val = differ_df.iloc[i][col]
-                        item_text = '' if pd.isna(val) else str(val)
+                        item_text = self.format_cell_value(val, col)
                         item = QTableWidgetItem(item_text)
                         item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                        if col in center_cols:
+                            item.setTextAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
                         self.differ_table.setItem(i, j + 2, item)
                 self.differ_table.hideColumn(0)
                 self.differ_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -211,20 +265,6 @@ class ThirdWindow(QWidget):
                 self.layout.addLayout(self.differ_sub_layout)
             # Add other CRM and Proc tables if not empty
             if not other_df.empty:
-                crm_columns = ['crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4',
-                               'comment']
-                proc_columns = ['proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name',
-                                'proc_last4', 'comment']
-                # Filter rows for CRM table: where crm_email is not nan
-                crm_mask = other_df['crm_email'].notna()
-                crm_display = other_df[crm_mask]
-                crm_indices = [self.other_indices[i] for i in range(len(other_df)) if crm_mask.iloc[i]]
-                # Filter rows for Proc table: where proc_email is not na
-                proc_mask = other_df['proc_email'].notna()
-                proc_display = other_df[proc_mask]
-                proc_indices = [self.other_indices[i] for i in range(len(other_df)) if proc_mask.iloc[i]]
-                print("CRM display shape:", crm_display.shape)
-                print("Proc display shape:", proc_display.shape)
                 # CRM table
                 if not crm_display.empty:
                     self.crm_label = QLabel('Warnings - CRM Side')
@@ -242,6 +282,7 @@ class ThirdWindow(QWidget):
                     self.crm_table.verticalHeader().setVisible(False)
                     self.crm_table.setRowCount(len(crm_display))
                     self.accepted_rows[self.crm_table] = set()
+                    center_cols = ['CRM Email', 'CRM Amount', 'CRM TP', 'CRM Last 4 Digits', 'CRM Currency', 'CRM Processor Name']
                     for i in range(len(crm_display)):
                         row_idx = crm_indices[i]
                         self.crm_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
@@ -263,9 +304,11 @@ class ThirdWindow(QWidget):
                         # Data columns
                         for j, col in enumerate(crm_columns):
                             val = crm_display.iloc[i][col]
-                            item_text = '' if pd.isna(val) else str(val)
+                            item_text = self.format_cell_value(val, col)
                             item = QTableWidgetItem(item_text)
                             item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                            if col in center_cols:
+                                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
                             self.crm_table.setItem(i, j + 2, item)
                     self.crm_table.hideColumn(0)
                     self.crm_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -292,6 +335,7 @@ class ThirdWindow(QWidget):
                     self.proc_table.verticalHeader().setVisible(False)
                     self.proc_table.setRowCount(len(proc_display))
                     self.accepted_rows[self.proc_table] = set()
+                    center_cols = ['PSP Email', 'PSP Amount', 'PSP TP', 'PSP Last 4 Digits', 'PSP Currency', 'PSP Processor Name']
                     for i in range(len(proc_display)):
                         row_idx = proc_indices[i]
                         self.proc_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
@@ -313,9 +357,11 @@ class ThirdWindow(QWidget):
                         # Data columns
                         for j, col in enumerate(proc_columns):
                             val = proc_display.iloc[i][col]
-                            item_text = '' if pd.isna(val) else str(val)
+                            item_text = self.format_cell_value(val, col)
                             item = QTableWidgetItem(item_text)
                             item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                            if col in center_cols:
+                                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
                             self.proc_table.setItem(i, j + 2, item)
                     self.proc_table.hideColumn(0)
                     self.proc_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -485,10 +531,25 @@ class ThirdWindow(QWidget):
                 matching_df.at[idx, 'match_status'] = 1
                 matching_df.at[idx, 'payment_status'] = 1
                 matching_df.at[idx, 'comment'] = "Warning accepted as match"
+        # Reverse rename for logic columns
+        reverse_rename = {
+            'CRM Email': 'crm_email',
+            'CRM Amount': 'crm_amount',
+            'CRM Currency': 'crm_currency',
+            'CRM TP': 'crm_tp',
+            'CRM Processor Name': 'crm_processor_name',
+            'CRM Last 4 Digits': 'crm_last4',
+            'PSP Email': 'proc_email',
+            'PSP Amount': 'proc_amount',
+            'PSP Currency': 'proc_currency',
+            'PSP TP': 'proc_tp',
+            'PSP Processor Name': 'proc_processor_name',
+            'PSP Last 4 Digits': 'proc_last4',
+        }
         for idx in sorted(list(remaining_indices), reverse=True):
             if idx not in self.warnings_df.index:
                 continue
-            row = self.warnings_df.loc[idx]
+            row = self.warnings_df.loc[idx].rename(reverse_rename)
             has_crm = pd.notna(row.get('crm_email', np.nan))
             has_proc = pd.notna(row.get('proc_email', np.nan))
             if idx in matching_df.index:
@@ -501,7 +562,8 @@ class ThirdWindow(QWidget):
                 crm_row['match_status'] = 0
                 crm_row['payment_status'] = 0
                 crm_row['warning'] = False
-                crm_row['comment'] = f"Unmatched due to warning: {row['comment']}"
+                orig_comment = self.warnings_df.loc[idx]['comment']
+                crm_row['comment'] = f"Unmatched due to warning: {orig_comment}"
                 matching_df = pd.concat([matching_df, pd.DataFrame([crm_row])], ignore_index=True)
             if has_proc:
                 proc_row = row.copy()
@@ -511,23 +573,24 @@ class ThirdWindow(QWidget):
                 proc_row['match_status'] = 0
                 proc_row['payment_status'] = 0
                 proc_row['warning'] = False
-                proc_row['comment'] = f"No matching CRM row found (due to warning: {row['comment']})"
+                orig_comment = self.warnings_df.loc[idx]['comment']
+                proc_row['comment'] = f"No matching CRM row found (due to warning: {orig_comment})"
                 matching_df = pd.concat([matching_df, pd.DataFrame([proc_row])], ignore_index=True)
         matching_df.to_excel(withdrawals_matching_path, index=False)
         # Save accepted warnings (removed) as full rows
         display_columns = [
-            'crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4',
-            'proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment'
+            'CRM Email', 'CRM Amount', 'CRM Currency', 'CRM TP', 'CRM Processor Name', 'CRM Last 4 Digits',
+            'PSP Email', 'PSP Amount', 'PSP Currency', 'PSP TP', 'PSP Processor Name', 'PSP Last 4 Digits', 'comment'
         ]
         accepted_df = pd.DataFrame(columns=display_columns)
         for idx in removed_indices:
-            if idx in self.warnings_df.index:
-                row = self.warnings_df.loc[idx][display_columns]
+            if idx in self.display_df.index:
+                row = self.display_df.loc[idx][display_columns]
                 accepted_df = pd.concat([accepted_df, pd.DataFrame([row])], ignore_index=True)
         output_dir = OUTPUT_DIR / self.date_str
         output_path = output_dir / "warnings_withdrawals.xlsx"
         if not accepted_df.empty:
-            save_excel(accepted_df, output_path, text_columns=['crm_last4', 'proc_last4'])
+            save_excel(accepted_df, output_path, text_columns=['CRM Last 4 Digits', 'PSP Last 4 Digits'])
         # Proceed to fourth window
         self.fourth_window = FourthWindow(self.date_str)
         self.fourth_window.show()

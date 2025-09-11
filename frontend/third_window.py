@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+import re
 from pathlib import Path
 from src.config import LISTS_DIR, OUTPUT_DIR
 from src.output import clean_value, format_date, process_comment, save_excel
@@ -130,6 +131,21 @@ class ThirdWindow(QWidget):
         else:
             return str(val)
 
+    def extract_match_key(self, comment):
+        if pd.isna(comment) or str(comment).strip() == '':
+            return '', ''
+        comment_str = str(comment)
+        # Prefer last occurrence
+        last4_match = re.search(r'last4\s*:\s*([^\s, .]+)', comment_str)
+        if last4_match:
+            val = last4_match.group(1).strip()
+            return 'last4', val
+        email_match = re.search(r'email\s*:\s*(.+?)(?:\s+in\s|(?:\s*\.|$))', comment_str)
+        if email_match:
+            val = email_match.group(1).strip()
+            return 'email', val.lower()
+        return '', comment_str.lower() or ''
+
     def run_initial_phase(self):
         try:
             output_dir = OUTPUT_DIR / self.date_str
@@ -139,7 +155,7 @@ class ThirdWindow(QWidget):
             if not withdrawals_matching_path.exists():
                 raise FileNotFoundError(f"Withdrawals matching file not found: {withdrawals_matching_path}")
             full_df = pd.read_excel(withdrawals_matching_path)
-            self.warnings_df = full_df[full_df['warning'] == True].copy()  # Keep full for later
+            self.warnings_df = full_df[full_df['warning'] == True].copy()
             print("Warnings DF shape:", self.warnings_df.shape)
             print("Warnings DF columns:", list(self.warnings_df.columns))
             if self.warnings_df.empty:
@@ -186,7 +202,7 @@ class ThirdWindow(QWidget):
             # Split into differ and other
             differ_mask = self.warnings_df['comment'].str.contains("Processor names differ", na=False)
             differ_df = self.display_df[differ_mask]
-            other_df = self.display_df[~differ_mask]
+            other_df = self.display_df[~differ_mask].copy()
             self.differ_indices = self.warnings_df.index[differ_mask].tolist()
             self.other_indices = self.warnings_df.index[~differ_mask].tolist()
             print("Differ indices:", self.differ_indices)
@@ -197,16 +213,36 @@ class ThirdWindow(QWidget):
                            'comment']
             proc_columns = ['PSP Email', 'PSP Amount', 'PSP Currency', 'PSP TP', 'PSP Processor Name',
                             'PSP Last 4 Digits', 'comment']
-            # Filter rows for CRM table: where CRM Email is not nan
+            # Extract match keys for sorting other_df subsets
+            other_df[['match_type', 'match_value']] = pd.DataFrame(
+                other_df['comment'].apply(self.extract_match_key).tolist(), index=other_df.index
+            )
+            # Filter and sort CRM table rows
             crm_mask = other_df['CRM Email'].notna()
-            crm_display = other_df[crm_mask]
-            crm_indices = [self.other_indices[i] for i in range(len(other_df)) if crm_mask.iloc[i]]
-            # Filter rows for Proc table: where PSP Email is not na
+            crm_df = other_df[crm_mask].copy()
+            if not crm_df.empty:
+                crm_df['secondary_sort'] = crm_df.index
+                crm_sorted = crm_df.sort_values(['match_type', 'match_value', 'secondary_sort'])
+                self.crm_display = crm_sorted.drop(['match_type', 'match_value', 'secondary_sort'], axis=1)
+                self.crm_indices = list(crm_sorted.index)
+            else:
+                self.crm_display = pd.DataFrame()
+                self.crm_indices = []
+            # Filter and sort Proc table rows
             proc_mask = other_df['PSP Email'].notna()
-            proc_display = other_df[proc_mask]
-            proc_indices = [self.other_indices[i] for i in range(len(other_df)) if proc_mask.iloc[i]]
-            print("CRM display shape:", crm_display.shape)
-            print("Proc display shape:", proc_display.shape)
+            proc_df = other_df[proc_mask].copy()
+            if not proc_df.empty:
+                proc_df['secondary_sort'] = proc_df.index
+                proc_sorted = proc_df.sort_values(['match_type', 'match_value', 'secondary_sort'])
+                self.proc_display = proc_sorted.drop(['match_type', 'match_value', 'secondary_sort'], axis=1)
+                self.proc_indices = list(proc_sorted.index)
+            else:
+                self.proc_display = pd.DataFrame()
+                self.proc_indices = []
+            print("CRM display shape:", self.crm_display.shape)
+            print("Proc display shape:", self.proc_display.shape)
+            print("Sample CRM match keys (first 3):", list(zip(self.crm_display.index[:3], self.crm_display['comment'][:3])))
+            print("Sample Proc match keys (first 3):", list(zip(self.proc_display.index[:3], self.proc_display['comment'][:3])))
             # Add differ table if not empty
             if not differ_df.empty:
                 if len(differ_df) == 1:
@@ -266,7 +302,7 @@ class ThirdWindow(QWidget):
             # Add other CRM and Proc tables if not empty
             if not other_df.empty:
                 # CRM table
-                if not crm_display.empty:
+                if not self.crm_display.empty:
                     self.crm_label = QLabel('Warnings - CRM Side')
                     self.crm_label.setFixedHeight(30)
                     self.crm_sub_layout = QVBoxLayout()
@@ -280,11 +316,11 @@ class ThirdWindow(QWidget):
                     self.crm_table.setHorizontalHeaderLabels(['orig_index'] + visible_crm_columns)
                     self.crm_table.horizontalHeader().setVisible(True)
                     self.crm_table.verticalHeader().setVisible(False)
-                    self.crm_table.setRowCount(len(crm_display))
+                    self.crm_table.setRowCount(len(self.crm_display))
                     self.accepted_rows[self.crm_table] = set()
                     center_cols = ['CRM Email', 'CRM Amount', 'CRM TP', 'CRM Last 4 Digits', 'CRM Currency', 'CRM Processor Name']
-                    for i in range(len(crm_display)):
-                        row_idx = crm_indices[i]
+                    for i in range(len(self.crm_display)):
+                        row_idx = self.crm_indices[i]
                         self.crm_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
                         # Button column
                         button = QPushButton('✅')
@@ -303,7 +339,7 @@ class ThirdWindow(QWidget):
                         self.crm_table.setCellWidget(i, 1, container)
                         # Data columns
                         for j, col in enumerate(crm_columns):
-                            val = crm_display.iloc[i][col]
+                            val = self.crm_display.iloc[i][col]
                             item_text = self.format_cell_value(val, col)
                             item = QTableWidgetItem(item_text)
                             item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
@@ -319,8 +355,8 @@ class ThirdWindow(QWidget):
                     self.crm_sub_layout.addWidget(self.crm_table)
                     self.layout.addLayout(self.crm_sub_layout)
                 # Proc table
-                if not proc_display.empty:
-                    self.proc_label = QLabel('Warnings - Processor Side')
+                if not self.proc_display.empty:
+                    self.proc_label = QLabel('Warnings - Processors Side')
                     self.proc_label.setFixedHeight(30)
                     self.proc_sub_layout = QVBoxLayout()
                     self.proc_sub_layout.setSpacing(0)
@@ -333,11 +369,11 @@ class ThirdWindow(QWidget):
                     self.proc_table.setHorizontalHeaderLabels(['orig_index'] + visible_proc_columns)
                     self.proc_table.horizontalHeader().setVisible(True)
                     self.proc_table.verticalHeader().setVisible(False)
-                    self.proc_table.setRowCount(len(proc_display))
+                    self.proc_table.setRowCount(len(self.proc_display))
                     self.accepted_rows[self.proc_table] = set()
                     center_cols = ['PSP Email', 'PSP Amount', 'PSP TP', 'PSP Last 4 Digits', 'PSP Currency', 'PSP Processor Name']
-                    for i in range(len(proc_display)):
-                        row_idx = proc_indices[i]
+                    for i in range(len(self.proc_display)):
+                        row_idx = self.proc_indices[i]
                         self.proc_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
                         # Button column
                         button = QPushButton('✅')
@@ -356,7 +392,7 @@ class ThirdWindow(QWidget):
                         self.proc_table.setCellWidget(i, 1, container)
                         # Data columns
                         for j, col in enumerate(proc_columns):
-                            val = proc_display.iloc[i][col]
+                            val = self.proc_display.iloc[i][col]
                             item_text = self.format_cell_value(val, col)
                             item = QTableWidgetItem(item_text)
                             item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)

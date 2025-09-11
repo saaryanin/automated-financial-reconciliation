@@ -2,10 +2,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTex
 from PyQt5.QtCore import Qt, QItemSelectionModel, QItemSelection
 import pandas as pd
 import numpy as np
-import sys
-import os
 import re
-from pathlib import Path
 from src.config import LISTS_DIR, OUTPUT_DIR
 from src.output import clean_value, format_date, process_comment, save_excel
 from fourth_window import FourthWindow  # Import to open next window

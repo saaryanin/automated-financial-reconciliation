@@ -1,17 +1,8 @@
-# Modified second_window.py (changes: open_third_window instead of open_fourth_window)
-# Modified second_window.py
-# Changes:
-# - Resized window to 600x150 and centered it.
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTextEdit, QFileDialog, QMessageBox, QDesktopWidget, QApplication, QProgressBar
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QLinearGradient, QBrush, QPalette
-import os
-import shutil
 import sys
 import re
-from io import StringIO
-from src.config import OUTPUT_DIR # Import OUTPUT_DIR from config (if needed; not used here)
-from src import reports_creator # Direct import for bundled call
+from src.reports_creator import main # Direct import for bundled call
 from third_window import ThirdWindow # CHANGED: Import ThirdWindow instead of FourthWindow
 class StdoutRedirector(object):
     def __init__(self, progress_bar):
@@ -124,7 +115,7 @@ class SecondWindow(QWidget):
         redirector = StdoutRedirector(self.progress_bar)
         sys.stdout = redirector
         try:
-            reports_creator.main(self.date_str) # Direct call to reports_creator.main
+            main(self.date_str) # Direct call to reports_creator.main
             # No append since no console
             self.continue_btn.setEnabled(True)
         except Exception as e:

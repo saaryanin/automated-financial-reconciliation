@@ -1,24 +1,15 @@
-# Modified first_window.py
-# Changes:
-# - Removed self.show_info("Success", f"Rates saved to {file_path}") to eliminate the rates alert.
-
 import sys
 import os
 import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QGridLayout, QFileDialog, QDateEdit, QMessageBox, QCalendarWidget,
                              QToolButton)
-from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QDate, QMimeData, QProcess, QTimer
-from fourth_window import FourthWindow  # Import the fourth window class
 from second_window import SecondWindow  # NEW: Import the new second window class
 import pandas as pd
 import re
 from pathlib import Path
-# Use direct import from src.config
 from src.config import RATES_DIR, CRM_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
-from src.processor_renamer import run_renamer
-from src import reports_creator  # Direct import for bundled call (not used here anymore)
 
 
 class DropButton(QPushButton):

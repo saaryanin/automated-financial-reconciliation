@@ -1,17 +1,10 @@
-# Modified fourth_window.py (changes: made standalone runnable with hardcoded date_str="2025-08-05", skipped output generation functions for testing display only, added QApplication for direct execution)
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QFileDialog, \
-    QMessageBox, QDesktopWidget, QHeaderView, QApplication
+    QMessageBox, QDesktopWidget, QHeaderView, QApplication, QHBoxLayout, QSizePolicy, QStyle
 from PyQt5.QtCore import QProcess, Qt
-from PyQt5.QtGui import QLinearGradient, QBrush, QPalette
-import os
 import shutil
 import pandas as pd
-from src.config import OUTPUT_DIR  # Import OUTPUT_DIR from config
+from src.config import OUTPUT_DIR # Import OUTPUT_DIR from config
 import sys
-from src.output import generate_unmatched_crm_deposits, generate_unapproved_crm_deposits, \
-    generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals, remove_compensated_entries, \
-    generate_unmatched_crm_withdrawals  # Import modular functions (not used in standalone mode)
-
 
 class FourthWindow(QWidget):
     def __init__(self, date_str):
@@ -22,18 +15,17 @@ class FourthWindow(QWidget):
         print("Debug: initUI completed")
         self.run_output_script()
         print("Debug: run_output_script called")
-
     def initUI(self):
         print("Debug: initUI started")
         self.setWindowTitle('Processing Output')
-        self.setGeometry(300, 300, 800, 600)  # Initial size, will be adjusted dynamically
+        self.setGeometry(300, 300, 800, 600) # Initial size, will be adjusted dynamically
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
         layout = QVBoxLayout()
-        layout.setSpacing(15)  # Add spacing between widgets for better layout
-        layout.setContentsMargins(20, 20, 20, 20)  # Margins for the window content
+        layout.setSpacing(15) # Add spacing between widgets for better layout
+        layout.setContentsMargins(20, 20, 20, 20) # Margins for the window content
         # Export button (initially disabled)
         self.export_btn = QPushButton('Export Daily Reconciliation Reports')
         self.export_btn.setEnabled(False)
@@ -49,9 +41,8 @@ class FourthWindow(QWidget):
                 font-weight: 600;
                 color: #2c3e50;
                 padding: 10px;
-                background: #ffffff;
-                border: 1px solid #dfe6e9;
-                border-radius: 4px;
+                background: transparent;
+                border: none;
             }
         """)
         self.shifts_label.hide()
@@ -62,32 +53,45 @@ class FourthWindow(QWidget):
         self.shifts_table.horizontalHeader().setVisible(True)
         self.shifts_table.verticalHeader().setVisible(False)
         self.shifts_table.horizontalHeader().setStretchLastSection(False)
+        self.shifts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.shifts_table.horizontalHeader().setSectionsClickable(False)
+        self.shifts_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.shifts_table.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.shifts_table.setAlternatingRowColors(True)
         self.shifts_table.setStyleSheet("""
             QTableWidget {
                 font-family: 'Segoe UI', Arial, sans-serif;
                 font-size: 16px;
-                background: #ffffff;
-                border: 1px solid #dfe6e9;
+                background: transparent;
+                border: none;
                 border-radius: 4px;
                 gridline-color: #dfe6e9;
-                alternate-background-color: #f8f9fa;
+                alternate-background-color: transparent;
             }
             QHeaderView::section {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4a90e2, stop:1 #357abd);
                 color: #ffffff;
                 font-weight: 600;
-                padding: 20px;  /* Increased vertical padding for full header visibility */
+                padding: 12px 15px; /* Reduced vertical padding for tighter fit */
                 border: none;
                 font-size: 16px;
             }
             QTableWidget::item {
-                padding: 20px 15px;  /* Increased padding for full content visibility */
+                background-color: transparent;
+                padding: 12px 15px; /* Reduced padding for tighter fit */
                 color: #2c3e50;
             }
         """)
-        self.shifts_table.hide()
-        layout.addWidget(self.shifts_table)
+        # Container for centering the table horizontally
+        self.table_container = QWidget()
+        self.table_layout = QHBoxLayout(self.table_container)
+        self.table_layout.addStretch(1)
+        self.table_layout.addWidget(self.shifts_table)
+        self.table_layout.addStretch(1)
+        self.table_layout.setContentsMargins(0, 0, 0, 0)
+        self.table_layout.setSpacing(0)
+        self.table_container.hide()
+        layout.addWidget(self.table_container)
         self.setLayout(layout)
         self.setStyleSheet("""
             QWidget {
@@ -99,7 +103,7 @@ class FourthWindow(QWidget):
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4a90e2, stop:1 #357abd);
                 color: #ffffff;
-                border: 2px solid #2a609d;  /* Added border for clear button outline */
+                border: 2px solid #2a609d; /* Added border for clear button outline */
                 padding: 12px 25px;
                 border-radius: 6px;
                 font-size: 16px;
@@ -108,18 +112,17 @@ class FourthWindow(QWidget):
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #357abd, stop:1 #2a609d);
                 box-shadow: 0 4px 10px rgba(74, 144, 226, 0.4);
-                border: 2px solid #1e4b7a;  /* Darker border on hover */
+                border: 2px solid #1e4b7a; /* Darker border on hover */
             }
             QPushButton:disabled {
                 background: #b0b7c3;
                 color: #ffffff;
-                border: 2px solid #8a9aa6;  /* Border for disabled state */
+                border: 2px solid #8a9aa6; /* Border for disabled state */
                 cursor: not-allowed;
                 box-shadow: none;
             }
         """)
         print("Debug: initUI finished")
-
     def populate_shifts_table(self):
         shifts_path = OUTPUT_DIR / self.date_str / "total_shifts_by_currency.csv"
         if not shifts_path.exists():
@@ -138,49 +141,53 @@ class FourthWindow(QWidget):
             self.shifts_table.setHorizontalHeaderLabels(df.columns.tolist())
             for i in range(len(df)):
                 for j in range(len(df.columns)):
-                    item = QTableWidgetItem(str(df.iloc[i, j]))
+                    value = df.iloc[i, j]
+                    formatted_value = f"{value:g}"
+                    item = QTableWidgetItem(formatted_value)
                     item.setTextAlignment(Qt.AlignCenter)
                     self.shifts_table.setItem(i, j, item)
-            # Adjust column widths based on content length (increased cap for better visibility)
-            for j in range(len(df.columns)):
-                value_str = str(df.iloc[0, j]) if len(df) > 0 else ""
-                base_width = 80
-                content_width = len(value_str) * 8 + 20
-                col_width = min(base_width + content_width, 150)  # Increased cap to 150px per column
+            # Resize columns to contents first to get natural widths
+            self.shifts_table.resizeColumnsToContents()
+            # Find the maximum column width to ensure no clipping and equal widths for centering
+            max_width = 0
+            for j in range(self.shifts_table.columnCount()):
+                max_width = max(max_width, self.shifts_table.columnWidth(j))
+            # Set a minimum column width
+            min_col_width = 120
+            col_width = max(max_width, min_col_width)
+            # Set all columns to the same width for symmetric centering
+            for j in range(self.shifts_table.columnCount()):
                 self.shifts_table.setColumnWidth(j, col_width)
-            self.shifts_table.resizeColumnsToContents()  # Ensure columns fit content
-            # Set increased row height for better visibility
+            # Set row height for better visibility but tighter
             for i in range(len(df)):
-                self.shifts_table.setRowHeight(i, 80)
+                self.shifts_table.setRowHeight(i, 60)
+            # Calculate and set fixed width for the table to prevent expansion and ensure centering
+            col_sum = sum(self.shifts_table.columnWidth(j) for j in range(self.shifts_table.columnCount()))
+            vheader_w = self.shifts_table.verticalHeader().width()
+            frame_w = self.shifts_table.style().pixelMetric(QStyle.PM_DefaultFrameWidth) * 2
+            desired_w = col_sum + vheader_w + frame_w
+            self.shifts_table.setFixedWidth(desired_w)
         except Exception as e:
             print(f"Debug: Error populating shifts table: {e}")
-
     def adjust_window_size(self):
         # Calculate required width: max of button width or table width
         button_width = self.export_btn.sizeHint().width()
-        table_width = self.shifts_table.horizontalHeader().length() + self.style().pixelMetric(
-            self.style().PM_ScrollBarExtent) + 20  # Include scrollbar space if needed
-        window_width = max(button_width,
-                           table_width) + self.layout().contentsMargins().left() + self.layout().contentsMargins().right() + 40  # Extra for borders
-
-        # Calculate required height: button + label + table (header + row + padding) + margins
+        table_width = self.shifts_table.width()
+        window_width = max(button_width, table_width) + self.layout().contentsMargins().left() + self.layout().contentsMargins().right()
+        # Calculate required height: button + label + table (header + rows + padding) + margins
         button_height = self.export_btn.sizeHint().height()
         label_height = self.shifts_label.sizeHint().height()
         header_height = self.shifts_table.horizontalHeader().height()
-        row_height = self.shifts_table.rowHeight(0) if self.shifts_table.rowCount() > 0 else 0
-        table_height = header_height + row_height + 40  # Extra padding for table layer height
-        window_height = button_height + label_height + table_height + self.layout().spacing() * 2 + self.layout().contentsMargins().top() + self.layout().contentsMargins().bottom() + 40  # Fit tightly
-
+        total_row_height = sum(self.shifts_table.rowHeight(i) for i in range(self.shifts_table.rowCount()))
+        table_height = header_height + total_row_height
+        window_height = button_height + label_height + table_height + self.layout().spacing() * 2 + self.layout().contentsMargins().top() + self.layout().contentsMargins().bottom()
         self.resize(window_width, window_height)
-
         # Recenter the window
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
-
         print(f"Debug: Window resized to {window_width}x{window_height}")
-
     def run_output_script(self):
         print("Debug: run_output_script started")
         try:
@@ -193,14 +200,13 @@ class FourthWindow(QWidget):
             # generate_unmatched_crm_withdrawals(self.date_str)
             self.populate_shifts_table()
             self.shifts_label.show()
-            self.shifts_table.show()
+            self.table_container.show()
             self.export_btn.setEnabled(True)
-            self.adjust_window_size()  # Dynamically fit window to content
+            self.adjust_window_size() # Dynamically fit window to content
         except Exception as e:
             print(f"Error executing output phase 2: {e}")
             QMessageBox.critical(self, "Error", f"Failed to run output phase 2: {e}")
         print("Debug: run_output_script finished")
-
     def export_files(self):
         print("Debug: export_files started")
         dest_folder = QFileDialog.getExistingDirectory(self, "Select Folder to Export To")
@@ -219,10 +225,8 @@ class FourthWindow(QWidget):
             else:
                 QMessageBox.warning(self, "Error", f"No files found in output/{self.date_str}")
         print("Debug: export_files finished")
-
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = FourthWindow("2025-08-05")
+    window = FourthWindow("2025-08-06")
     window.show()
     sys.exit(app.exec_())

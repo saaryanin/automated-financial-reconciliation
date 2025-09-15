@@ -169,8 +169,8 @@ class ThirdWindow(QWidget):
             for col in columns_to_clean:
                 if col in self.warnings_df.columns:
                     self.warnings_df[col] = self.warnings_df[col].apply(clean_value)
-            self.warnings_df['proc_date'] = self.warnings_df['proc_date'].apply(format_date)
-            self.warnings_df['crm_date'] = self.warnings_df['crm_date'].apply(format_date) # Explicit format for dates
+            self.warnings_df['proc_date'] = self.warnings_df['proc_date'].apply(lambda x: format_date(x, is_proc=True))
+            self.warnings_df['crm_date'] = self.warnings_df['crm_date'].apply(lambda x: format_date(x, is_proc=False))  # Explicit format for dates
             self.warnings_df['crm_amount'] = self.warnings_df['crm_amount'].apply(
                 lambda x: -abs(x) if pd.notna(x) else x)
             self.warnings_df['proc_amount'] = self.warnings_df['proc_amount'].apply(
@@ -609,7 +609,7 @@ class ThirdWindow(QWidget):
                 crm_row_dict['crm_type'] = 'Withdrawal'
                 # Ensure date formatted
                 if 'crm_date' in crm_row_dict:
-                    crm_row_dict['crm_date'] = format_date(crm_row_dict['crm_date'])
+                    crm_row_dict['crm_date'] = format_date(crm_row_dict['crm_date'], is_proc=False)
                 unselected_split_rows.append(crm_row_dict)
             # Create Proc split if applicable
             if has_proc:
@@ -624,7 +624,7 @@ class ThirdWindow(QWidget):
                 proc_row_dict['crm_type'] = np.nan
                 # Ensure date formatted
                 if 'proc_date' in proc_row_dict:
-                    proc_row_dict['proc_date'] = format_date(proc_row_dict['proc_date'])
+                    proc_row_dict['proc_date'] = format_date(proc_row_dict['proc_date'], is_proc=True)
                 unselected_split_rows.append(proc_row_dict)
 
         # Append the split rows to matching_df

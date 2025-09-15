@@ -177,7 +177,7 @@ def generate_unmatched_proc_deposits(date_str):
         if col in unmatched_proc.columns:
             unmatched_proc.loc[:, col] = unmatched_proc[col].apply(clean_value)
     # Format proc_date
-    unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(format_date)
+    unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(lambda x: format_date(x, is_proc=True))
     # Ensure proc_transaction_id and proc_last4 are strings and pad
     unmatched_proc['proc_transaction_id'] = unmatched_proc['proc_transaction_id'].astype(str)
     pad_last4(unmatched_proc, 'proc_last4')
@@ -241,23 +241,35 @@ def clean_value(val):
         return np.nan
     return val
 
-def format_date(val):
+
+def format_date(val, is_proc=False):
     if pd.isna(val):
         return val
     if isinstance(val, datetime):
-        return val.strftime('%d/%m/%Y %I:%M:%S %p')
-    if isinstance(val, str):
+        dt_str = val.strftime('%m/%d/%Y %I:%M:%S %p')
+    elif isinstance(val, str):
         val = val.strip()
         try:
-            dt = datetime.strptime(val, '%Y-%m-%d %H:%M:%S')
-            return dt.strftime('%d/%m/%Y %I:%M:%S %p')
-        except ValueError:
-            try:
-                dt = pd.to_datetime(val)
-                return dt.strftime('%d/%m/%Y %I:%M:%S %p')
-            except:
-                return val
-    return val
+            dt = pd.to_datetime(val, dayfirst=is_proc)
+            dt_str = dt.strftime('%m/%d/%Y %I:%M:%S %p')
+        except:
+            return val
+    else:
+        return str(val) if val is not None else np.nan
+
+    # Strip leading zeros from month and day (e.g., 08/05 → 8/5)
+    if ' ' in dt_str:
+        date_part, time_part = dt_str.split(' ', 1)
+    else:
+        date_part = dt_str
+        time_part = ''
+    month, day, year = date_part.split('/')
+    month = month.lstrip('0') or '0'  # Avoid empty if 00 (edge case)
+    day = day.lstrip('0') or '0'
+    new_date_str = f"{month}/{day}/{year}"
+    if time_part:
+        new_date_str += f" {time_part}"
+    return new_date_str
 
 def process_comment(comment):
     if pd.isna(comment):
@@ -371,7 +383,7 @@ def generate_warning_withdrawals(date_str):
     pad_last4(warnings_df, 'crm_last4')
     pad_last4(warnings_df, 'proc_last4')
     # Format proc_date
-    warnings_df.loc[:, 'proc_date'] = warnings_df['proc_date'].apply(format_date)
+    warnings_df.loc[:, 'proc_date'] = warnings_df['proc_date'].apply(lambda x: format_date(x, is_proc=True))
     # Make amounts negative
     warnings_df.loc[:, 'crm_amount'] = warnings_df['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
     warnings_df.loc[:, 'proc_amount'] = warnings_df['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
@@ -444,7 +456,7 @@ def generate_unmatched_proc_withdrawals(date_str, matching_df=None):
         if col in unmatched_proc.columns:
             unmatched_proc.loc[:, col] = unmatched_proc[col].apply(clean_value)
     # Format proc_date
-    unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(format_date)
+    unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(lambda x: format_date(x, is_proc=True))
     # Make amounts negative
     unmatched_proc.loc[:, 'proc_amount'] = unmatched_proc['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
     # Pad proc_last4
@@ -609,6 +621,9 @@ def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
     if unmatched_crm.empty:
         print(f"No unmatched CRM withdrawals found for {date_str}, skipping file creation.")
         return
+
+    # Format crm_date consistently (applies to all groups, including regular unmatched)
+    unmatched_crm['crm_date'] = unmatched_crm['crm_date'].apply(lambda x: format_date(x, is_proc=False))
     # Pad last4
     pad_last4(unmatched_crm, 'crm_last4')
     # Select specified columns

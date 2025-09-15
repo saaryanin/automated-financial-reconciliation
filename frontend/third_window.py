@@ -544,6 +544,7 @@ class ThirdWindow(QWidget):
                         rows_to_remove.append(r)
                 for r in sorted(rows_to_remove, reverse=True):
                     t.removeRow(r)
+
     def on_next(self):
         tables = [getattr(self, attr, None) for attr in ['differ_table', 'crm_table', 'proc_table'] if
                   getattr(self, attr, None)]
@@ -607,9 +608,7 @@ class ThirdWindow(QWidget):
                 crm_row_dict['warning'] = False
                 crm_row_dict['comment'] = f"{clean_comment} [unmatched_warning]"
                 crm_row_dict['crm_type'] = 'Withdrawal'
-                # Ensure date formatted
-                if 'crm_date' in crm_row_dict:
-                    crm_row_dict['crm_date'] = format_date(crm_row_dict['crm_date'], is_proc=False)
+                # No re-format: already done in run_initial_phase
                 unselected_split_rows.append(crm_row_dict)
             # Create Proc split if applicable
             if has_proc:
@@ -622,11 +621,8 @@ class ThirdWindow(QWidget):
                 proc_row_dict['warning'] = False
                 proc_row_dict['comment'] = f"{clean_comment} [unmatched_warning]"
                 proc_row_dict['crm_type'] = np.nan
-                # Ensure date formatted
-                if 'proc_date' in proc_row_dict:
-                    proc_row_dict['proc_date'] = format_date(proc_row_dict['proc_date'], is_proc=True)
+                # No re-format: already done in run_initial_phase
                 unselected_split_rows.append(proc_row_dict)
-
         # Append the split rows to matching_df
         if unselected_split_rows:
             split_df = pd.DataFrame(unselected_split_rows)

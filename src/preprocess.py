@@ -8,7 +8,7 @@ from collections import Counter
 from dateutil import parser
 import dateutil.parser
 from src.utils import clean_amount, clean_last4, load_uk_holidays
-from src.withdrawals_matcher_test import ReconciliationEngine  # Import for enhanced_email_similarity
+from src.withdrawals_matcher import ReconciliationEngine  # Import for enhanced_email_similarity
 import numpy as np
 from datetime import timedelta
 import logging

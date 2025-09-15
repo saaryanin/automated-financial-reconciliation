@@ -20,6 +20,7 @@ a = Analysis(
         'src.utils',
         'src.shifts_handler',
         'src.output',
+        'src.files_renamer'
     ],
     hookspath=[],
     hooksconfig={},

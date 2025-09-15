@@ -12,7 +12,7 @@ from src.utils import (setup_logger, load_excel_if_exists, safe_concat, drop_col
 )
 from src.shifts_handler import main as handle_shifts
 import sys
-from src.processor_renamer import run_renamer  # Import the renamer
+from src.files_renamer import run_renamer  # Import the renamer
 import re
 from collections import defaultdict
 

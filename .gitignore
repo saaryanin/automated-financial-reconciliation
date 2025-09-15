@@ -5,6 +5,10 @@ __pycache__/
 *.pyo
 *.log
 
+# Ignore data and output folders completely
+data/
+output/
+
 # Ignore all files inside data/, but not the folders themselves or .gitkeep files
 data/**
 !data/

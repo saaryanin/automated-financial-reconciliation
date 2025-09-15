@@ -9,18 +9,6 @@ __pycache__/
 data/
 output/
 
-# Ignore all files inside data/, but not the folders themselves or .gitkeep files
-data/**
-!data/
-!data/**/
-!data/**/.gitkeep
-
-# Ignore all files inside output/, but not the folders themselves or .gitkeep files
-output/**
-!output/
-!output/**/
-!output/**/.gitkeep
-
 # Ignore PyInstaller build artifacts
 build/
 dist/

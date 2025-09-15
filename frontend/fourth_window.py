@@ -245,14 +245,15 @@ class FourthWindow(QWidget):
             source_folder = OUTPUT_DIR / self.date_str
             if source_folder.exists():
                 exported_count = 0
+                excluded_files = ["warnings_withdrawals.xlsx", "withdrawals_matching_updated.xlsx"]
                 for file in source_folder.iterdir():
-                    if file.is_file() and file.name != "warnings_withdrawals.xlsx":
+                    if file.is_file() and file.name not in excluded_files:
                         shutil.copy(str(file), dest_folder)
                         exported_count += 1
                 if exported_count > 0:
                     QMessageBox.information(self, "Success", f"{exported_count} files exported to {dest_folder}")
                 else:
-                    QMessageBox.warning(self, "No Files", "No files to export (excluding warnings_withdrawals.xlsx).")
+                    QMessageBox.warning(self, "No Files", "No files to export (excluding warnings_withdrawals.xlsx and withdrawals_matching_updated.xlsx).")
             else:
                 QMessageBox.warning(self, "Error", f"No files found in output/{self.date_str}")
         print("Debug: export_files finished")

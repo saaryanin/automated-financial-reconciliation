@@ -262,7 +262,7 @@ def format_date(val):
 def process_comment(comment):
     if pd.isna(comment):
         return ''
-    parts = [p.strip() for p in comment.split(' . ')]
+    parts = [p.strip() for p in str(comment).split(' . ')]
     new_parts = []
     full_emails = OrderedDict()
     masked_emails = OrderedDict()
@@ -294,6 +294,8 @@ def process_comment(comment):
             else: # full
                 if lower_email not in full_emails:
                     full_emails[lower_email] = email
+        elif p.startswith('Cross-processor fallback match'):
+            new_parts.append(p)
         elif p.startswith('Processor names differ'):
             new_parts.append(p)
         # ignore other parts
@@ -314,6 +316,21 @@ def process_unmatched_comment(comment):
     if pd.isna(comment):
         return ''
     comment_str = str(comment)
+    # New: Handle unified suffix (covers all warnings, cross/non-cross)
+    if "[unmatched_warning]" in comment_str:
+        # Strip suffix and any legacy prefix
+        cleaned = comment_str.replace(" [unmatched_warning]", "")
+        if "Unmatched due to warning: " in cleaned:
+            cleaned = cleaned.replace("Unmatched due to warning: ", "")
+        elif "No matching CRM row found (due to warning: " in cleaned:
+            start = cleaned.find("due to warning: ") + len("due to warning: ")
+            end = cleaned.rfind(")")
+            if end != -1:
+                cleaned = cleaned[:start-1] + cleaned[end+1:]  # Remove prefix and paren
+            else:
+                cleaned = cleaned[start:]
+        return cleaned
+    # Existing legacy cases
     if comment_str.startswith("Unmatched due to warning: "):
         return comment_str[len("Unmatched due to warning: "):]
     elif "No matching CRM row found (due to warning: " in comment_str:
@@ -335,11 +352,13 @@ def generate_warning_withdrawals(date_str):
         return
     df = pd.read_excel(withdrawals_matching_path, dtype={'crm_last4': str, 'proc_last4': str})
     # Filter rows where warning == True
-    warnings_df = df[df['warning'] == True]
-    warnings_df = warnings_df.copy() # Fix SettingWithCopyWarning
+    warnings_df = df[df['warning'] == True].copy()
+    warnings_df['orig_index'] = warnings_df.index
     if warnings_df.empty:
         print(f"No warnings found in withdrawals matching for {date_str}, skipping file creation.")
         return
+    # Add orig_index using the original index
+    warnings_df['orig_index'] = warnings_df.index
     # Clean processor columns (added crm_last4)
     columns_to_clean = [
         'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname',
@@ -360,30 +379,46 @@ def generate_warning_withdrawals(date_str):
     warnings_df.loc[:, 'comment'] = warnings_df['comment'].apply(process_comment)
     # Select specified columns
     columns = [
-        'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
+        'orig_index', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
         'crm_processor_name', 'regulation', 'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4',
         'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name', 'comment'
     ]
-    warnings_df = warnings_df[columns]
+    warnings_df = warnings_df[[c for c in columns if c in warnings_df.columns]]
     # Save to output/dated/warnings_withdrawals.xlsx
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "warnings_withdrawals.xlsx"
-    save_excel(warnings_df, output_path, text_columns=['crm_last4', 'proc_last4'])
+    save_excel(warnings_df, output_path, text_columns=['crm_last4', 'proc_last4', 'orig_index'])
     print(f"Warnings withdrawals saved to {output_path}")
 
-def generate_unmatched_proc_withdrawals(date_str):
-    withdrawals_matching_path = LISTS_DIR / date_str / "withdrawals_matching.xlsx"
-    if not withdrawals_matching_path.exists():
-        print(f"Withdrawals matching file not found: {withdrawals_matching_path}")
-        return
-    df = pd.read_excel(withdrawals_matching_path, dtype={'proc_last4': str, 'crm_last4': str})
-    print(f"Total rows in withdrawals_matching: {len(df)}")
+def load_matching_df(date_str):
+    """Helper to load the most appropriate withdrawals_matching DataFrame, preferring updated version."""
+    updated_path = OUTPUT_DIR / date_str / "withdrawals_matching_updated.xlsx"
+    original_path = LISTS_DIR / date_str / "withdrawals_matching.xlsx"
+    if updated_path.exists():
+        print(f"Loading updated withdrawals matching from: {updated_path}")
+        return pd.read_excel(updated_path, dtype={'proc_last4': str, 'crm_last4': str}, index_col=0)
+    elif original_path.exists():
+        print(f"Loading original withdrawals matching from: {original_path}")
+        return pd.read_excel(original_path, dtype={'proc_last4': str, 'crm_last4': str})
+    else:
+        print(f"No withdrawals matching file found for {date_str}")
+        return None
+
+def generate_unmatched_proc_withdrawals(date_str, matching_df=None):
+    if matching_df is None:
+        matching_df = load_matching_df(date_str)
+        if matching_df is None:
+            return
+    print(f"Total rows in withdrawals_matching: {len(matching_df)}")
     # Filter rows where warning == False
-    df = df[df['warning'] == False]
+    df = matching_df[matching_df['warning'] == False]
     print(f"Rows after warning == False: {len(df)}")
     # Filter unmatched processor withdrawals: match_status == 0 and comment contains "No matching CRM row found"
-    unmatched_proc = df[(df['match_status'] == 0) & (df['comment'].str.contains("No matching CRM row found", na=False))]
+    unmatched_proc = df[(df['match_status'] == 0) & (
+            df['comment'].str.contains("No matching CRM row found", na=False) |
+            df['comment'].str.contains(r"\[unmatched_warning\]", na=False)
+    )]
     unmatched_proc = unmatched_proc.copy() # Fix SettingWithCopyWarning if needed in future mods
     print(f"Rows after match_status==0 and comment contains 'No matching CRM row found': {len(unmatched_proc)}")
     print(f"Number of rows with proc_email NaN: {unmatched_proc['proc_email'].isna().sum()}")
@@ -507,22 +542,21 @@ def remove_compensated_entries(date_str):
     save_excel(withdrawals_df, withdrawals_path, text_columns=['Last 4 Digits'])
     print(f"Updated Unmatched Processors Withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
 
-def generate_unmatched_crm_withdrawals(date_str):
-    withdrawals_matching_path = LISTS_DIR / date_str / "withdrawals_matching.xlsx"
-    if not withdrawals_matching_path.exists():
-        print(f"Withdrawals matching file not found: {withdrawals_matching_path}")
-        return
-    df = pd.read_excel(withdrawals_matching_path, dtype={'crm_last4': str, 'proc_last4': str})
+def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
+    if matching_df is None:
+        matching_df = load_matching_df(date_str)
+        if matching_df is None:
+            return
     # Apply warning == False to all groups
-    df = df[df['warning'] == False]
+    df = matching_df[matching_df['warning'] == False]
     # Group 1: match_status == 0 and payment_status == 0 and comment == "No matching processor row found"
     group1 = df[(df['match_status'] == 0) & (df['payment_status'] == 0) & (df['comment'] == "No matching processor row found")].copy()
     # Group 2: match_status == 1 and payment_status == 0 and (comment contains "Overpaid" or "Underpaid")
     group2 = df[(df['match_status'] == 1) & (df['payment_status'] == 0) & (df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
     # Group 3: comment == "Withdrawal cancelled with no matching withdrawal found"
     group3 = df[df['comment'] == "Withdrawal cancelled with no matching withdrawal found"].copy()
-    # Group 4: comment contains "Unmatched due to warning"
-    group4 = df[df['comment'].str.contains("Unmatched due to warning", na=False)].copy()
+    # Group 4: comment contains "Unmatched due to warning" AND crm_email notna (to exclude proc-only splits)
+    group4 = df[(df['comment'].str.contains("Unmatched due to warning|\[unmatched_warning\]", na=False)) & (df['crm_email'].notna())].copy()
     # Process Group 1
     if not group1.empty:
         group1['comment'] = '' # Blank comment
@@ -633,5 +667,5 @@ def main(date_str):
     generate_unmatched_crm_withdrawals(date_str)
 
 if __name__ == "__main__":
-    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02" # Default date for testing; use command-line arg in production
+    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-08-05" # Default date for testing; use command-line arg in production
     main(DATE)

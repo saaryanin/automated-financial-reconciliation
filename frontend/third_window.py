@@ -4,9 +4,8 @@ import pandas as pd
 import numpy as np
 import re
 from src.config import LISTS_DIR, OUTPUT_DIR
-from src.output import clean_value, format_date, process_comment, save_excel
-from fourth_window import FourthWindow  # Import to open next window
-
+from src.output import clean_value, format_date, process_comment, save_excel, generate_unmatched_crm_withdrawals, generate_unmatched_proc_withdrawals, generate_warning_withdrawals,process_unmatched_comment
+from fourth_window import FourthWindow # Import to open next window
 class ThirdWindow(QWidget):
     def __init__(self, date_str):
         super().__init__()
@@ -16,7 +15,6 @@ class ThirdWindow(QWidget):
         self.initUI()
         self.run_initial_phase()
         self.adjust_tables_and_window()
-
     def initUI(self):
         self.setWindowTitle('Review Warning Withdrawals')
         layout = QVBoxLayout()
@@ -109,7 +107,6 @@ class ThirdWindow(QWidget):
                 max-height: 30px;
             }
         """)
-
     def format_cell_value(self, val, col):
         if pd.isna(val):
             return ''
@@ -126,7 +123,6 @@ class ThirdWindow(QWidget):
             return str(val)
         else:
             return str(val)
-
     def extract_match_key(self, comment):
         if pd.isna(comment) or str(comment).strip() == '':
             return '', ''
@@ -141,17 +137,25 @@ class ThirdWindow(QWidget):
             val = email_match.group(1).strip()
             return 'email', val.lower()
         return '', comment_str.lower() or ''
-
     def run_initial_phase(self):
         try:
             output_dir = OUTPUT_DIR / self.date_str
             output_dir.mkdir(parents=True, exist_ok=True)
-            # Load and prepare warnings
-            withdrawals_matching_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
-            if not withdrawals_matching_path.exists():
-                raise FileNotFoundError(f"Withdrawals matching file not found: {withdrawals_matching_path}")
-            full_df = pd.read_excel(withdrawals_matching_path)
-            self.warnings_df = full_df[full_df['warning'] == True].copy()
+            # Generate warnings if not exists
+            generate_warning_withdrawals(self.date_str)
+            # Load warnings directly from warnings_withdrawals file
+            warnings_withdrawals_path = output_dir / "warnings_withdrawals.xlsx"
+            if not warnings_withdrawals_path.exists():
+                print(f"Warnings withdrawals file not found: {warnings_withdrawals_path}. Proceeding with empty warnings.")
+                self.warnings_df = pd.DataFrame(columns=['crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4', 'proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment', 'crm_date', 'proc_date'])
+                self.orig_indices = np.array([])
+                self.orig_to_local = {}
+                QMessageBox.information(self, "Info", "No warnings file found. Skipping review and proceeding to export.")
+            else:
+                self.warnings_df = pd.read_excel(warnings_withdrawals_path)
+                self.orig_indices = self.warnings_df['orig_index'].values
+                self.warnings_df = self.warnings_df.drop('orig_index', axis=1)
+                self.orig_to_local = {self.orig_indices[i]: i for i in range(len(self.orig_indices))}
             print("Warnings DF shape:", self.warnings_df.shape)
             print("Warnings DF columns:", list(self.warnings_df.columns))
             if self.warnings_df.empty:
@@ -166,6 +170,7 @@ class ThirdWindow(QWidget):
                 if col in self.warnings_df.columns:
                     self.warnings_df[col] = self.warnings_df[col].apply(clean_value)
             self.warnings_df['proc_date'] = self.warnings_df['proc_date'].apply(format_date)
+            self.warnings_df['crm_date'] = self.warnings_df['crm_date'].apply(format_date) # Explicit format for dates
             self.warnings_df['crm_amount'] = self.warnings_df['crm_amount'].apply(
                 lambda x: -abs(x) if pd.notna(x) else x)
             self.warnings_df['proc_amount'] = self.warnings_df['proc_amount'].apply(
@@ -196,13 +201,13 @@ class ThirdWindow(QWidget):
             # Select display columns
             self.display_df = self.warnings_df[display_columns].copy()
             # Split into differ and other
-            differ_mask = self.warnings_df['comment'].str.contains("Processor names differ", na=False)
-            differ_df = self.display_df[differ_mask]
+            differ_mask = self.warnings_df['comment'].str.contains("Cross-processor fallback match", na=False)
+            differ_local_indices = list(self.display_df[differ_mask].index)
+            self.differ_orig_indices = [self.orig_indices[l] for l in differ_local_indices]
+            differ_df = self.display_df.loc[differ_local_indices].copy()
             other_df = self.display_df[~differ_mask].copy()
-            self.differ_indices = self.warnings_df.index[differ_mask].tolist()
-            self.other_indices = self.warnings_df.index[~differ_mask].tolist()
-            print("Differ indices:", self.differ_indices)
-            print("Other indices:", self.other_indices)
+            print("Differ local indices:", differ_local_indices)
+            print("Differ orig indices:", self.differ_orig_indices)
             self.accepted_rows = {}
             # Define CRM and Proc columns with new names
             crm_columns = ['CRM Email', 'CRM Amount', 'CRM Currency', 'CRM TP', 'CRM Processor Name', 'CRM Last 4 Digits',
@@ -220,10 +225,11 @@ class ThirdWindow(QWidget):
                 crm_df['secondary_sort'] = crm_df.index
                 crm_sorted = crm_df.sort_values(['match_type', 'match_value', 'secondary_sort'])
                 self.crm_display = crm_sorted.drop(['match_type', 'match_value', 'secondary_sort'], axis=1)
-                self.crm_indices = list(crm_sorted.index)
+                self.crm_display_local_indices = list(crm_sorted.index)
+                self.crm_orig_indices = [self.orig_indices[l] for l in self.crm_display_local_indices]
             else:
                 self.crm_display = pd.DataFrame()
-                self.crm_indices = []
+                self.crm_orig_indices = []
             # Filter and sort Proc table rows
             proc_mask = other_df['PSP Email'].notna()
             proc_df = other_df[proc_mask].copy()
@@ -231,14 +237,15 @@ class ThirdWindow(QWidget):
                 proc_df['secondary_sort'] = proc_df.index
                 proc_sorted = proc_df.sort_values(['match_type', 'match_value', 'secondary_sort'])
                 self.proc_display = proc_sorted.drop(['match_type', 'match_value', 'secondary_sort'], axis=1)
-                self.proc_indices = list(proc_sorted.index)
+                self.proc_display_local_indices = list(proc_sorted.index)
+                self.proc_orig_indices = [self.orig_indices[l] for l in self.proc_display_local_indices]
             else:
                 self.proc_display = pd.DataFrame()
-                self.proc_indices = []
+                self.proc_orig_indices = []
             print("CRM display shape:", self.crm_display.shape)
             print("Proc display shape:", self.proc_display.shape)
-            print("Sample CRM match keys (first 3):", list(zip(self.crm_display.index[:3], self.crm_display['comment'][:3])))
-            print("Sample Proc match keys (first 3):", list(zip(self.proc_display.index[:3], self.proc_display['comment'][:3])))
+            print("Sample CRM match keys (first 3):", list(zip(self.crm_orig_indices[:3], self.crm_display['comment'][:3])))
+            print("Sample Proc match keys (first 3):", list(zip(self.proc_orig_indices[:3], self.proc_display['comment'][:3])))
             # Add differ table if not empty
             if not differ_df.empty:
                 if len(differ_df) == 1:
@@ -253,16 +260,16 @@ class ThirdWindow(QWidget):
                 self.differ_table = QTableWidget()
                 self.differ_table.setSelectionMode(QTableWidget.NoSelection)
                 self.differ_table.setEditTriggers(QTableWidget.NoEditTriggers)
-                visible_columns = [''] + display_columns  # Empty for button column
-                self.differ_table.setColumnCount(len(visible_columns) + 1)  # +1 for hidden orig_index
+                visible_columns = [''] + display_columns # Empty for button column
+                self.differ_table.setColumnCount(len(visible_columns) + 1) # +1 for hidden orig_index
                 self.differ_table.setHorizontalHeaderLabels(['orig_index'] + visible_columns)
                 self.differ_table.horizontalHeader().setVisible(True)
                 self.differ_table.verticalHeader().setVisible(False)
                 self.differ_table.setRowCount(len(differ_df))
                 self.accepted_rows[self.differ_table] = set()
                 center_cols = ['CRM Email', 'PSP Email', 'CRM Amount', 'PSP Amount', 'CRM TP', 'PSP TP', 'CRM Last 4 Digits', 'PSP Last 4 Digits', 'CRM Currency', 'PSP Currency', 'CRM Processor Name', 'PSP Processor Name']
-                for i, row_idx in enumerate(self.differ_indices):
-                    self.differ_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
+                for i, orig_idx in enumerate(self.differ_orig_indices):
+                    self.differ_table.setItem(i, 0, QTableWidgetItem(str(orig_idx)))
                     # Button column
                     button = QPushButton('✅')
                     button.setObjectName('row_button')
@@ -292,7 +299,7 @@ class ThirdWindow(QWidget):
                 self.differ_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
                 self.differ_table.setWordWrap(True)
                 self.differ_table.resizeRowsToContents()
-                self.differ_table.setColumnWidth(1, 40)  # Narrow button column with space
+                self.differ_table.setColumnWidth(1, 40) # Narrow button column with space
                 self.differ_sub_layout.addWidget(self.differ_table)
                 self.layout.addLayout(self.differ_sub_layout)
             # Add other CRM and Proc tables if not empty
@@ -316,7 +323,7 @@ class ThirdWindow(QWidget):
                     self.accepted_rows[self.crm_table] = set()
                     center_cols = ['CRM Email', 'CRM Amount', 'CRM TP', 'CRM Last 4 Digits', 'CRM Currency', 'CRM Processor Name']
                     for i in range(len(self.crm_display)):
-                        row_idx = self.crm_indices[i]
+                        row_idx = self.crm_orig_indices[i]
                         self.crm_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
                         # Button column
                         button = QPushButton('✅')
@@ -347,7 +354,7 @@ class ThirdWindow(QWidget):
                     self.crm_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
                     self.crm_table.setWordWrap(True)
                     self.crm_table.resizeRowsToContents()
-                    self.crm_table.setColumnWidth(1, 40)  # Narrow button column with space
+                    self.crm_table.setColumnWidth(1, 40) # Narrow button column with space
                     self.crm_sub_layout.addWidget(self.crm_table)
                     self.layout.addLayout(self.crm_sub_layout)
                 # PSP table
@@ -369,7 +376,7 @@ class ThirdWindow(QWidget):
                     self.accepted_rows[self.proc_table] = set()
                     center_cols = ['PSP Email', 'PSP Amount', 'PSP TP', 'PSP Last 4 Digits', 'PSP Currency', 'PSP Processor Name']
                     for i in range(len(self.proc_display)):
-                        row_idx = self.proc_indices[i]
+                        row_idx = self.proc_orig_indices[i]
                         self.proc_table.setItem(i, 0, QTableWidgetItem(str(row_idx)))
                         # Button column
                         button = QPushButton('✅')
@@ -400,12 +407,11 @@ class ThirdWindow(QWidget):
                     self.proc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
                     self.proc_table.setWordWrap(True)
                     self.proc_table.resizeRowsToContents()
-                    self.proc_table.setColumnWidth(1, 40)  # Narrow button column with space
+                    self.proc_table.setColumnWidth(1, 40) # Narrow button column with space
                     self.proc_sub_layout.addWidget(self.proc_table)
                     self.layout.addLayout(self.proc_sub_layout)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
-
     def make_toggle_accept(self, table):
         def handler():
             button = self.sender()
@@ -413,13 +419,11 @@ class ThirdWindow(QWidget):
             if row != -1:
                 self.toggle_accept(table, row)
         return handler
-
     def get_row_from_button(self, table, button):
         for r in range(table.rowCount()):
             if table.cellWidget(r, 1).layout().itemAt(1).widget() == button:
                 return r
         return -1
-
     def adjust_tables_and_window(self):
         tables = []
         labels = []
@@ -452,7 +456,7 @@ class ThirdWindow(QWidget):
             height = table.horizontalHeader().height()
             for i in range(table.rowCount()):
                 height += table.rowHeight(i)
-            height += 20  # Increased buffer for full row visibility
+            height += 20 # Increased buffer for full row visibility
             table.setFixedHeight(height)
         self.adjustSize()
         base_height = self.height()
@@ -489,14 +493,14 @@ class ThirdWindow(QWidget):
                 height = table.horizontalHeader().height()
                 for i in range(min(row_count, max_visible_rows)):
                     height += table.rowHeight(i)
-                height += 20  # Increased buffer for full row visibility
+                height += 20 # Increased buffer for full row visibility
                 table.setFixedHeight(height)
             else:
                 table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
                 height = table.horizontalHeader().height()
                 for i in range(row_count):
                     height += table.rowHeight(i)
-                height += 20  # Increased buffer for full row visibility
+                height += 20 # Increased buffer for full row visibility
                 table.setFixedHeight(height)
         self.adjustSize()
         self.setFixedWidth(self.screen_width)
@@ -504,7 +508,6 @@ class ThirdWindow(QWidget):
         final_height = min(self.height() + extra_window, max_content_height)
         self.setFixedHeight(final_height)
         self.setGeometry(-5, taskbar_and_program_bar_size, self.screen_width, final_height)
-
     def toggle_accept(self, table, row):
         if row in self.accepted_rows[table]:
             self.accepted_rows[table].remove(row)
@@ -517,11 +520,9 @@ class ThirdWindow(QWidget):
             button.setText('X')
             button.setStyleSheet("color: white; background: red; border: none; font-size: 16px;")
         self.update_remove_button_state()
-
     def update_remove_button_state(self):
         total_selected = sum(len(self.accepted_rows[t]) for t in self.accepted_rows)
         self.remove_btn.setEnabled(total_selected > 0)
-
     def remove_selected(self):
         for table in self.accepted_rows:
             rows = sorted(list(self.accepted_rows[table]), reverse=True)
@@ -533,7 +534,6 @@ class ThirdWindow(QWidget):
             self.accepted_rows[table].clear()
         self.adjust_tables_and_window()
         self.update_remove_button_state()
-
     def remove_rows_by_index(self, orig_idx):
         for t in [getattr(self, attr, None) for attr in ['differ_table', 'crm_table', 'proc_table']]:
             if t:
@@ -544,26 +544,30 @@ class ThirdWindow(QWidget):
                         rows_to_remove.append(r)
                 for r in sorted(rows_to_remove, reverse=True):
                     t.removeRow(r)
-
     def on_next(self):
-        tables = [getattr(self, attr, None) for attr in ['differ_table', 'crm_table', 'proc_table'] if getattr(self, attr, None)]
+        tables = [getattr(self, attr, None) for attr in ['differ_table', 'crm_table', 'proc_table'] if
+                  getattr(self, attr, None)]
         remaining_indices = set()
         for t in tables:
             for r in range(t.rowCount()):
                 idx_item = t.item(r, 0)
                 if idx_item:
                     remaining_indices.add(int(idx_item.text()))
-        removed_indices = set(self.warnings_df.index) - remaining_indices
-        # Update matching_df
-        withdrawals_matching_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
-        matching_df = pd.read_excel(withdrawals_matching_path)
+        removed_indices = set(self.orig_indices) - remaining_indices
+        print(f"Removed (accepted) indices: {len(removed_indices)}")
+        print(f"Remaining (unselected) indices: {len(remaining_indices)}")
+        # Load original matching_df
+        original_matching_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
+        matching_df = pd.read_excel(original_matching_path)
+        # Update accepted rows: set as matched, warning=False
         for idx in removed_indices:
             if idx in matching_df.index:
                 matching_df.at[idx, 'warning'] = False
                 matching_df.at[idx, 'match_status'] = 1
                 matching_df.at[idx, 'payment_status'] = 1
                 matching_df.at[idx, 'comment'] = "Warning accepted as match"
-        # Reverse rename for logic columns
+        # For unselected: Drop them from matching_df and create split rows
+        unselected_split_rows = []
         reverse_rename = {
             'CRM Email': 'crm_email',
             'CRM Amount': 'crm_amount',
@@ -578,52 +582,66 @@ class ThirdWindow(QWidget):
             'PSP Processor Name': 'proc_processor_name',
             'PSP Last 4 Digits': 'proc_last4',
         }
-        for idx in sorted(list(remaining_indices), reverse=True):
-            if idx not in self.warnings_df.index:
+        for idx in remaining_indices:
+            local_idx = self.orig_to_local.get(idx, None)
+            if local_idx is None:
                 continue
-            row = self.warnings_df.loc[idx].rename(reverse_rename)
+            row = self.warnings_df.loc[local_idx].rename(reverse_rename)
             has_crm = pd.notna(row.get('crm_email', np.nan))
             has_proc = pd.notna(row.get('proc_email', np.nan))
+            print(f"Unselected row {idx}: has_crm={has_crm}, has_proc={has_proc}")
+            orig_comment = self.warnings_df.loc[local_idx]['comment']
+            # Clean comment for splits (no prefix, will add suffix below)
+            clean_comment = process_unmatched_comment(orig_comment)  # In case orig has legacy prefix
+            # Drop the original unselected row
             if idx in matching_df.index:
                 matching_df = matching_df.drop(idx)
+            # Create CRM split if applicable
             if has_crm:
-                crm_row = row.copy()
+                crm_row_dict = row.to_dict()
                 proc_cols = [c for c in matching_df.columns if c.startswith('proc_')]
                 for col in proc_cols:
-                    crm_row[col] = np.nan
-                crm_row['match_status'] = 0
-                crm_row['payment_status'] = 0
-                crm_row['warning'] = False
-                orig_comment = self.warnings_df.loc[idx]['comment']
-                crm_row['comment'] = f"Unmatched due to warning: {orig_comment}"
-                matching_df = pd.concat([matching_df, pd.DataFrame([crm_row])], ignore_index=True)
+                    crm_row_dict[col] = np.nan
+                crm_row_dict['match_status'] = 0
+                crm_row_dict['payment_status'] = 0
+                crm_row_dict['warning'] = False
+                crm_row_dict['comment'] = f"{clean_comment} [unmatched_warning]"
+                crm_row_dict['crm_type'] = 'Withdrawal'
+                # Ensure date formatted
+                if 'crm_date' in crm_row_dict:
+                    crm_row_dict['crm_date'] = format_date(crm_row_dict['crm_date'])
+                unselected_split_rows.append(crm_row_dict)
+            # Create Proc split if applicable
             if has_proc:
-                proc_row = row.copy()
+                proc_row_dict = row.to_dict()
                 crm_cols = [c for c in matching_df.columns if c.startswith('crm_') and c != 'crm_type']
                 for col in crm_cols:
-                    proc_row[col] = np.nan
-                proc_row['match_status'] = 0
-                proc_row['payment_status'] = 0
-                proc_row['warning'] = False
-                orig_comment = self.warnings_df.loc[idx]['comment']
-                proc_row['comment'] = f"No matching CRM row found (due to warning: {orig_comment})"
-                matching_df = pd.concat([matching_df, pd.DataFrame([proc_row])], ignore_index=True)
-        matching_df.to_excel(withdrawals_matching_path, index=False)
-        # Save accepted warnings (removed) as full rows
-        display_columns = [
-            'CRM Email', 'CRM Amount', 'CRM Currency', 'CRM TP', 'CRM Processor Name', 'CRM Last 4 Digits',
-            'PSP Email', 'PSP Amount', 'PSP Currency', 'PSP TP', 'PSP Processor Name', 'PSP Last 4 Digits', 'comment'
-        ]
-        accepted_df = pd.DataFrame(columns=display_columns)
-        for idx in removed_indices:
-            if idx in self.display_df.index:
-                row = self.display_df.loc[idx][display_columns]
-                accepted_df = pd.concat([accepted_df, pd.DataFrame([row])], ignore_index=True)
+                    proc_row_dict[col] = np.nan
+                proc_row_dict['match_status'] = 0
+                proc_row_dict['payment_status'] = 0
+                proc_row_dict['warning'] = False
+                proc_row_dict['comment'] = f"{clean_comment} [unmatched_warning]"
+                proc_row_dict['crm_type'] = np.nan
+                # Ensure date formatted
+                if 'proc_date' in proc_row_dict:
+                    proc_row_dict['proc_date'] = format_date(proc_row_dict['proc_date'])
+                unselected_split_rows.append(proc_row_dict)
+
+        # Append the split rows to matching_df
+        if unselected_split_rows:
+            split_df = pd.DataFrame(unselected_split_rows)
+            matching_df = pd.concat([matching_df, split_df], ignore_index=True)
+        print(f"Updated matching_df shape after splits: {matching_df.shape}")
+        print(f"Unselected CRM splits: {sum(1 for r in unselected_split_rows if pd.notna(r.get('crm_email')))}")
+        print(f"Unselected Proc splits: {sum(1 for r in unselected_split_rows if pd.notna(r.get('proc_email')))}")
+        # Save updated matching_df
         output_dir = OUTPUT_DIR / self.date_str
-        output_path = output_dir / "warnings_withdrawals.xlsx"
-        if not accepted_df.empty:
-            save_excel(accepted_df, output_path, text_columns=['CRM Last 4 Digits', 'PSP Last 4 Digits'])
-        # Proceed to fourth window
+        updated_matching_path = output_dir / "withdrawals_matching_updated.xlsx"
+        matching_df.to_excel(updated_matching_path, index=True)
+        print(f"Updated matching saved to {updated_matching_path}")
+        print("Processing complete. Opening export window.")
+        # Reorder: Create/show fourth BEFORE close (keeps app alive during init)
         self.fourth_window = FourthWindow(self.date_str)
         self.fourth_window.show()
-        self.close()
+        print("Debug: Fourth window shown")
+        self.close()  # Now safe—fourth is active

@@ -4,7 +4,8 @@ import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QGridLayout, QFileDialog, QDateEdit, QMessageBox, QCalendarWidget,
                              QToolButton)
-from PyQt5.QtCore import Qt, QDate, QMimeData, QProcess, QTimer
+from PyQt5.QtCore import Qt, QDate, QMimeData, QProcess, QTimer, QRegExp
+from PyQt5.QtGui import QRegExpValidator
 from second_window import SecondWindow  # NEW: Import the new second window class
 import pandas as pd
 import re
@@ -123,18 +124,14 @@ class ReconciliationWindow(QWidget):
         self.crm_file = None
         self.processor_files = []
         self.date_button = None  # Add this for the custom calendar button
+        self.valid_date_str = None  # Track valid date string
         self.initUI()
         self.moved_files = set()  # Track moved file names to avoid duplicates
 
     def initUI(self):
-        print(os.path.abspath("frontend/calendar_icon.png"))  # Adjusted debug print to verify full path
         self.setWindowTitle('CRM-Processor Reconciliation System')
 
-        # Dynamic icon path for stylesheet (works in script and EXE)
-        if getattr(sys, 'frozen', False):
-            icon_path = "calendar_icon.png"  # Bundled to root via spec datas
-        else:
-            icon_path = "frontend/calendar_icon.png"  # Relative to root in script mode
+        # No custom icon path needed anymore - we're using Unicode/standard styles
 
         app = QApplication.instance()
         app.setStyleSheet("""
@@ -190,37 +187,40 @@ class ReconciliationWindow(QWidget):
                 min-width: 200px;
                 font-size: 14px;
             }
-            QDateEdit {
-                padding: 4px;
+            /* Custom date picker styles */
+            #date-lineedit {
+                padding: 2px 2px;
                 border: 2px solid #e9ecef;
-                border-radius: 4px;
-                font-size: 12px;
+                border-radius: 1px 0 0 1px;
+                font-size: 14px;
                 background: #f8f9fa;
                 color: #2c3e50;
-                min-width: 90px; /* Increased from 90px to ensure full year visibility */
+                min-width: 80px;
             }
-            QDateEdit::drop-down {
-                width: 22px;
-                border-left: 1px solid #e9ecef;
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                background: #f1f3f5; /* Light gray background */
-                border-radius: 0 4px 4px 0; /* Rounded corner on the right */
+            #date-lineedit:focus {
+                border-color: #4a90e2;
+                box-shadow: 0 0 5px rgba(74, 144, 226, 0.3);
             }
-            QDateEdit::drop-down:hover {
-                background: #d1d7e0; /* Darker gray on hover for feedback */
-                border-left: 1px solid #667eea; /* Blue border on hover */
+            #date-button {
+                padding: 1px 1px 1px 1px;
+                border: 2px solid #e9ecef;
+                border-left: none;
+                border-radius: 0 4px 4px 0;
+                background: #f8f9fa;
+                font-size: 14px;
+                min-width: 14px;
+                color: #1e90ff;
+                font-weight: bold;
             }
-            QDateEdit::down-arrow {
-                image: url(%s);  /* Dynamic path */
-                width: 16px;
-                height: 16px;
+            #date-button:hover {
+                background: #d1d7e0;
             }
             QCalendarWidget {
-                background: #ffffff;
+                background: #4a90e2;
                 border: 1px solid #e9ecef;
                 border-radius: 4px;
                 min-width: 270px;
+                max-height: 170px;
             }
             QCalendarWidget QAbstractItemView {
                 background: #ffffff;
@@ -267,7 +267,7 @@ class ReconciliationWindow(QWidget):
             QMessageBox QPushButton:hover {
                 background: #357abd;
             }
-            """ % icon_path)  # Format the dynamic path into the stylesheet
+            """)
 
         # Adjust window position and size
         screen = QApplication.desktop().screenGeometry()
@@ -321,27 +321,53 @@ class ReconciliationWindow(QWidget):
             currency_grid.addWidget(calc_label, i, 2)
         currency_layout.addLayout(currency_grid)
 
-        # Date Picker (Compact) - Centered
+        # Custom Date Picker with Unicode Calendar Icon Button - Centered
         date_widget = QWidget()
         date_layout = QHBoxLayout()
         date_widget.setLayout(date_layout)
         date_label = QLabel("Date:")
         date_label.setStyleSheet("font-size: 12px; margin-right: 0px;")
-        self.date_edit = QDateEdit()
+        self.date_lineedit = QLineEdit()
+        self.date_lineedit.setObjectName("date-lineedit")
         today = QDate.currentDate()
         yesterday = today.addDays(-1)
         if today.dayOfWeek() == 1:  # Monday (Qt: 1=Mon)
             yesterday = today.addDays(-3)  # Last Friday
-        self.date_edit.setDate(yesterday)
-        self.date_edit.setCalendarPopup(True)
-        self.date_edit.setDisplayFormat("dd/MM/yyyy")
-        self.date_edit.setMaximumWidth(90)
+        selected_date = yesterday.toString("dd/MM/yyyy")
+        self.date_lineedit.setText(selected_date)
+        self.date_lineedit.setMaximumWidth(90)
+        self.valid_date_str = selected_date
+
+        # Enable manual editing with format validator
+        self.date_lineedit.setReadOnly(False)
+        date_regex = QRegExp(r'^\d{1,2}/\d{1,2}/\d{4}$')
+        validator = QRegExpValidator(date_regex)
+        self.date_lineedit.setValidator(validator)
+        self.date_lineedit.editingFinished.connect(self.on_date_edited)
+
+        # Create popup calendar
+        self.calendar = QCalendarWidget()
+        self.calendar.setGridVisible(True)
+        self.calendar.setMinimumSize(270, 150)
+        self.calendar.setMaximumHeight(150)
+        self.calendar.setSelectedDate(yesterday)
+        self.calendar.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
+        self.calendar.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.calendar.clicked.connect(self.calendar_date_selected)
+
+        # Calendar popup button with Unicode emoji
+        self.date_button = QToolButton()
+        self.date_button.setObjectName("date-button")
+        self.date_button.setText("📅")  # Using Unicode calendar emoji as recommended
+        self.date_button.clicked.connect(self.show_calendar_popup)
+
         date_layout.addWidget(date_label, alignment=Qt.AlignRight)
-        date_layout.addWidget(self.date_edit)
+        date_layout.addWidget(self.date_lineedit)
+        date_layout.addWidget(self.date_button)
         date_layout.setSpacing(0)
         date_layout.setContentsMargins(0, 0, 0, 0)
         date_layout.setAlignment(Qt.AlignCenter)  # Center the date picker
-        currency_layout.addWidget(date_widget)
+        currency_layout.addWidget(date_widget, alignment=Qt.AlignHCenter)
 
         main_layout.addWidget(currency_section)
 
@@ -382,6 +408,33 @@ class ReconciliationWindow(QWidget):
         button_layout.addWidget(self.reset_btn)
         button_layout.addStretch(1)  # Stretch to center the buttons
         main_layout.addLayout(button_layout)
+
+    def on_date_edited(self):
+        """Validate and update date on editing finished."""
+        text = self.date_lineedit.text()
+        date = QDate.fromString(text, "dd/MM/yyyy")
+        if date.isValid():
+            self.valid_date_str = text
+            self.calendar.setSelectedDate(date)
+        else:
+            self.date_lineedit.setText(self.valid_date_str)
+            self.show_warning("Invalid Date", "Invalid date entered. Please use dd/MM/yyyy format and a valid date.")
+
+    def calendar_date_selected(self, date):
+        """Handle date selection from calendar popup."""
+        self.date_lineedit.setText(date.toString("dd/MM/yyyy"))
+        self.valid_date_str = date.toString("dd/MM/yyyy")
+        self.calendar.hide()
+
+    def show_calendar_popup(self):
+        """Show the calendar popup at the button position."""
+        if self.calendar.isVisible():
+            self.calendar.hide()
+        else:
+            # Position the calendar below the button, shifted right by 5 pixels
+            button_pos = self.date_button.mapToGlobal(self.date_button.rect().bottomLeft())
+            self.calendar.move(button_pos.x() + 5, button_pos.y())
+            self.calendar.show()
 
     def show_warning(self, title, text):
         msg = QMessageBox(self)
@@ -474,7 +527,7 @@ class ReconciliationWindow(QWidget):
         self.process_btn.setEnabled(files_ready and rates_entered)
 
     def save_rates_and_process(self):
-        selected_date = self.date_edit.date().toString("yyyy-MM-dd")
+        selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
         rates_data = []
         for key, (input_field, _) in self.rate_inputs.items():
             from_curr, to_curr = key.split('_')
@@ -498,7 +551,7 @@ class ReconciliationWindow(QWidget):
             self.show_warning("Error", "No valid rates entered.")
 
     def rename_processor_files(self, file_paths):
-        selected_date = self.date_edit.date().toString("yyyy-MM-dd")
+        selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
         for source_path in file_paths:
             file_name = os.path.basename(source_path)
             dest_path = PROCESSOR_DIR / file_name
@@ -514,6 +567,15 @@ class ReconciliationWindow(QWidget):
         for _, (input_field, calc_label) in self.rate_inputs.items():
             input_field.clear()
             calc_label.setText("0.0000")
+
+        # Reset date
+        today = QDate.currentDate()
+        yesterday = today.addDays(-1)
+        if today.dayOfWeek() == 1:  # Monday (Qt: 1=Mon)
+            yesterday = today.addDays(-3)  # Last Friday
+        date_str = yesterday.toString("dd/MM/yyyy")
+        self.date_lineedit.setText(date_str)
+        self.valid_date_str = date_str
 
         # Reset attached files and delete from directories
         if self.crm_file and os.path.exists(self.crm_file):
@@ -543,7 +605,8 @@ class ReconciliationWindow(QWidget):
 
     def open_second_window(self):
         print("Debug: Creating SecondWindow")
-        self.second_window = SecondWindow(self.date_edit.date().toString("yyyy-MM-dd"))
+        selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
+        self.second_window = SecondWindow(selected_date)
         self.second_window.show()
         print("Debug: SecondWindow shown")
         self.close()  # Close first window

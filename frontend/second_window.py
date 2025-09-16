@@ -3,7 +3,11 @@ from PyQt5.QtCore import Qt, QTimer
 import sys
 import re
 from src.reports_creator import main # Direct import for bundled call
+from src.output import generate_warning_withdrawals  # NEW: For warnings file gen before check
 from third_window import ThirdWindow # CHANGED: Import ThirdWindow instead of FourthWindow
+from fourth_window import FourthWindow # NEW: Import for direct skip to export
+from src.config import OUTPUT_DIR  # NEW: For file existence check
+
 class StdoutRedirector(object):
     def __init__(self, progress_bar):
         self.progress_bar = progress_bar
@@ -116,16 +120,32 @@ class SecondWindow(QWidget):
         sys.stdout = redirector
         try:
             main(self.date_str) # Direct call to reports_creator.main
+            # NEW: Generate warnings file after reports_creator (ensures it exists for check)
+            print("Debug: Generating warnings_withdrawals.xlsx...")
+            generate_warning_withdrawals(self.date_str)
+            print("Debug: Warnings generation complete")
             # No append since no console
             self.continue_btn.setEnabled(True)
         except Exception as e:
-            print(f"Error executing reports_creator: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to run reports_creator: {e}")
+            print(f"Error executing reports_creator or output: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to run processing: {e}")
         finally:
             sys.stdout = old_stdout # Restore stdout
         print("Debug: run_reports_creator_script finished")
-    def open_third_window(self):  # CHANGED: Open third
-        print("Debug: Opening ThirdWindow")
-        self.third_window = ThirdWindow(self.date_str)
-        self.third_window.show()
-        self.close() # Close second window
+    def open_third_window(self):  # CHANGED: Conditional open—third if warnings exist, else direct to fourth with alert
+        print("Debug: Checking for warnings file before opening next window")
+        output_dir = OUTPUT_DIR / self.date_str
+        warnings_path = output_dir / "warnings_withdrawals.xlsx"
+        print(f"Debug: warnings_path = {warnings_path}")  # NEW: Log path for debug
+        print(f"Debug: warnings_path.exists() = {warnings_path.exists()}")  # NEW: Log existence
+        if not warnings_path.exists():
+            print(f"Debug: No warnings_withdrawals.xlsx found for {self.date_str}—skipping to fourth_window export")
+            # NEW: Show alert (ported from third_window.py) before direct export
+            QMessageBox.information(self, "Info", "No warnings file found. Skipping review and proceeding to export.")
+            self.fourth_window = FourthWindow(self.date_str)
+            self.fourth_window.show()
+        else:
+            print(f"Debug: Warnings file exists—opening ThirdWindow")
+            self.third_window = ThirdWindow(self.date_str)
+            self.third_window.show()
+        self.close() # Close second window regardless

@@ -189,11 +189,11 @@ class ReconciliationWindow(QWidget):
             }
             /* Custom date picker styles */
             #date-lineedit {
-                padding: 2px 2px;
-                border: 2px solid #e9ecef;
-                border-radius: 1px 0 0 1px;
+                padding: 8px;  /* Match rate input padding for alignment */
+                border: 2px solid #dfe6e9;  /* Match rate input border */
+                border-radius: 4px 0 0 4px;  /* Slightly rounded to match overall theme */
                 font-size: 14px;
-                background: #f8f9fa;
+                background: #ffffff;  /* Pure white to match rate inputs */
                 color: #2c3e50;
                 min-width: 80px;
             }
@@ -202,18 +202,18 @@ class ReconciliationWindow(QWidget):
                 box-shadow: 0 0 5px rgba(74, 144, 226, 0.3);
             }
             #date-button {
-                padding: 1px 1px 1px 1px;
-                border: 2px solid #e9ecef;
+                padding: 8px 6px;  /* Adjusted for icon size */
+                border: 2px solid #dfe6e9;
                 border-left: none;
                 border-radius: 0 4px 4px 0;
-                background: #f8f9fa;
+                background: #ffffff;  /* Pure white to match */
                 font-size: 14px;
                 min-width: 14px;
                 color: #1e90ff;
                 font-weight: bold;
             }
             #date-button:hover {
-                background: #d1d7e0;
+                background: #e1f5fe;
             }
             QCalendarWidget {
                 background: #4a90e2;
@@ -322,11 +322,17 @@ class ReconciliationWindow(QWidget):
         currency_layout.addLayout(currency_grid)
 
         # Custom Date Picker with Unicode Calendar Icon Button - Centered
-        date_widget = QWidget()
+        date_container = QWidget()  # NEW: Explicit container layer for the date row
+        date_container.setStyleSheet("""
+            background: #ffffff;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 5px 0;
+        """)
+
         date_layout = QHBoxLayout()
-        date_widget.setLayout(date_layout)
         date_label = QLabel("Date:")
-        date_label.setStyleSheet("font-size: 12px; margin-right: 0px;")
+        date_label.setStyleSheet("font-size: 12px; margin-right: 5px;")  # Slight margin for spacing
         self.date_lineedit = QLineEdit()
         self.date_lineedit.setObjectName("date-lineedit")
         today = QDate.currentDate()
@@ -357,6 +363,7 @@ class ReconciliationWindow(QWidget):
 
         # Calendar popup button with Unicode emoji
         self.date_button = QToolButton()
+        self.date_button.setAutoFillBackground(True)
         self.date_button.setObjectName("date-button")
         self.date_button.setText("📅")  # Using Unicode calendar emoji as recommended
         self.date_button.clicked.connect(self.show_calendar_popup)
@@ -364,10 +371,17 @@ class ReconciliationWindow(QWidget):
         date_layout.addWidget(date_label, alignment=Qt.AlignRight)
         date_layout.addWidget(self.date_lineedit)
         date_layout.addWidget(self.date_button)
-        date_layout.setSpacing(0)
+        date_layout.setSpacing(2)  # Tight spacing for compact look
         date_layout.setContentsMargins(0, 0, 0, 0)
-        date_layout.setAlignment(Qt.AlignCenter)  # Center the date picker
-        currency_layout.addWidget(date_widget, alignment=Qt.AlignHCenter)
+
+        date_widget = QWidget()
+        date_widget.setLayout(date_layout)
+        date_container_layout = QVBoxLayout()
+        date_container_layout.addWidget(date_widget, alignment=Qt.AlignHCenter)
+        date_container_layout.setContentsMargins(0, 0, 0, 0)
+        date_container.setLayout(date_container_layout)
+
+        currency_layout.addWidget(date_container, alignment=Qt.AlignHCenter)
 
         main_layout.addWidget(currency_section)
 

@@ -8,7 +8,7 @@ from collections import Counter
 from dateutil import parser
 import dateutil.parser
 from src.utils import clean_amount, clean_last4, load_uk_holidays
-from src.withdrawals_matcher_test import ReconciliationEngine  # Import for enhanced_email_similarity
+from src.withdrawals_matcher import ReconciliationEngine  # Import for enhanced_email_similarity
 import numpy as np
 from datetime import timedelta
 import logging
@@ -1380,8 +1380,11 @@ def combine_processed_files(
                 df_raw.columns = df_raw.columns.str.strip()
                 cancel_mask = df_raw["Name"].astype(str).str.strip().str.lower() == "withdrawal cancelled"
                 df_cancels = df_raw[cancel_mask].copy()
-                cancel_psp_na = df_cancels["PSP name"].isna() | (df_cancels["PSP name"].str.strip() == "")
-                df_cancels = df_cancels[cancel_psp_na]
+
+                # The part of the code where it filters the rows that have balue in the PSP name column is commented because there might be scenarios when there is a value there
+                # cancel_psp_na = df_cancels["PSP name"].isna() | (df_cancels["PSP name"].str.strip() == "")
+                # df_cancels = df_cancels[cancel_psp_na]
+
                 # Exclude cancellations with 'Wire Transfer' in Method of Payment
                 if 'Method of Payment' in df_cancels.columns:
                     df_cancels = df_cancels[~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]

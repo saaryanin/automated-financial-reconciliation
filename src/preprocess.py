@@ -1380,8 +1380,11 @@ def combine_processed_files(
                 df_raw.columns = df_raw.columns.str.strip()
                 cancel_mask = df_raw["Name"].astype(str).str.strip().str.lower() == "withdrawal cancelled"
                 df_cancels = df_raw[cancel_mask].copy()
-                cancel_psp_na = df_cancels["PSP name"].isna() | (df_cancels["PSP name"].str.strip() == "")
-                df_cancels = df_cancels[cancel_psp_na]
+
+                # The part of the code where it filters the rows that have balue in the PSP name column is commented because there might be scenarios when there is a value there
+                # cancel_psp_na = df_cancels["PSP name"].isna() | (df_cancels["PSP name"].str.strip() == "")
+                # df_cancels = df_cancels[cancel_psp_na]
+
                 # Exclude cancellations with 'Wire Transfer' in Method of Payment
                 if 'Method of Payment' in df_cancels.columns:
                     df_cancels = df_cancels[~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]

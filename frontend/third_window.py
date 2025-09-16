@@ -4,10 +4,17 @@ import pandas as pd
 import numpy as np
 import re
 from src.config import LISTS_DIR, OUTPUT_DIR
+import shutil
 from src.output import clean_value, format_date, process_comment, save_excel, generate_unmatched_crm_withdrawals, generate_unmatched_proc_withdrawals, generate_warning_withdrawals,process_unmatched_comment
 from fourth_window import FourthWindow # Import to open next window
 class ThirdWindow(QWidget):
+
     def __init__(self, date_str):
+        output_dir = OUTPUT_DIR / date_str
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+            print(f"Cleared stale output dir for date {date_str} to prevent file bleed")
+        output_dir.mkdir(parents=True, exist_ok=True)
         super().__init__()
         self.date_str = date_str
         self.screen_width = QApplication.desktop().screenGeometry().width()
@@ -141,6 +148,11 @@ class ThirdWindow(QWidget):
         try:
             output_dir = OUTPUT_DIR / self.date_str
             output_dir.mkdir(parents=True, exist_ok=True)
+            # NEW: Remove any stale warnings file before regenerating
+            warnings_withdrawals_path = output_dir / "warnings_withdrawals.xlsx"
+            if warnings_withdrawals_path.exists():
+                warnings_withdrawals_path.unlink()
+                print(f"Removed stale warnings_withdrawals.xlsx for {self.date_str}")
             # Generate warnings if not exists
             generate_warning_withdrawals(self.date_str)
             # Load warnings directly from warnings_withdrawals file

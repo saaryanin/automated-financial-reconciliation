@@ -15,7 +15,8 @@ a = Analysis(
         'src',
         'src.config',
         'src.files_renamer',
-        'src.preprocess',
+        'src.preprocess_test',  # NEW: For reports_creator.py's process_files_in_parallel/combine_processed_files
+        'src.preprocess',       # Keep for any legacy/aliases
         'src.withdrawals_matcher',
         'src.deposits_matcher',
         'src.reports_creator',
@@ -23,8 +24,9 @@ a = Analysis(
         'src.utils',
         'src.shifts_handler',
         'src.processor_renamer',
-        'tempfile',  # NEW: For config's gettempdir() in frozen mode
-        'shutil',    # NEW: For main.py clearing
+        'tempfile',             # For config's gettempdir() in frozen mode
+        'shutil',               # For cleanup in reports_creator/output
+        'pathlib',              # Explicit for Path usage in output.py cleanup
     ],
     hookspath=[],
     hooksconfig={},
@@ -51,7 +53,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Keep True for debug logs (e.g., clearing prints, reports_creator.py scans)
+    console=True,  # Keep for debug logs (cleanup prints, reports_creator scans, etc.)
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

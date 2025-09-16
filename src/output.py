@@ -1,5 +1,4 @@
 import sys
-import pandas as pd
 from pathlib import Path
 import shutil
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -10,6 +9,20 @@ from collections import OrderedDict
 import ast
 from datetime import datetime
 import numpy as np
+
+# Determine BASE_DIR for dev vs frozen (EXE) mode
+if getattr(sys, 'frozen', False):
+    # In PyInstaller bundle (onefile mode), use the EXE's dir as base (though not strictly needed for config, ensures sys.path if relative)
+    BASE_DIR = Path(sys.executable).parent
+else:
+    # Dev mode: standard script path
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Append only if not already in path (avoids dupes in imported mode)
+if str(BASE_DIR) not in sys.path:
+    sys.path.append(str(BASE_DIR))
+
+import pandas as pd
 
 def save_excel(df, path, text_columns=None):
     if text_columns is None:
@@ -656,13 +669,24 @@ def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
     print(f"Unmatched CRM withdrawals saved to {output_path}")
 
 def main(date_str):
+    # Clear OUTPUT_DIR contents fully (rmtree all subdirs/files to prevent any stale remnants)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Ensure output exists
+    for item in list(OUTPUT_DIR.iterdir()):
+        try:
+            if item.is_file():
+                item.unlink()
+                print(f"Removed file {item} in OUTPUT_DIR")
+            else:  # dir
+                shutil.rmtree(item)
+                print(f"Removed dir {item} in OUTPUT_DIR")
+        except Exception as e:
+            print(f"Failed to remove {item}: {e}")
+
+    output_dir = OUTPUT_DIR / date_str
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     # For standalone testing; in frontend, phases are called separately
     # Phase 1 (handled in third_window): clear, handle_shifts, warnings (user-edited)
-    output_dir = OUTPUT_DIR / date_str
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-        print(f"Cleared old output directory: {output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
     matched_sums = handle_shifts(date_str)
     if matched_sums:
         output_path = output_dir / "total_shifts_by_currency.csv"

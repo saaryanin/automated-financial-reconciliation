@@ -3,8 +3,9 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 
 import time
 import warnings
+import shutil
 from src.preprocess_test import process_files_in_parallel, combine_processed_files,append_unmatched_to_combined
-from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR
+from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, RATES_DIR
 import pandas as pd
 import numpy as np
 from src.withdrawals_matcher import ReconciliationEngine
@@ -15,6 +16,7 @@ import sys
 from src.files_renamer import run_renamer  # Import the renamer
 import re
 from collections import defaultdict
+from pathlib import Path
 
 # Suppress openpyxl and pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -23,10 +25,39 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 def main(date=None):
     start_time = time.time()
 
+    # Clear DATA_DIR contents (as before)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)  # Ensure exists
+    lists_dir = LISTS_DIR  # Full path from config
+    rates_dir = RATES_DIR
+
+    for item in list(DATA_DIR.iterdir()):  # Use list() to avoid modification-during-iteration
+        if item.is_dir():
+            if item == lists_dir or item == rates_dir:
+                continue  # Skip entirely (preserve contents + dir)
+            # Clear contents only (unlink files, rmtree child dirs), leave empty dir intact for later mkdir-free moves
+            for child in list(item.iterdir()):
+                if child.is_dir():
+                    shutil.rmtree(child)
+                    print(f"Cleared child dir {child} in {item}")
+                else:
+                    child.unlink()
+                    print(f"Removed child file {child} in {item}")
+            print(f"Cleared contents of {item} to prevent stale file bleed")
+        elif item.is_file():
+            item.unlink()
+            print(f"Removed stray file {item} in DATA_DIR")
+
     # --- Configuration ---
     if date is None:
         date = sys.argv[1] if len(sys.argv) > 1 else "2025-08-05"  # Default only for standalone
     PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
+
+    # NEW: Clear any stale report_dir for this date to prevent bleed from previous runs
+    report_dir = LISTS_DIR / date
+    if report_dir.exists():
+        shutil.rmtree(report_dir)
+        print(f"Removed old report dir {report_dir} to prevent stale matching file bleed")
+    report_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Activate Renamer with Forced Date ---
     run_renamer(forced_date=date)
@@ -123,8 +154,6 @@ def main(date=None):
 
 
     # Save to Excel
-    report_dir = LISTS_DIR / date
-    report_dir.mkdir(parents=True, exist_ok=True)
     report_path_deposits = report_dir / "deposits_matching.xlsx"
 
     with pd.ExcelWriter(report_path_deposits, engine='openpyxl') as writer:

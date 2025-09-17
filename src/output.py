@@ -9,6 +9,7 @@ from collections import OrderedDict
 import ast
 from datetime import datetime
 import numpy as np
+import re
 
 # Determine BASE_DIR for dev vs frozen (EXE) mode
 if getattr(sys, 'frozen', False):
@@ -189,6 +190,10 @@ def generate_unmatched_proc_deposits(date_str):
     for col in columns_to_clean:
         if col in unmatched_proc.columns:
             unmatched_proc.loc[:, col] = unmatched_proc[col].apply(clean_value)
+    # Correct ambiguous date parses for powercash/shift4
+    unmatched_proc['proc_date'] = unmatched_proc.apply(
+        lambda row: correct_proc_date(row['proc_date'], row['proc_processor_name']), axis=1)
+
     # Format proc_date
     unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(lambda x: format_date(x, is_proc=True))
     # Ensure proc_transaction_id and proc_last4 are strings and pad
@@ -283,6 +288,25 @@ def format_date(val, is_proc=False):
     if time_part:
         new_date_str += f" {time_part}"
     return new_date_str
+
+def correct_proc_date(date_val, processor_name):
+    if pd.isna(date_val) or processor_name not in ['powercash', 'shift4']:
+        return date_val
+    date_str = str(date_val).strip()
+    if not re.match(r'\d{4}-\d{2}-\d{2}', date_str.split()[0]):
+        return date_str  # Not in expected YYYY-MM-DD format, skip
+    try:
+        parts = date_str.split()
+        date_part = parts[0]
+        time_part = ' '.join(parts[1:]) if len(parts) > 1 else ''
+        y, m, d = map(int, date_part.split('-'))
+        if 1 <= m <= 12 and 1 <= d <= 12 and m > d:
+            # Swap for likely misparsed DD/MM as MM/DD where first num > second
+            m, d = d, m
+        new_date_part = f"{y:04d}-{m:02d}-{d:02d}"
+        return f"{new_date_part} {time_part}"
+    except:
+        return date_str
 
 def process_comment(comment):
     if pd.isna(comment):
@@ -468,6 +492,9 @@ def generate_unmatched_proc_withdrawals(date_str, matching_df=None):
     for col in columns_to_clean:
         if col in unmatched_proc.columns:
             unmatched_proc.loc[:, col] = unmatched_proc[col].apply(clean_value)
+    # Correct ambiguous date parses for powercash/shift4
+    unmatched_proc['proc_date'] = unmatched_proc.apply(
+        lambda row: correct_proc_date(row['proc_date'], row['proc_processor_name']), axis=1)
     # Format proc_date
     unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(lambda x: format_date(x, is_proc=True))
     # Make amounts negative

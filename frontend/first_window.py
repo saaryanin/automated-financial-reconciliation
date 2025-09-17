@@ -217,10 +217,10 @@ class ReconciliationWindow(QWidget):
             }
             QCalendarWidget {
                 background: #4a90e2;
-                border: 1px solid #e9ecef;
+                border: 1x solid #e9ecef;
                 border-radius: 4px;
-                min-width: 270px;
-                max-height: 170px;
+                min-width: 280px;
+                max-height: 180px;
             }
             QCalendarWidget QAbstractItemView {
                 background: #ffffff;

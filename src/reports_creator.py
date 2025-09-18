@@ -49,7 +49,7 @@ def main(date=None):
 
     # --- Configuration ---
     if date is None:
-        date = sys.argv[1] if len(sys.argv) > 1 else "2025-08-05"  # Default only for standalone
+        date = sys.argv[1] if len(sys.argv) > 1 else "2025-03-24"  # Default only for standalone
     PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
 
     # NEW: Clear any stale report_dir for this date to prevent bleed from previous runs
@@ -268,8 +268,19 @@ def main(date=None):
         # --- Prepare output dataframe for withdrawals ---
         matches_df = pd.DataFrame(matches)
 
+        # Add payment_method column (position will be handled by desired_columns selection later)
+        matches_df['payment_method'] = np.nan
+
+        # Assign payment_method for non-cancelled CRM rows (matched/unmatched), assuming order preserved from input
+        crm_rows_count = len(crm_df_non_cancelled)
+        if len(matches_df) >= crm_rows_count and not crm_df_non_cancelled.empty:
+            pm_col_idx = matches_df.columns.get_loc('payment_method')
+            matches_df.iloc[:crm_rows_count, pm_col_idx] = crm_df_non_cancelled['payment_method'].values
+            print(f"Assigned payment_method for {crm_rows_count} non-cancelled rows")
+
         desired_columns = [
             'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
+            'payment_method',
             'crm_processor_name',
             'regulation',
             'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency',
@@ -316,8 +327,26 @@ def main(date=None):
 
         # --- Append cancellations ---
         cancelled = engine.make_cancelled_rows(crm_df_withdrawals)
-        if cancelled:
-            matches_df = safe_concat([matches_df, pd.DataFrame(cancelled)], ignore_index=True)
+        if cancelled and len(cancelled) > 0:  # Explicit non-empty list check
+            cancelled_df = pd.DataFrame(cancelled)  # Convert list-of-dicts to DF
+            if not cancelled_df.empty:
+                # Add payment_method column for cancelled rows, assuming order preserved from filtered CRM cancelled rows
+                cancelled_df['payment_method'] = np.nan
+                cancelled_crm_mask = crm_df_withdrawals['crm_type'].str.lower() == 'withdrawal cancelled'
+                cancelled_crm_df = crm_df_withdrawals[cancelled_crm_mask].copy()
+                if len(cancelled_df) == len(cancelled_crm_df):
+                    pm_col_idx_cancel = cancelled_df.columns.get_loc('payment_method')
+                    cancelled_df.iloc[:, pm_col_idx_cancel] = cancelled_crm_df['payment_method'].values
+                    print(f"Assigned payment_method for {len(cancelled_df)} cancelled rows")
+                # Ensure desired columns for cancelled_df to match on concat
+                cancelled_df = cancelled_df[[c for c in desired_columns if c in cancelled_df.columns]]
+                # Append merged directly (no raw append needed)
+                if 'comment' in matches_df.columns:
+                    non_cancelled_mask = ~matches_df['comment'].str.contains('cancelled', na=False, regex=False)
+                    matches_df = pd.concat([matches_df[non_cancelled_mask], cancelled_df], ignore_index=True)
+                else:
+                    matches_df = pd.concat([matches_df, cancelled_df], ignore_index=True)  # Fallback if no comment col
+                print(f"Appended {len(cancelled_df)} cancelled rows with payment_method")
 
         # --- Fix: Populate regulation using crm_index if available and regulation is missing ---
         if 'crm_index' in matches_df.columns and 'regulation' not in matches_df.columns:

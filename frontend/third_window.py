@@ -628,6 +628,7 @@ class ThirdWindow(QWidget):
                 crm_cols = [c for c in matching_df.columns if c.startswith('crm_') and c != 'crm_type']
                 for col in crm_cols:
                     proc_row_dict[col] = np.nan
+                proc_row_dict['payment_method'] = np.nan
                 proc_row_dict['match_status'] = 0
                 proc_row_dict['payment_status'] = 0
                 proc_row_dict['warning'] = False

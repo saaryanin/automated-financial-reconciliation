@@ -428,8 +428,11 @@ def generate_warning_withdrawals(date_str):
     warnings_df.loc[:, 'comment'] = warnings_df['comment'].apply(process_comment)
     # Select specified columns
     columns = [
-        'orig_index', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
-        'crm_processor_name', 'regulation', 'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4',
+        'orig_index', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency',
+        'crm_amount',
+        'payment_method',
+        'crm_processor_name', 'regulation', 'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname',
+        'proc_last4',
         'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name', 'comment'
     ]
     warnings_df = warnings_df[[c for c in columns if c in warnings_df.columns]]
@@ -437,7 +440,7 @@ def generate_warning_withdrawals(date_str):
     output_dir = OUTPUT_DIR / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "warnings_withdrawals.xlsx"
-    save_excel(warnings_df, output_path, text_columns=['crm_last4', 'proc_last4', 'orig_index'])
+    save_excel(warnings_df, output_path, text_columns=['crm_last4', 'proc_last4', 'orig_index', 'payment_method'])
     print(f"Warnings withdrawals saved to {output_path}")
 
 def load_matching_df(date_str):
@@ -669,7 +672,7 @@ def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
     # Select specified columns
     columns = [
         'crm_type', 'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_amount', 'crm_currency',
-        'crm_tp', 'regulation', 'crm_processor_name', 'crm_last4', 'comment'
+        'crm_tp','payment_method', 'regulation', 'crm_processor_name', 'crm_last4', 'comment'
     ]
     unmatched_crm = unmatched_crm[columns]
     # Rename columns
@@ -682,6 +685,7 @@ def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
         'crm_amount': 'Amount',
         'crm_currency': 'Currency',
         'crm_tp': 'TP',
+        'payment_method': 'Payment Method',
         'regulation': 'Regulation',
         'crm_processor_name': 'Processor Name',
         'crm_last4': 'Last 4 Digits',

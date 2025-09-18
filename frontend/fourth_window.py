@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QTableWid
 from PyQt5.QtCore import QProcess, Qt
 import shutil
 import pandas as pd
-from src.config import OUTPUT_DIR # Import OUTPUT_DIR from config
+from src.config import OUTPUT_DIR, LISTS_DIR # Import LISTS_DIR from config
 import sys
 
 class FourthWindow(QWidget):
@@ -127,11 +127,17 @@ class FourthWindow(QWidget):
         shifts_path = OUTPUT_DIR / self.date_str / "total_shifts_by_currency.csv"
         if not shifts_path.exists():
             print("Debug: Shifts file not found")
+            self.shifts_label.setText("No Shifts Detected")
+            self.shifts_label.show()
+            self.table_container.hide()
             return
         try:
             df = pd.read_csv(shifts_path)
             if df.empty:
                 print("Debug: Shifts file is empty")
+                self.shifts_label.setText("No Shifts Detected")
+                self.shifts_label.show()
+                self.table_container.hide()
                 return
             num_currencies = len(df.columns)
             self.shifts_label.setText(
@@ -167,20 +173,36 @@ class FourthWindow(QWidget):
             frame_w = self.shifts_table.style().pixelMetric(QStyle.PM_DefaultFrameWidth) * 2
             desired_w = col_sum + vheader_w + frame_w
             self.shifts_table.setFixedWidth(desired_w)
+            self.table_container.show()
         except Exception as e:
             print(f"Debug: Error populating shifts table: {e}")
+            self.shifts_label.setText("Error Loading Shifts")
+            self.table_container.hide()
     def adjust_window_size(self):
-        # Calculate required width: max of button width or table width
+        # Calculate required width based on visible widgets
+        margins = self.layout().contentsMargins()
+        margin_width = margins.left() + margins.right()
         button_width = self.export_btn.sizeHint().width()
-        table_width = self.shifts_table.width()
-        window_width = max(button_width, table_width) + self.layout().contentsMargins().left() + self.layout().contentsMargins().right()
-        # Calculate required height: button + label + table (header + rows + padding) + margins
+        if self.table_container.isVisible():
+            table_width = self.shifts_table.width()
+            window_width = max(button_width, table_width) + margin_width
+        else:
+            label_width = self.shifts_label.sizeHint().width() if self.shifts_label.isVisible() else 0
+            window_width = max(button_width, label_width) + margin_width
+        # Calculate required height based on visible widgets
         button_height = self.export_btn.sizeHint().height()
-        label_height = self.shifts_label.sizeHint().height()
-        header_height = self.shifts_table.horizontalHeader().height()
-        total_row_height = sum(self.shifts_table.rowHeight(i) for i in range(self.shifts_table.rowCount()))
-        table_height = header_height + total_row_height
-        window_height = button_height + label_height + table_height + self.layout().spacing() * 2 + self.layout().contentsMargins().top() + self.layout().contentsMargins().bottom()
+        label_height = self.shifts_label.sizeHint().height() if self.shifts_label.isVisible() else 0
+        if self.table_container.isVisible():
+            header_height = self.shifts_table.horizontalHeader().height()
+            total_row_height = sum(self.shifts_table.rowHeight(i) for i in range(self.shifts_table.rowCount()))
+            table_height = header_height + total_row_height
+        else:
+            table_height = 0
+        # Number of widgets: button always, +label if visible, +table if visible
+        num_widgets = 1 + (1 if label_height > 0 else 0) + (1 if table_height > 0 else 0)
+        num_spacings = max(0, num_widgets - 1)
+        margin_height = margins.top() + margins.bottom()
+        window_height = button_height + label_height + table_height + self.layout().spacing() * num_spacings + margin_height
         self.resize(window_width, window_height)
         # Recenter the window
         qr = self.frameGeometry()
@@ -188,6 +210,49 @@ class FourthWindow(QWidget):
         qr.moveCenter(cp)
         self.move(qr.topLeft())
         print(f"Debug: Window resized to {window_width}x{window_height}")
+
+    def is_perfect_match(self):
+        """Check if deposits and withdrawals matching files indicate perfect reconciliation (all match_status=1) and no shifts."""
+        perfect = True
+        lists_dir = LISTS_DIR / self.date_str
+        deposits_path = lists_dir / "deposits_matching.xlsx"
+        withdrawals_path = lists_dir / "withdrawals_matching.xlsx"
+        shifts_path = OUTPUT_DIR / self.date_str / "total_shifts_by_currency.csv"
+
+        # Check deposits
+        if deposits_path.exists():
+            try:
+                df_d = pd.read_excel(deposits_path)
+                if 'match_status' in df_d.columns:
+                    unmatched_d = (df_d['match_status'] == 0).sum()
+                    if unmatched_d > 0:
+                        perfect = False
+            except Exception as e:
+                print(f"Debug: Error checking deposits: {e}")
+                perfect = False
+
+        # Check withdrawals
+        if withdrawals_path.exists():
+            try:
+                df_w = pd.read_excel(withdrawals_path)
+                if 'match_status' in df_w.columns:
+                    unmatched_w = (df_w['match_status'] == 0).sum()
+                    if unmatched_w > 0:
+                        perfect = False
+            except Exception as e:
+                print(f"Debug: Error checking withdrawals: {e}")
+                perfect = False
+
+        # Check shifts
+        if shifts_path.exists():
+            try:
+                df_s = pd.read_csv(shifts_path)
+                if not df_s.empty:
+                    perfect = False
+            except Exception as e:
+                print(f"Debug: Error checking shifts: {e}")
+
+        return perfect
 
     def run_output_script(self):
         print("Debug: run_output_script started")
@@ -217,21 +282,27 @@ class FourthWindow(QWidget):
             else:
                 print("Debug: handle_shifts returned None/empty—skipping CSV")
 
-            # Phase 2: Generate all output files (unmatched/unapproved/etc.)
-            generate_unmatched_crm_deposits(self.date_str)
-            generate_unapproved_crm_deposits(self.date_str)
-            generate_unmatched_proc_deposits(self.date_str)
-            generate_unmatched_proc_withdrawals(self.date_str)
-            remove_compensated_entries(self.date_str)
-            generate_unmatched_crm_withdrawals(self.date_str)
+            # Check for perfect match before phase 2 to avoid .str errors on empty DFs
+            if self.is_perfect_match():
+                print("Debug: Perfect match detected - skipping phase 2 to avoid errors")
+                self.shifts_label.setText("Perfect Reconciliation - No Shifts or Unmatched Rows")
+                self.shifts_label.show()
+                self.table_container.hide()
+            else:
+                # Phase 2: Generate all output files (unmatched/unapproved/etc.)
+                print("Debug: Running phase 2")
+                generate_unmatched_crm_deposits(self.date_str)
+                generate_unapproved_crm_deposits(self.date_str)
+                generate_unmatched_proc_deposits(self.date_str)
+                generate_unmatched_proc_withdrawals(self.date_str)
+                remove_compensated_entries(self.date_str)
+                generate_unmatched_crm_withdrawals(self.date_str)
+                print("Debug: Phase 2 complete—all files generated")
 
             # Now populate UI (table will show if CSV exists)
             self.populate_shifts_table()
-            self.shifts_label.show()
-            self.table_container.show()
             self.export_btn.setEnabled(True)
             self.adjust_window_size()
-            print("Debug: Phase 2 complete—all files generated")
         except Exception as e:
             print(f"Error executing output phase 2: {e}")
             import traceback
@@ -253,7 +324,12 @@ class FourthWindow(QWidget):
                 if exported_count > 0:
                     QMessageBox.information(self, "Success", f"{exported_count} files exported to {dest_folder}")
                 else:
-                    QMessageBox.warning(self, "No Files", "No files to export (excluding warnings_withdrawals.xlsx and withdrawals_matching_updated.xlsx).")
+                    # Check for perfect match for custom alert
+                    if self.is_perfect_match():
+                        alert_msg = "Congratulations! Every row has matched perfectly with no discrepancies or shifts detected. No additional output reports are required for this date."
+                        QMessageBox.information(self, "Perfect Reconciliation", alert_msg)
+                    else:
+                        QMessageBox.warning(self, "No Files", "No files to export (excluding warnings_withdrawals.xlsx and withdrawals_matching_updated.xlsx).")
             else:
                 QMessageBox.warning(self, "Error", f"No files found in output/{self.date_str}")
         print("Debug: export_files finished")

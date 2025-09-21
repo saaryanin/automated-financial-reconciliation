@@ -27,11 +27,7 @@ class ThirdWindow(QWidget):
         self.tables_container = QWidget()
         self.tables_layout = QVBoxLayout()
         self.tables_container.setLayout(self.tables_layout)
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(False)
-        self.scroll_area.setWidget(self.tables_container)
-        self.scroll_area.setWidgetResizable(True)
-        layout.addWidget(self.scroll_area)
+        layout.addWidget(self.tables_container)
         # Buttons
         button_layout = QHBoxLayout()
         self.remove_btn = QPushButton('Remove Selected (Accept Match)')
@@ -124,6 +120,7 @@ class ThirdWindow(QWidget):
     def on_data_loaded(self, data_dict):
         self.loading_label.hide()
         self.tables_layout.removeWidget(self.loading_label)
+        self.loading_label.deleteLater()
         self.warnings_df = data_dict['warnings_df']
         self.orig_indices = data_dict['orig_indices']
         self.orig_to_local = data_dict['orig_to_local']
@@ -133,6 +130,7 @@ class ThirdWindow(QWidget):
             return
         if self.warnings_df.empty:
             self.add_no_warnings_label()
+            self.adjust_tables_and_window()
             return
         # Clean processor columns
         columns_to_clean = [
@@ -385,18 +383,15 @@ class ThirdWindow(QWidget):
                 self.proc_sub_layout.addWidget(self.proc_table)
                 self.tables_layout.addLayout(self.proc_sub_layout)
         self.adjust_tables_and_window()
-
     def on_load_error(self, error_msg):
-        self.layout.removeWidget(self.loading_label)
+        self.tables_layout.removeWidget(self.loading_label)
         self.loading_label.deleteLater()
         QMessageBox.critical(self, "Error", f"Failed to load warnings: {error_msg}")
         self.close()
-
     def add_no_warnings_label(self):
         label = QLabel("No warnings to review.")
         label.setAlignment(Qt.AlignCenter)
-        self.layout.insertWidget(self.layout.count() - 1, label)  # Add before buttons
-        self.adjust_tables_and_window()
+        self.tables_layout.addWidget(label) # Add to tables_layout
     def format_cell_value(self, val, col):
         if pd.isna(val):
             return ''
@@ -439,7 +434,6 @@ class ThirdWindow(QWidget):
             if table.cellWidget(r, 1).layout().itemAt(1).widget() == button:
                 return r
         return -1
-
     def adjust_tables_and_window(self):
         tables = []
         labels = []
@@ -467,43 +461,30 @@ class ThirdWindow(QWidget):
                 table.show()
                 if label:
                     label.show()
-        # Step 1: Resize rows to base contents (no extra yet)
+        # Step 1: Resize rows to base contents and set full heights
         for table in tables:
             table.resizeRowsToContents()
-        # Step 2: Initial cap to min(4 rows) without extra, set scroll policy
-        max_visible_rows = 4
-        for table in tables:
-            row_count = table.rowCount()
-            if row_count > max_visible_rows:
-                height = table.horizontalHeader().height()
-                for i in range(max_visible_rows):
-                    height += table.rowHeight(i)
-                height += 20  # Buffer
-                table.setFixedHeight(height)
-                table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            else:
-                height = table.horizontalHeader().height()
-                for i in range(row_count):
-                    height += table.rowHeight(i)
-                height += 20  # Buffer
-                table.setFixedHeight(height)
-                table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # Step 3: Adjust size and get base height with capped tables (no extra)
+            height = table.horizontalHeader().height()
+            for i in range(table.rowCount()):
+                height += table.rowHeight(i)
+            height += 20
+            table.setFixedHeight(height)
+        # Step 2: Get base height with full content
         self.adjustSize()
         base_height = self.height()
-        # Step 4: Calculate total visible rows for projection/extras
-        total_visible = sum(min(table.rowCount(), max_visible_rows) for table in tables)
-        desired_extra_per_row = 10
         frame_overhead = self.frameGeometry().height() - self.height()
-        taskbar_and_program_bar_size = 30
-        desired_extra_window = 800
+        taskbar_and_program_bar_size = 0
         max_content_height = self.available_height - frame_overhead - taskbar_and_program_bar_size
-        projected = base_height + (total_visible * desired_extra_per_row) + desired_extra_window
+        # Step 3: Calculate extras based on total rows
+        total_rows = sum(table.rowCount() for table in tables)
+        desired_extra_per_row = 10
+        desired_extra_window = 50
+        projected = base_height + (total_rows * desired_extra_per_row) + desired_extra_window
         if projected > max_content_height:
-            if total_visible > 0:
-                max_extra_per_row = max(0, (max_content_height - base_height - desired_extra_window) // total_visible)
+            if total_rows > 0:
+                max_extra_per_row = max(0, (max_content_height - base_height - desired_extra_window) // total_rows)
                 extra_per_row = min(desired_extra_per_row, max_extra_per_row)
-                extra_window = max_content_height - base_height - (total_visible * extra_per_row)
+                extra_window = max_content_height - base_height - (total_rows * extra_per_row)
                 if extra_window < 0:
                     extra_window = 0
             else:
@@ -512,32 +493,35 @@ class ThirdWindow(QWidget):
         else:
             extra_per_row = desired_extra_per_row
             extra_window = desired_extra_window
-        # Step 5: Apply extra per row to ALL rows (for consistency when scrolling)
+        # Step 4: Apply extra per row to all rows
         for table in tables:
             for i in range(table.rowCount()):
                 table.setRowHeight(i, table.rowHeight(i) + extra_per_row)
-        # Step 6: Re-cap heights with extras included
+        # Step 5: Cap table heights with special logic for small tables
         for table in tables:
             row_count = table.rowCount()
-            if row_count > max_visible_rows:
-                height = table.horizontalHeader().height()
-                for i in range(max_visible_rows):
-                    height += table.rowHeight(i)
-                height += 20  # Buffer
-                table.setFixedHeight(height)
+            is_differ = table is getattr(self, 'differ_table', None)
+            max_vis = 2 if is_differ else 4
+            if row_count <= 3 and not is_differ:
+                avg_row = sum(table.rowHeight(i) for i in range(row_count)) / row_count if row_count > 0 else 0
+                height = table.horizontalHeader().height() + (2 * avg_row) + 20
+                table.setFixedHeight(int(height))
+                table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if row_count > 2 else Qt.ScrollBarAlwaysOff)
             else:
+                vis_count = min(row_count, max_vis)
                 height = table.horizontalHeader().height()
-                for i in range(row_count):
+                for i in range(vis_count):
                     height += table.rowHeight(i)
-                height += 20  # Buffer
+                height += 20
                 table.setFixedHeight(height)
-        # Step 7: Final adjust and set window size/geometry
+                table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if row_count > max_vis else Qt.ScrollBarAlwaysOff)
+        # Step 6: Final adjust and set window size/geometry
         self.adjustSize()
         self.setFixedWidth(self.screen_width)
         self.adjustSize()
         final_height = min(self.height() + extra_window, max_content_height)
         self.setFixedHeight(final_height)
-        self.setGeometry(0, taskbar_and_program_bar_size, self.screen_width, final_height)  # Change x to 0
+        self.setGeometry(0, 0, self.screen_width, final_height)  # Start from top
     def toggle_accept(self, table, row):
         if row in self.accepted_rows[table]:
             self.accepted_rows[table].remove(row)

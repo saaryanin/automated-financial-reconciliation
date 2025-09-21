@@ -260,17 +260,14 @@ class FourthWindow(QWidget):
             from src.output import (
                 generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
                 generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
-                remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits
+                remove_compensated_entries, generate_unmatched_crm_withdrawals
             )
             from src.shifts_handler import main as handle_shifts  # Import for CSV save
             from src.config import OUTPUT_DIR
 
-            # output_dir = OUTPUT_DIR / self.date_str
-            # output_dir.mkdir(parents=True,
-            #                  exist_ok=True)  # Ensure dir exists (no rmtree—avoids overwriting warnings.xlsx)
             output_dir = OUTPUT_DIR / self.date_str
-            output_dir.mkdir(parents=True, exist_ok=True)  # Ensure dir exists without clearing
-            print(f"Debug: output_dir ensured without rmtree for {self.date_str}")
+            output_dir.mkdir(parents=True,
+                             exist_ok=True)  # Ensure dir exists (no rmtree—avoids overwriting warnings.xlsx)
 
             # Save shifts CSV (idempotent; re-runs handle_shifts safely)
             matched_sums = handle_shifts(self.date_str)
@@ -298,9 +295,8 @@ class FourthWindow(QWidget):
                 generate_unapproved_crm_deposits(self.date_str)
                 generate_unmatched_proc_deposits(self.date_str)
                 generate_unmatched_proc_withdrawals(self.date_str)
-                compensated_deps, compensated_wds = remove_compensated_entries(self.date_str)
+                remove_compensated_entries(self.date_str)
                 generate_unmatched_crm_withdrawals(self.date_str)
-                generate_matched_deposits(self.date_str, compensated_deps)
                 print("Debug: Phase 2 complete—all files generated")
 
             # Now populate UI (table will show if CSV exists)

@@ -11,6 +11,7 @@ import pandas as pd
 import re
 from pathlib import Path
 from src.config import RATES_DIR, CRM_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
+from src.config import OUTPUT_DIR
 
 
 class DropButton(QPushButton):
@@ -556,8 +557,11 @@ class ReconciliationWindow(QWidget):
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
             file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
-            # Removed: self.show_info("Success", f"Rates saved to {file_path}")
-
+            # Clears the output/dated folder before running everytime.
+            output_date_dir = OUTPUT_DIR / selected_date
+            if output_date_dir.exists():
+                shutil.rmtree(output_date_dir)
+                print(f"Cleared output dir for {selected_date}")
             # NEW: Hide and open second window instead of running reports_creator
             self.hide()
             self.open_second_window()

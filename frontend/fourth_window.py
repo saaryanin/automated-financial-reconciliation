@@ -260,15 +260,23 @@ class FourthWindow(QWidget):
             from src.output import (
                 generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
                 generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
-                remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits
+                remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits, generate_matched_withdrawals
             )
             from src.shifts_handler import main as handle_shifts  # Import for CSV save
             from src.config import OUTPUT_DIR
 
-            # output_dir = OUTPUT_DIR / self.date_str
-            # output_dir.mkdir(parents=True,
-            #                  exist_ok=True)  # Ensure dir exists (no rmtree—avoids overwriting warnings.xlsx)
             output_dir = OUTPUT_DIR / self.date_str
+            # Clear output/dated except for withdrawals_matching_updated.xlsx
+            if output_dir.exists():
+                files_to_keep = ["withdrawals_matching_updated.xlsx"]
+                for item in list(output_dir.iterdir()):
+                    if item.name not in files_to_keep:
+                        if item.is_file():
+                            item.unlink()
+                            print(f"Removed file {item} in output/{self.date_str}")
+                        else:
+                            shutil.rmtree(item)
+                            print(f"Removed dir {item} in output/{self.date_str}")
             output_dir.mkdir(parents=True, exist_ok=True)  # Ensure dir exists without clearing
             print(f"Debug: output_dir ensured without rmtree for {self.date_str}")
 
@@ -285,28 +293,26 @@ class FourthWindow(QWidget):
             else:
                 print("Debug: handle_shifts returned None/empty—skipping CSV")
 
-            # Check for perfect match before phase 2 to avoid .str errors on empty DFs
-            if self.is_perfect_match():
-                print("Debug: Perfect match detected - skipping phase 2 to avoid errors")
-                self.shifts_label.setText("Perfect Reconciliation - No Shifts or Unmatched Rows")
-                self.shifts_label.show()
-                self.table_container.hide()
-            else:
-                # Phase 2: Generate all output files (unmatched/unapproved/etc.)
-                print("Debug: Running phase 2")
-                generate_unmatched_crm_deposits(self.date_str)
-                generate_unapproved_crm_deposits(self.date_str)
-                generate_unmatched_proc_deposits(self.date_str)
-                generate_unmatched_proc_withdrawals(self.date_str)
-                compensated_deps, compensated_wds = remove_compensated_entries(self.date_str)
-                generate_unmatched_crm_withdrawals(self.date_str)
-                generate_matched_deposits(self.date_str, compensated_deps)
-                print("Debug: Phase 2 complete—all files generated")
+            # Phase 2: Generate all output files (unmatched/unapproved/etc.)
+            print("Debug: Running phase 2")
+            generate_unmatched_crm_deposits(self.date_str)
+            generate_unapproved_crm_deposits(self.date_str)
+            generate_unmatched_proc_deposits(self.date_str)
+            generate_unmatched_proc_withdrawals(self.date_str)
+            compensated_deps, compensated_wds = remove_compensated_entries(self.date_str)
+            generate_unmatched_crm_withdrawals(self.date_str)
+            generate_matched_deposits(self.date_str, compensated_deps)
+            generate_matched_withdrawals(self.date_str, compensated_wds)
+            print("Debug: Phase 2 complete—all files generated")
 
             # Now populate UI (table will show if CSV exists)
             self.populate_shifts_table()
             self.export_btn.setEnabled(True)
             self.adjust_window_size()
+            if self.is_perfect_match():
+                self.shifts_label.setText("Perfect Reconciliation - No Shifts or Unmatched Rows")
+                self.shifts_label.show()
+                self.table_container.hide()
         except Exception as e:
             print(f"Error executing output phase 2: {e}")
             import traceback

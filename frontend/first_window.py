@@ -131,8 +131,6 @@ class ReconciliationWindow(QWidget):
     def initUI(self):
         self.setWindowTitle('CRM-Processor Reconciliation System')
 
-        # No custom icon path needed anymore - we're using Unicode/standard styles
-
         app = QApplication.instance()
         app.setStyleSheet("""
             QWidget {
@@ -187,13 +185,12 @@ class ReconciliationWindow(QWidget):
                 min-width: 200px;
                 font-size: 14px;
             }
-            /* Custom date picker styles */
             #date-lineedit {
-                padding: 8px;  /* Match rate input padding for alignment */
-                border: 2px solid #dfe6e9;  /* Match rate input border */
-                border-radius: 4px 0 0 4px;  /* Slightly rounded to match overall theme */
+                padding: 8px;
+                border: 2px solid #dfe6e9;
+                border-radius: 4px 0 0 4px;
                 font-size: 14px;
-                background: #ffffff;  /* Pure white to match rate inputs */
+                background: #ffffff;
                 color: #2c3e50;
                 min-width: 80px;
             }
@@ -202,11 +199,11 @@ class ReconciliationWindow(QWidget):
                 box-shadow: 0 0 5px rgba(74, 144, 226, 0.3);
             }
             #date-button {
-                padding: 8px 6px;  /* Adjusted for icon size */
+                padding: 8px 6px;
                 border: 2px solid #dfe6e9;
                 border-left: none;
                 border-radius: 0 4px 4px 0;
-                background: #ffffff;  /* Pure white to match */
+                background: #ffffff;
                 font-size: 14px;
                 min-width: 14px;
                 color: #1e90ff;
@@ -217,18 +214,17 @@ class ReconciliationWindow(QWidget):
             }
             QCalendarWidget {
                 background: #4a90e2;
-                border: 1x solid #e9ecef;
+                border: 1px solid #e9ecef;
                 border-radius: 4px;
                 min-width: 280px;
-                max-height: 180px;
             }
             QCalendarWidget QAbstractItemView {
                 background: #ffffff;
-                color: #1e90ff; /* Blue for all numbers */
+                color: #1e90ff;
             }
             QCalendarWidget QToolButton {
                 background: #f0f0f0;
-                color: #1e90ff; /* Blue for tool buttons */
+                color: #1e90ff;
                 font-size: 12px;
                 padding: 4px;
                 border: none;
@@ -236,17 +232,14 @@ class ReconciliationWindow(QWidget):
             QCalendarWidget QToolButton:hover {
                 background: #d1d7e0;
                 color: #1a252f;
-
             }
             QCalendarWidget QMenu {
                 background: #ffffff;
                 color: #1e90ff;
-
             }
             QCalendarWidget QMenu::item:selected {
                 background: #4a90e2;
                 color: #ffffff;
-
             }
             QMessageBox {
                 background-color: #ffffff;
@@ -267,19 +260,16 @@ class ReconciliationWindow(QWidget):
             QMessageBox QPushButton:hover {
                 background: #357abd;
             }
-            """)
+        """)
 
-        # Adjust window position and size
         screen = QApplication.desktop().screenGeometry()
         self.setGeometry((screen.width() - 900) // 2, 50, 900, 600)
 
-        # Main layout
         main_layout = QVBoxLayout()
         main_layout.setSpacing(20)
         main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
 
-        # Header
         header = QLabel('CRM-Processor Reconciliation System')
         header.setAlignment(Qt.AlignCenter)
         header.setStyleSheet("""
@@ -292,7 +282,6 @@ class ReconciliationWindow(QWidget):
         """)
         main_layout.addWidget(header)
 
-        # Currency Section
         currency_section = QWidget()
         currency_section.setObjectName("section")
         currency_layout = QVBoxLayout()
@@ -321,8 +310,7 @@ class ReconciliationWindow(QWidget):
             currency_grid.addWidget(calc_label, i, 2)
         currency_layout.addLayout(currency_grid)
 
-        # Custom Date Picker with Unicode Calendar Icon Button - Centered
-        date_container = QWidget()  # NEW: Explicit container layer for the date row
+        date_container = QWidget()
         date_container.setStyleSheet("""
             background: #ffffff;
             padding: 10px;
@@ -332,7 +320,7 @@ class ReconciliationWindow(QWidget):
 
         date_layout = QHBoxLayout()
         date_label = QLabel("Date:")
-        date_label.setStyleSheet("font-size: 12px; margin-right: 5px;")  # Slight margin for spacing
+        date_label.setStyleSheet("font-size: 12px; margin-right: 5px;")
         self.date_lineedit = QLineEdit()
         self.date_lineedit.setObjectName("date-lineedit")
         today = QDate.currentDate()
@@ -344,34 +332,29 @@ class ReconciliationWindow(QWidget):
         self.date_lineedit.setMaximumWidth(90)
         self.valid_date_str = selected_date
 
-        # Enable manual editing with format validator
         self.date_lineedit.setReadOnly(False)
         date_regex = QRegExp(r'^\d{1,2}/\d{1,2}/\d{4}$')
         validator = QRegExpValidator(date_regex)
         self.date_lineedit.setValidator(validator)
         self.date_lineedit.editingFinished.connect(self.on_date_edited)
 
-        # Create popup calendar
         self.calendar = QCalendarWidget()
         self.calendar.setGridVisible(True)
-        self.calendar.setMinimumSize(270, 150)
-        self.calendar.setMaximumHeight(150)
-        self.calendar.setSelectedDate(yesterday)
         self.calendar.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
-        self.calendar.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.calendar.setWindowFlags(Qt.Popup)  # Removed FramelessWindowHint
         self.calendar.clicked.connect(self.calendar_date_selected)
+        self.calendar.currentPageChanged.connect(self.update_calendar_layout)  # New: Handle page changes
 
-        # Calendar popup button with Unicode emoji
         self.date_button = QToolButton()
         self.date_button.setAutoFillBackground(True)
         self.date_button.setObjectName("date-button")
-        self.date_button.setText("📅")  # Using Unicode calendar emoji as recommended
+        self.date_button.setText("📅")
         self.date_button.clicked.connect(self.show_calendar_popup)
 
         date_layout.addWidget(date_label, alignment=Qt.AlignRight)
         date_layout.addWidget(self.date_lineedit)
         date_layout.addWidget(self.date_button)
-        date_layout.setSpacing(2)  # Tight spacing for compact look
+        date_layout.setSpacing(2)
         date_layout.setContentsMargins(0, 0, 0, 0)
 
         date_widget = QWidget()
@@ -385,7 +368,6 @@ class ReconciliationWindow(QWidget):
 
         main_layout.addWidget(currency_section)
 
-        # File Upload Section
         file_section = QWidget()
         file_section.setObjectName("section")
         file_layout = QVBoxLayout()
@@ -409,9 +391,8 @@ class ReconciliationWindow(QWidget):
 
         main_layout.addWidget(file_section)
 
-        # Process and Reset Buttons
         button_layout = QHBoxLayout()
-        button_layout.addStretch(1)  # Stretch to center the buttons
+        button_layout.addStretch(1)
         self.process_btn = QPushButton('Start Processing')
         self.process_btn.setEnabled(False)
         self.process_btn.clicked.connect(self.save_rates_and_process)
@@ -420,8 +401,13 @@ class ReconciliationWindow(QWidget):
         self.reset_btn = QPushButton('Reset')
         self.reset_btn.clicked.connect(self.reset_fields)
         button_layout.addWidget(self.reset_btn)
-        button_layout.addStretch(1)  # Stretch to center the buttons
+        button_layout.addStretch(1)
         main_layout.addLayout(button_layout)
+
+    def update_calendar_layout(self, year, month):
+        """Force layout update when the calendar page changes."""
+        self.calendar.updateGeometry()
+        self.calendar.adjustSize()
 
     def on_date_edited(self):
         """Validate and update date on editing finished."""
@@ -445,9 +431,13 @@ class ReconciliationWindow(QWidget):
         if self.calendar.isVisible():
             self.calendar.hide()
         else:
-            # Position the calendar below the button, shifted right by 5 pixels
             button_pos = self.date_button.mapToGlobal(self.date_button.rect().bottomLeft())
-            self.calendar.move(button_pos.x() + 5, button_pos.y())
+            calendar_width = self.calendar.width()
+            calendar_height = self.calendar.height()
+            screen = QApplication.desktop().screenGeometry()
+            x_pos = min(button_pos.x() + 5, screen.width() - calendar_width)
+            y_pos = min(button_pos.y(), screen.height() - calendar_height - 10)
+            self.calendar.move(x_pos, y_pos)
             self.calendar.show()
 
     def show_warning(self, title, text):
@@ -486,7 +476,6 @@ class ReconciliationWindow(QWidget):
         if file_type == 'crm':
             file_path, _ = file_dialog.getOpenFileName(self, "Select CRM File", "", "CSV Files (*.csv *.xlsx *.xls)")
             if file_path:
-                # To make consistent with drop, copy the file
                 file_name = os.path.basename(file_path)
                 if file_name in self.moved_files:
                     self.show_warning("Duplicate", f"{file_name} already selected.")
@@ -505,7 +494,7 @@ class ReconciliationWindow(QWidget):
                 """)
         else:
             file_paths, _ = file_dialog.getOpenFileNames(self, "Select Processors Files", "",
-                                                         "CSV Files (*.csv *.xlsx *.xls)")
+                                                        "CSV Files (*.csv *.xlsx *.xls)")
             if file_paths:
                 new_files = []
                 for source_path in file_paths:
@@ -556,12 +545,10 @@ class ReconciliationWindow(QWidget):
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
             file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
-            # Clears the output/dated folder before running everytime.
             output_date_dir = OUTPUT_DIR / selected_date
             if output_date_dir.exists():
                 shutil.rmtree(output_date_dir)
                 print(f"Cleared output dir for {selected_date}")
-            # NEW: Hide and open second window instead of running reports_creator
             self.hide()
             self.open_second_window()
         else:
@@ -580,12 +567,10 @@ class ReconciliationWindow(QWidget):
         self.processor_files = [str(PROCESSOR_DIR / n) for n in [os.path.basename(p) for p in file_paths]]
 
     def reset_fields(self):
-        # Reset exchange rates
         for _, (input_field, calc_label) in self.rate_inputs.items():
             input_field.clear()
             calc_label.setText("0.0000")
 
-        # Reset date
         today = QDate.currentDate()
         yesterday = today.addDays(-1)
         if today.dayOfWeek() == 1:  # Monday (Qt: 1=Mon)
@@ -593,25 +578,23 @@ class ReconciliationWindow(QWidget):
         date_str = yesterday.toString("dd/MM/yyyy")
         self.date_lineedit.setText(date_str)
         self.valid_date_str = date_str
+        self.calendar.setSelectedDate(yesterday)
 
-        # Reset attached files and delete from directories
         if self.crm_file and os.path.exists(self.crm_file):
             os.remove(self.crm_file)
         self.crm_file = None
         self.crm_file_btn.setText("📊 CRM File")
-        self.crm_file_btn.setStyleSheet("")  # Reset button style to remove hover look
+        self.crm_file_btn.setStyleSheet("")
 
         for file_path in self.processor_files:
             if os.path.exists(file_path):
                 os.remove(file_path)
         self.processor_files = []
         self.processor_file_btn.setText("💳 Processors Files")
-        self.processor_file_btn.setStyleSheet("")  # Reset button style to remove hover look
+        self.processor_file_btn.setStyleSheet("")
 
-        # Disable process button
         self.process_btn.setEnabled(False)
 
-        # Optional: Clear RAW_ATTACHED_FILES if needed
         for file in RAW_ATTACHED_FILES.glob("*.*"):
             if file.is_file() and file.name != ".gitkeep":
                 file.unlink()
@@ -626,4 +609,4 @@ class ReconciliationWindow(QWidget):
         self.second_window = SecondWindow(selected_date)
         self.second_window.show()
         print("Debug: SecondWindow shown")
-        self.close()  # Close first window
+        self.close()

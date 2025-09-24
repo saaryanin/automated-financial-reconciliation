@@ -1,12 +1,7 @@
-# shifts_handler.py
-
 import logging
-from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 from dateutil.relativedelta import relativedelta
-import numpy as np  # Added for np.nan
-
 from src.config import LISTS_DIR, CRM_DIR
 from src.preprocess import extract_crm_transaction_id  # Import the global function
 

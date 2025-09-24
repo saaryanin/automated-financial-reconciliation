@@ -1,10 +1,8 @@
-#Changes in _flag_warnings and cross_processors functions in order to make the withdrawals_matching file look as it should be before third_window destroys it.
-
 from datetime import datetime, timedelta
 from functools import lru_cache
 import pandas as pd
 import logging, threading, time
-from src.utils import create_cancelled_row,normalize_string,clean_last4
+from src.utils import create_cancelled_row,normalize_string
 from difflib import SequenceMatcher
 from collections import defaultdict
 import re

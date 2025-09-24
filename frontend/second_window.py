@@ -1,12 +1,12 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTextEdit, QFileDialog, QMessageBox, QDesktopWidget, QApplication, QProgressBar
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMessageBox, QDesktopWidget, QApplication, QProgressBar
+from PyQt5.QtCore import QTimer
 import sys
 import re
-from src.reports_creator import main # Direct import for bundled call
-from src.output import generate_warning_withdrawals  # NEW: For warnings file gen before check
-from third_window import ThirdWindow # CHANGED: Import ThirdWindow instead of FourthWindow
-from fourth_window import FourthWindow # NEW: Import for direct skip to export
-from src.config import OUTPUT_DIR  # NEW: For file existence check
+from src.reports_creator import main
+from src.output import generate_warning_withdrawals
+from third_window_test import ThirdWindow
+from fourth_window import FourthWindow
+from src.config import OUTPUT_DIR
 
 class StdoutRedirector(object):
     def __init__(self, progress_bar):

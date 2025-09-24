@@ -1,7 +1,5 @@
-# reports_creator.py (updated)
 import logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
 import time
 import warnings
 import shutil
@@ -17,7 +15,6 @@ import sys
 from src.files_renamer import run_renamer  # Import the renamer
 import re
 from collections import defaultdict
-from pathlib import Path
 
 # Suppress openpyxl and pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")

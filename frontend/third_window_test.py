@@ -1,11 +1,10 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel, QTableWidget, QTableWidgetItem, QMessageBox, QDesktopWidget, QApplication, QHeaderView, QScrollArea
-from PyQt5.QtCore import Qt, QItemSelectionModel, QItemSelection, QThread, pyqtSignal
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QMessageBox, QDesktopWidget, QApplication, QHeaderView, QScrollArea
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import pandas as pd
 import numpy as np
 import re
 from src.config import LISTS_DIR, OUTPUT_DIR
-import shutil
-from src.output import clean_value, format_date, process_comment, save_excel, generate_unmatched_crm_withdrawals, generate_unmatched_proc_withdrawals, generate_warning_withdrawals,process_unmatched_comment
+from src.output import clean_value, format_date, process_comment, generate_warning_withdrawals
 from fourth_window import FourthWindow # Import to open next window
 class ThirdWindow(QWidget):
     def __init__(self, date_str):
@@ -400,7 +399,7 @@ class ThirdWindow(QWidget):
         elif "Cross-processor" in comment_str:
             return "Different processors" + suffix
         else:
-            return "Warning accepted as match" + suffix
+            return "Warning accepted" + suffix
 
     def get_display_comment(self, comment):
         comment_str = str(comment)
@@ -430,6 +429,7 @@ class ThirdWindow(QWidget):
         return -1
 
     def adjust_tables_and_window(self):
+        # Collect tables and labels
         tables = []
         labels = []
         sub_layouts = []
@@ -441,6 +441,7 @@ class ThirdWindow(QWidget):
             tables.append(self.other_table)
             labels.append(self.other_label if hasattr(self, 'other_label') else None)
             sub_layouts.append(self.other_sub_layout if hasattr(self, 'other_sub_layout') else None)
+
         # Hide empty tables/labels
         for idx, table in enumerate(tables):
             label = labels[idx]
@@ -452,77 +453,69 @@ class ThirdWindow(QWidget):
                 table.show()
                 if label:
                     label.show()
-        # Step 1: Resize rows to base contents (no extra yet)
+
+        # Step 1: Resize rows to contents for accurate height calculations
         for table in tables:
             table.resizeRowsToContents()
-        # Step 2: Initial cap to min(4 rows) without extra, set scroll policy
-        max_visible_rows = 4
-        for table in tables:
+
+        # Step 2: Set table heights based on row counts with max limits
+        max_differ_rows = 3  # Maximum visible rows for differ_table
+        max_other_rows = 5  # Maximum visible rows for other_table
+        total_height = 0  # Accumulate total content height
+
+        for table, label in zip(tables, labels):
             row_count = table.rowCount()
+            is_differ_table = table == getattr(self, 'differ_table', None)
+            max_visible_rows = max_differ_rows if is_differ_table else max_other_rows
+
+            # Calculate table height
+            header_height = table.horizontalHeader().height()
+            row_height_sum = sum(table.rowHeight(i) for i in range(min(row_count, max_visible_rows)))
+            table_height = header_height + row_height_sum + 20  # Buffer for padding
+
+            # Set table height and scrollbar policy
             if row_count > max_visible_rows:
-                height = table.horizontalHeader().height()
-                for i in range(max_visible_rows):
-                    height += table.rowHeight(i)
-                height += 20  # Buffer
-                table.setFixedHeight(height)
+                table.setFixedHeight(table_height)
                 table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             else:
-                height = table.horizontalHeader().height()
-                for i in range(row_count):
-                    height += table.rowHeight(i)
-                height += 20  # Buffer
-                table.setFixedHeight(height)
+                table.setFixedHeight(table_height)
                 table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # Step 3: Adjust size and get base height with capped tables (no extra)
-        self.adjustSize()
-        base_height = self.height()
-        # Step 4: Calculate total visible rows for projection/extras
-        total_visible = sum(min(table.rowCount(), max_visible_rows) for table in tables)
-        desired_extra_per_row = 10
-        frame_overhead = self.frameGeometry().height() - self.height()
-        taskbar_and_program_bar_size = 30
-        desired_extra_window = 800
-        max_content_height = self.available_height - frame_overhead - taskbar_and_program_bar_size
-        projected = base_height + (total_visible * desired_extra_per_row) + desired_extra_window
-        if projected > max_content_height:
-            if total_visible > 0:
-                max_extra_per_row = max(0, (max_content_height - base_height - desired_extra_window) // total_visible)
-                extra_per_row = min(desired_extra_per_row, max_extra_per_row)
-                extra_window = max_content_height - base_height - (total_visible * extra_per_row)
-                if extra_window < 0:
-                    extra_window = 0
-            else:
-                extra_per_row = 0
-                extra_window = min(desired_extra_window, max_content_height - base_height)
-        else:
-            extra_per_row = desired_extra_per_row
-            extra_window = desired_extra_window
-        # Step 5: Apply extra per row to ALL rows (for consistency when scrolling)
-        for table in tables:
-            for i in range(table.rowCount()):
-                table.setRowHeight(i, table.rowHeight(i) + extra_per_row)
-        # Step 6: Re-cap heights with extras included
-        for table in tables:
-            row_count = table.rowCount()
-            if row_count > max_visible_rows:
-                height = table.horizontalHeader().height()
-                for i in range(max_visible_rows):
-                    height += table.rowHeight(i)
-                height += 20  # Buffer
-                table.setFixedHeight(height)
-            else:
-                height = table.horizontalHeader().height()
-                for i in range(row_count):
-                    height += table.rowHeight(i)
-                height += 20  # Buffer
-                table.setFixedHeight(height)
-        # Step 7: Final adjust and set window size/geometry
-        self.adjustSize()
-        self.setFixedWidth(self.screen_width)
-        self.adjustSize()
-        final_height = min(self.height() + extra_window, max_content_height)
-        self.setFixedHeight(final_height)
-        self.setGeometry(0, taskbar_and_program_bar_size, self.screen_width, final_height)  # Change x to 0
+
+            # Add to total height (table + label if present)
+            total_height += table_height
+            if label and label.isVisible():
+                total_height += label.height()  # Typically 30px as per setFixedHeight(30)
+
+        # Step 3: Add space for buttons and layout margins
+        button_layout = self.layout().itemAt(self.layout().count() - 1).layout()
+        button_height = button_layout.itemAt(0).widget().height()  # Height of one button
+        total_button_height = button_height + button_layout.spacing()  # Account for spacing
+        total_height += total_button_height
+
+        # Add layout margins and spacing
+        layout_margins = self.layout().contentsMargins()
+        total_height += layout_margins.top() + layout_margins.bottom()
+        total_height += self.layout().spacing() * (len(tables) + 1)  # Spacing between tables and buttons
+
+        # Add scroll area margins and window frame overhead
+        scroll_area_margins = self.scroll_area.contentsMargins()
+        total_height += scroll_area_margins.top() + scroll_area_margins.bottom()
+        frame_overhead = self.frameGeometry().height() - self.height() if self.isVisible() else 40  # Estimate if not yet shown
+
+        # Step 4: Cap total height to available screen height
+        available_height = QApplication.desktop().availableGeometry().height()
+        max_height = available_height - frame_overhead - 30  # Account for taskbar/program bar
+        final_height = min(total_height + frame_overhead, max_height)
+
+        # Step 5: Set fixed width to 1920px (full HD) and calculated height
+        self.setFixedSize(1920, final_height)
+
+        # Step 6: Center the window
+        screen = QDesktopWidget().screenGeometry()
+        window_size = self.geometry()
+        x = (screen.width() - 1920) // 2
+        y = (screen.height() - final_height) // 2
+        self.setGeometry(x, y, 1920, final_height)
     def toggle_accept(self, table, row):
         button_col = self.get_button_col(table)
         if row in self.accepted_rows[table]:

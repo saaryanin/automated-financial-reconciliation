@@ -3,12 +3,11 @@ import re
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, CRM_DIR, COMBINED_CRM_DIR
+from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, COMBINED_CRM_DIR
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
 from src.utils import clean_amount, clean_last4, load_uk_holidays
-from src.withdrawals_matcher import ReconciliationEngine  # Import for enhanced_email_similarity
 import numpy as np
 from datetime import timedelta
 import logging

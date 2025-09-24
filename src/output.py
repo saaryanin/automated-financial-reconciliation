@@ -4,12 +4,13 @@ import shutil
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 from src.config import OUTPUT_DIR, LISTS_DIR
-from src.shifts_handler import main as handle_shifts, is_bst, get_cutoff_time
+from src.shifts_handler import main as handle_shifts, get_cutoff_time
 from collections import OrderedDict
 import ast
 from datetime import datetime
 import numpy as np
 import re
+import pandas as pd
 
 # Determine BASE_DIR for dev vs frozen (EXE) mode
 if getattr(sys, 'frozen', False):
@@ -23,7 +24,6 @@ else:
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
 
-import pandas as pd
 
 def save_excel(df, path, text_columns=None):
     if text_columns is None:
@@ -391,10 +391,10 @@ def process_unmatched_comment(comment):
         cleaned = cleaned[len("Unmatched due to warning: "):]
     elif cleaned == "No matching CRM row found":
         return ''
-    # Now, transform based on content
+    # Transform based on content
     cleaned_lower = cleaned.lower()
-    if "matched the same last4" in cleaned_lower:
-        return "Matched the same last4 but the user rejected the match"
+    if "matched the same last4" in cleaned_lower or "matched the same last 4 digits" in cleaned_lower:
+        return "Matched the same last 4 digits but the user rejected the match"
     elif "matched similar email" in cleaned_lower:
         return "Matched a similar email but the user rejected the match"
     elif "cross-processor fallback match" in cleaned_lower:

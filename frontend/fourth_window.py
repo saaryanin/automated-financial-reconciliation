@@ -1,10 +1,15 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QFileDialog, \
     QMessageBox, QDesktopWidget, QHeaderView, QApplication, QHBoxLayout, QSizePolicy, QStyle
-from PyQt5.QtCore import QProcess, Qt
+from PyQt5.QtCore import Qt
 import shutil
 import pandas as pd
-from src.config import OUTPUT_DIR, LISTS_DIR # Import LISTS_DIR from config
+from src.config import LISTS_DIR
 import sys
+from src.output import (generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
+                generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
+                remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits, generate_matched_withdrawals)
+from src.shifts_handler import main as handle_shifts
+from src.config import OUTPUT_DIR
 
 class FourthWindow(QWidget):
     def __init__(self, date_str):
@@ -257,14 +262,6 @@ class FourthWindow(QWidget):
     def run_output_script(self):
         print("Debug: run_output_script started")
         try:
-            from src.output import (
-                generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
-                generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
-                remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits, generate_matched_withdrawals
-            )
-            from src.shifts_handler import main as handle_shifts  # Import for CSV save
-            from src.config import OUTPUT_DIR
-
             output_dir = OUTPUT_DIR / self.date_str
             # Clear output/dated except for withdrawals_matching_updated.xlsx
             if output_dir.exists():

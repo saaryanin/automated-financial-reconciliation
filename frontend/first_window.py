@@ -1,16 +1,15 @@
-import sys
 import os
 import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QPushButton, QGridLayout, QFileDialog, QDateEdit, QMessageBox, QCalendarWidget,
+                             QPushButton, QGridLayout, QFileDialog, QMessageBox, QCalendarWidget,
                              QToolButton)
-from PyQt5.QtCore import Qt, QDate, QMimeData, QProcess, QTimer, QRegExp
+from PyQt5.QtCore import Qt, QDate, QRegExp
 from PyQt5.QtGui import QRegExpValidator
 from second_window import SecondWindow  # NEW: Import the new second window class
 import pandas as pd
 import re
 from pathlib import Path
-from src.config import RATES_DIR, CRM_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
+from src.config import RATES_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
 from src.config import OUTPUT_DIR
 
 

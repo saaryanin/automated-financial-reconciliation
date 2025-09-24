@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-import shutil
 
 # Add project root and src to path for script running (ignored in EXE)
 root_dir = Path(__file__).resolve().parent

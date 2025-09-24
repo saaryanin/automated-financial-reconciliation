@@ -707,6 +707,26 @@ class LoadWarningsThread(QThread):
             warnings_df = pd.read_excel(warnings_withdrawals_path)
             original_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
             original_matching_df = pd.read_excel(original_path) if original_path.exists() else pd.DataFrame()
+            if not original_matching_df.empty:
+                original_matching_df['crm_amount'] = original_matching_df['crm_amount'].apply(clean_value)
+                original_matching_df['proc_amount'] = original_matching_df['proc_amount'].apply(clean_value)
+                original_matching_df['proc_amount_crm_currency'] = original_matching_df['proc_amount_crm_currency'].apply(clean_value)
+                original_matching_df['crm_amount'] = pd.to_numeric(original_matching_df['crm_amount'], errors='coerce')
+                original_matching_df['proc_amount'] = pd.to_numeric(original_matching_df['proc_amount'], errors='coerce')
+                original_matching_df['proc_amount_crm_currency'] = pd.to_numeric(original_matching_df['proc_amount_crm_currency'], errors='coerce')
+                original_matching_df['comment'] = original_matching_df['comment'].fillna('').astype(str)
+                str_columns = ['crm_firstname', 'crm_lastname', 'proc_firstname', 'proc_lastname',
+                               'crm_email', 'proc_email',
+                               'crm_currency', 'proc_currency',
+                               'crm_processor_name', 'proc_processor_name',
+                               'payment_method', 'regulation',
+                               'crm_last4', 'proc_last4',
+                               'crm_tp', 'proc_tp',
+                               'crm_type']
+                for col in str_columns:
+                    if col in original_matching_df.columns:
+                        join = 'email' in col
+                        original_matching_df[col] = original_matching_df[col].apply(lambda x: clean_value(x, join_list=join))
             if 'orig_index' in warnings_df.columns:
                 warnings_df['orig_index'] = pd.to_numeric(warnings_df['orig_index'], errors='coerce').dropna().astype(int)
                 orig_indices = warnings_df['orig_index'].values

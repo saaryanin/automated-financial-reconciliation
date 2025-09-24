@@ -238,28 +238,28 @@ def generate_unmatched_proc_deposits(date_str):
     save_excel(unmatched_proc, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
     print(f"Unmatched processor deposits saved to {output_path}")
 
-def clean_value(val):
+def clean_value(val, join_list=False):
     if isinstance(val, str) and val.strip() == '[nan]':
         return np.nan
-    while True:
-        if isinstance(val, str):
-            try:
-                val = ast.literal_eval(val)
-            except:
-                break
-        elif isinstance(val, list):
-            if val:
-                val = val[0]
+    if isinstance(val, str):
+        try:
+            val = ast.literal_eval(val)
+        except:
+            pass
+    if isinstance(val, list):
+        cleaned_list = [clean_value(v, join_list=join_list) for v in val]
+        if join_list:
+            return ','.join(str(v) for v in cleaned_list if not pd.isna(v))
+        else:
+            if cleaned_list:
+                return cleaned_list[0]
             else:
                 return np.nan
-        else:
-            break
     if isinstance(val, float):
         if val.is_integer():
             val = int(val)
     if isinstance(val, str):
         val = val.strip("'\"")
-    # Treat 0 or '0' as no value (blank)
     if isinstance(val, (int, float)) and val == 0:
         return np.nan
     if isinstance(val, str) and val.strip() == '0':
@@ -478,6 +478,18 @@ def load_matching_df(date_str):
     df['proc_amount'] = pd.to_numeric(df['proc_amount'], errors='coerce')
     df['proc_amount_crm_currency'] = pd.to_numeric(df['proc_amount_crm_currency'], errors='coerce')
     df['comment'] = df['comment'].fillna('').astype(str)
+    str_columns = ['crm_firstname', 'crm_lastname', 'proc_firstname', 'proc_lastname',
+                   'crm_email', 'proc_email',
+                   'crm_currency', 'proc_currency',
+                   'crm_processor_name', 'proc_processor_name',
+                   'payment_method', 'regulation',
+                   'crm_last4', 'proc_last4',
+                   'crm_tp', 'proc_tp',
+                   'crm_type']
+    for col in str_columns:
+        if col in df.columns:
+            join = 'email' in col
+            df[col] = df[col].apply(lambda x: clean_value(x, join_list=join))
     return df
 
 def generate_unmatched_proc_withdrawals(date_str, matching_df=None):

@@ -4,7 +4,7 @@ import sys
 import re
 from src.reports_creator import main
 from src.output import generate_warning_withdrawals
-from third_window_test import ThirdWindow
+from third_window import ThirdWindow
 from fourth_window import FourthWindow
 from src.config import OUTPUT_DIR
 

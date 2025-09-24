@@ -374,34 +374,33 @@ def process_unmatched_comment(comment):
     if pd.isna(comment):
         return ''
     comment_str = str(comment)
-    # New: Handle unified suffix (covers all warnings, cross/non-cross)
-    if "[unmatched_warning]" in comment_str:
-        # Strip suffix and any legacy prefix
-        cleaned = comment_str.replace(" [unmatched_warning]", "")
-        if "Unmatched due to warning: " in cleaned:
-            cleaned = cleaned.replace("Unmatched due to warning: ", "")
-        elif "No matching CRM row found (due to warning: " in cleaned:
-            start = cleaned.find("due to warning: ") + len("due to warning: ")
-            end = cleaned.rfind(")")
-            if end != -1:
-                cleaned = cleaned[start:end]
-            else:
-                cleaned = cleaned[start:]
-        return cleaned
-    # Existing legacy cases
-    if comment_str.startswith("Unmatched due to warning: "):
-        return comment_str[len("Unmatched due to warning: "):]
-    elif "No matching CRM row found (due to warning: " in comment_str:
-        start = comment_str.find("due to warning: ") + len("due to warning: ")
-        end = comment_str.rfind(")")
+    # First, strip any prefixes or suffixes to get the core comment
+    cleaned = comment_str
+    if "[unmatched_warning]" in cleaned:
+        cleaned = cleaned.replace(" [unmatched_warning]", "")
+    if "Unmatched due to warning: " in cleaned:
+        cleaned = cleaned.replace("Unmatched due to warning: ", "")
+    elif "No matching CRM row found (due to warning: " in cleaned:
+        start = cleaned.find("due to warning: ") + len("due to warning: ")
+        end = cleaned.rfind(")")
         if end != -1:
-            return comment_str[start:end]
+            cleaned = cleaned[start:end]
         else:
-            return comment_str[start:]
-    elif comment_str == "No matching CRM row found":
+            cleaned = cleaned[start:]
+    elif cleaned.startswith("Unmatched due to warning: "):
+        cleaned = cleaned[len("Unmatched due to warning: "):]
+    elif cleaned == "No matching CRM row found":
         return ''
+    # Now, transform based on content
+    cleaned_lower = cleaned.lower()
+    if "matched the same last4" in cleaned_lower:
+        return "Matched the same last4 but the user rejected the match"
+    elif "matched similar email" in cleaned_lower:
+        return "Matched a similar email but the user rejected the match"
+    elif "cross-processor fallback match" in cleaned_lower:
+        return "row was matched but was executed on different processors so the user rejected the match"
     else:
-        return comment_str
+        return cleaned
 
 def generate_warning_withdrawals(date_str):
     withdrawals_matching_path = LISTS_DIR / date_str / "withdrawals_matching.xlsx"

@@ -153,7 +153,7 @@ class ThirdWindow(QWidget):
         self.warnings_df['proc_amount'] = self.warnings_df['proc_amount'].apply(
             lambda x: -abs(x) if pd.notna(x) else x)
         self.warnings_df['comment'] = self.warnings_df['comment'].apply(process_comment)
-        self.warnings_df['display_comment'] = self.warnings_df['comment'].apply(self.get_simplified_comment)
+        self.warnings_df['display_comment'] = self.warnings_df['comment'].apply(self.get_display_comment)
         # Rename columns for display
         rename_dict = {
             'crm_email': 'CRM Email',
@@ -392,15 +392,26 @@ class ThirdWindow(QWidget):
 
     def get_simplified_comment(self, comment):
         comment_str = str(comment)
-        suffix = " and was considered as a matched after review"
+        suffix = " and was considered a match after review"
         if "Matched similar email" in comment_str:
             return "Emails matched" + suffix
-        elif "Matched the same last4" in comment_str:
+        elif "Matched the same last 4 digits" in comment_str:
             return "Last 4 Digits matched" + suffix
         elif "Cross-processor" in comment_str:
-            return "Processor names differ" + suffix
+            return "Different processors" + suffix
         else:
             return "Warning accepted as match" + suffix
+
+    def get_display_comment(self, comment):
+        comment_str = str(comment)
+        if "Matched similar email" in comment_str:
+            return "Similar emails were detected"
+        elif "Matched the same last4" in comment_str:
+            return "Same last 4 digits detected"
+        elif "Cross-processor" in comment_str:
+            return "Matched row but on different processors"
+        else:
+            return "Warning accepted as match"
     def make_toggle_accept(self, table):
         def handler():
             button = self.sender()

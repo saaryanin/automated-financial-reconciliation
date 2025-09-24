@@ -153,7 +153,7 @@ class ThirdWindow(QWidget):
         self.warnings_df['proc_amount'] = self.warnings_df['proc_amount'].apply(
             lambda x: -abs(x) if pd.notna(x) else x)
         self.warnings_df['comment'] = self.warnings_df['comment'].apply(process_comment)
-        self.warnings_df['display_comment'] = self.warnings_df['comment'].apply(self.get_simplified_comment)
+        self.warnings_df['display_comment'] = self.warnings_df['comment'].apply(self.get_display_comment)
         # Rename columns for display
         rename_dict = {
             'crm_email': 'CRM Email',
@@ -300,8 +300,8 @@ class ThirdWindow(QWidget):
             self.other_table.setSelectionMode(QTableWidget.NoSelection)
             self.other_table.setEditTriggers(QTableWidget.NoEditTriggers)
             visible_columns = [''] + display_columns
-            self.other_table.setColumnCount(len(visible_columns) + 1)
-            self.other_table.setHorizontalHeaderLabels(['orig_index'] + visible_columns)
+            self.other_table.setColumnCount(len(visible_columns) + 2)  # +2 for hidden crm_orig and psp_orig
+            self.other_table.setHorizontalHeaderLabels(['crm_orig', 'psp_orig'] + visible_columns)
             self.other_table.horizontalHeader().setVisible(True)
             self.other_table.verticalHeader().setVisible(False)
             self.other_table.setRowCount(len(other_merged_df))
@@ -311,7 +311,8 @@ class ThirdWindow(QWidget):
                            'CRM Processor Name', 'PSP Processor Name']
             for i in range(len(other_merged_df)):
                 crm_orig, psp_orig = self.other_paired_orig[i]
-                self.other_table.setItem(i, 0, QTableWidgetItem(str(crm_orig)))  # Use CRM as main
+                self.other_table.setItem(i, 0, QTableWidgetItem(str(crm_orig)))
+                self.other_table.setItem(i, 1, QTableWidgetItem(str(psp_orig)))
                 # Button column
                 button = QPushButton('✅')
                 button.setObjectName('row_button')
@@ -326,7 +327,7 @@ class ThirdWindow(QWidget):
                 container_layout.setContentsMargins(0, 0, 0, 0)
                 container.setLayout(container_layout)
                 container.setStyleSheet("background-color: #ffffff;")
-                self.other_table.setCellWidget(i, 1, container)
+                self.other_table.setCellWidget(i, 2, container)
                 # Data columns
                 for j, col in enumerate(display_columns):
                     val = other_merged_df.iloc[i][col]
@@ -335,13 +336,14 @@ class ThirdWindow(QWidget):
                     item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                     if col in center_cols:
                         item.setTextAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
-                    self.other_table.setItem(i, j + 2, item)
+                    self.other_table.setItem(i, j + 3, item)
             self.other_table.hideColumn(0)
+            self.other_table.hideColumn(1)
             self.other_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            self.other_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+            self.other_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
             self.other_table.setWordWrap(True)
             self.other_table.resizeRowsToContents()
-            self.other_table.setColumnWidth(1, 40)  # Narrow button column with space
+            self.other_table.setColumnWidth(2, 40)  # Narrow button column with space
             self.other_sub_layout.addWidget(self.other_table)
             self.tables_layout.addLayout(self.other_sub_layout)
         self.adjust_tables_and_window()
@@ -390,15 +392,26 @@ class ThirdWindow(QWidget):
 
     def get_simplified_comment(self, comment):
         comment_str = str(comment)
-        suffix = " matched after review"
+        suffix = " and was considered a match after review"
         if "Matched similar email" in comment_str:
             return "Emails matched" + suffix
-        elif "Matched the same last4" in comment_str:
+        elif "Matched the same last 4 digits" in comment_str:
             return "Last 4 Digits matched" + suffix
         elif "Cross-processor" in comment_str:
-            return "Processor names differ" + suffix
+            return "Different processors" + suffix
         else:
             return "Warning accepted as match" + suffix
+
+    def get_display_comment(self, comment):
+        comment_str = str(comment)
+        if "Matched similar email" in comment_str:
+            return "Similar emails were detected"
+        elif "Matched the same last4" in comment_str:
+            return "Same last 4 digits detected"
+        elif "Cross-processor" in comment_str:
+            return "Matched row but on different processors"
+        else:
+            return "Warning accepted as match"
     def make_toggle_accept(self, table):
         def handler():
             button = self.sender()
@@ -406,9 +419,13 @@ class ThirdWindow(QWidget):
             if row != -1:
                 self.toggle_accept(table, row)
         return handler
+    def get_button_col(self, table):
+        return 2 if hasattr(self, 'other_table') and table == self.other_table else 1
     def get_row_from_button(self, table, button):
+        button_col = self.get_button_col(table)
         for r in range(table.rowCount()):
-            if table.cellWidget(r, 1).layout().itemAt(1).widget() == button:
+            cell_widget = table.cellWidget(r, button_col)
+            if cell_widget and cell_widget.layout().itemAt(1).widget() == button:
                 return r
         return -1
 
@@ -507,14 +524,15 @@ class ThirdWindow(QWidget):
         self.setFixedHeight(final_height)
         self.setGeometry(0, taskbar_and_program_bar_size, self.screen_width, final_height)  # Change x to 0
     def toggle_accept(self, table, row):
+        button_col = self.get_button_col(table)
         if row in self.accepted_rows[table]:
             self.accepted_rows[table].remove(row)
-            button = table.cellWidget(row, 1).layout().itemAt(1).widget() if table.cellWidget(row,1).layout() else table.cellWidget(row, 1)
+            button = table.cellWidget(row, button_col).layout().itemAt(1).widget()
             button.setText('✅')
             button.setStyleSheet("color: green; background: transparent; border: none;")
         else:
             self.accepted_rows[table].add(row)
-            button = table.cellWidget(row, 1).layout().itemAt(1).widget() if table.cellWidget(row,1).layout() else table.cellWidget(row, 1)
+            button = table.cellWidget(row, button_col).layout().itemAt(1).widget()
             button.setText('X')
             button.setStyleSheet("color: white; background: red; border: none; font-size: 16px;")
         self.update_remove_button_state()
@@ -522,18 +540,13 @@ class ThirdWindow(QWidget):
         total_selected = sum(len(self.accepted_rows[t]) for t in self.accepted_rows)
         self.remove_btn.setEnabled(total_selected > 0)
     def remove_selected(self):
-        print("Before removal: other_paired_orig =", self.other_paired_orig)
         for table in self.accepted_rows:
             rows = sorted(list(self.accepted_rows[table]), reverse=True)
             for r in rows:
                 idx_item = table.item(r, 0)
                 if idx_item:
                     orig_idx = int(idx_item.text())
-                    table_name = 'differ_table' if table == self.differ_table else 'other_table' if table == self.other_table else 'unknown'
-                    print(f"Removing display row {r} from {table_name}, orig_idx={orig_idx}")
                     self.remove_rows_by_index(orig_idx)
-                    print(f"After removing row {r}, {table_name} rowCount={table.rowCount()}")
-            print("After all removals: other_paired_orig =", self.other_paired_orig)
             self.accepted_rows[table].clear()
         self.adjust_tables_and_window()
         self.update_remove_button_state()
@@ -550,15 +563,14 @@ class ThirdWindow(QWidget):
                     t.removeRow(r)
 
     def on_next(self):
-        print("In on_next: other_paired_orig =", self.other_paired_orig)
         tables = [getattr(self, attr, None) for attr in ['differ_table', 'other_table'] if
                   getattr(self, attr, None)]
         remaining_indices = set()
         for t in tables:
             if t is self.other_table:
                 for r in range(t.rowCount()):
-                    crm_orig, psp_orig = self.other_paired_orig[r]
-                    print(f"Adding pair for remaining display row {r}: {self.other_paired_orig[r]}")
+                    crm_orig = int(t.item(r, 0).text())
+                    psp_orig = int(t.item(r, 1).text())
                     remaining_indices.add(crm_orig)
                     remaining_indices.add(psp_orig)
             else:
@@ -566,8 +578,6 @@ class ThirdWindow(QWidget):
                     idx_item = t.item(r, 0)
                     if idx_item:
                         remaining_indices.add(int(idx_item.text()))
-        print("Remaining indices:", sorted(remaining_indices))
-        print("Removed indices:", sorted(set(self.orig_indices) - remaining_indices))
         removed_indices = set(self.orig_indices) - remaining_indices
         print(f"Removed (accepted) indices: {len(removed_indices)}")
         print(f"Remaining (unselected) indices: {len(remaining_indices)}")

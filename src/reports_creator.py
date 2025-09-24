@@ -1,3 +1,4 @@
+# reports_creator.py (updated)
 import logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -279,7 +280,7 @@ def main(date=None):
             print(f"Assigned payment_method for {crm_rows_count} non-cancelled rows")
 
         desired_columns = [
-            'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
+            'crm_type', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
             'payment_method',
             'crm_processor_name',
             'regulation',
@@ -355,8 +356,8 @@ def main(date=None):
         matches_df = drop_cols(matches_df, ['matched_proc_indices'])
 
         #Adding a crm_type column to withdrawals_matching report
-        matches_df['crm_type'] = np.nan
-        matches_df.loc[matches_df['crm_date'].notna(), 'crm_type'] = 'Withdrawal'
+        matches_df['crm_type'] = ''
+        matches_df.loc[matches_df['crm_email'].notna(), 'crm_type'] = 'Withdrawal'
         matches_df.loc[matches_df[
                            'comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
         columns = list(matches_df.columns)

@@ -238,35 +238,46 @@ def generate_unmatched_proc_deposits(date_str):
     save_excel(unmatched_proc, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
     print(f"Unmatched processor deposits saved to {output_path}")
 
-def clean_value(val, join_list=False):
+def clean_value(val, join_list=False, is_email=False):
     if isinstance(val, str) and val.strip() == '[nan]':
-        return np.nan
+        result = "" if is_email else np.nan
+        return result
+    if isinstance(val, str) and val.strip() == "['nan']":  # New check for string representation
+        result = "" if is_email else np.nan
+        return result
     if isinstance(val, str):
         try:
             val = ast.literal_eval(val)
         except:
             pass
     if isinstance(val, list):
-        cleaned_list = [clean_value(v, join_list=join_list) for v in val]
+        cleaned_list = [clean_value(v, join_list=join_list, is_email=is_email) for v in val]
         if join_list:
-            return ','.join(str(v) for v in cleaned_list if not pd.isna(v))
+            result = ','.join(str(v) for v in cleaned_list if not pd.isna(v))
         else:
-            if cleaned_list:
-                return cleaned_list[0]
+            if cleaned_list == ['nan']:  # Handle actual list ['nan']
+                result = "" if is_email else np.nan
+            elif cleaned_list:
+                result = cleaned_list[0]
             else:
-                return np.nan
+                result = "" if is_email else np.nan
+        return result
+    if pd.isna(val):
+        result = "" if is_email else np.nan
+        return result
     if isinstance(val, float):
         if val.is_integer():
             val = int(val)
     if isinstance(val, str):
         val = val.strip("'\"")
     if isinstance(val, (int, float)) and val == 0:
-        return np.nan
+        result = "" if is_email else np.nan
+        return result
     if isinstance(val, str) and val.strip() == '0':
-        return np.nan
-    if pd.isna(val):
-        return np.nan
-    return val
+        result = "" if is_email else np.nan
+        return result
+    result = val
+    return result
 
 
 def format_date(val, is_proc=False):

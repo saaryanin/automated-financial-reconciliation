@@ -62,7 +62,7 @@ def generate_unmatched_crm_deposits(date_str):
     deposits_matching_path = LISTS_DIR / date_str / "deposits_matching.xlsx"
     if not deposits_matching_path.exists():
         print(f"Deposits matching file not found: {deposits_matching_path}")
-        return
+        return None
     df = pd.read_excel(deposits_matching_path, dtype={'crm_last4': str, 'proc_last4': str, 'crm_transaction_id': str, 'proc_transaction_id': str})
     df['crm_amount'] = df['crm_amount'].apply(clean_value)
     df['crm_amount'] = pd.to_numeric(df['crm_amount'], errors='coerce')
@@ -71,7 +71,7 @@ def generate_unmatched_crm_deposits(date_str):
     unmatched_crm = unmatched_crm.copy() # Fix SettingWithCopyWarning
     if unmatched_crm.empty:
         print(f"No unmatched CRM deposits found for {date_str}, skipping file creation.")
-        return
+        return None
     # Pad last4
     pad_last4(unmatched_crm, 'crm_last4')
     # Convert crm_date to datetime for filtering and sorting
@@ -82,7 +82,7 @@ def generate_unmatched_crm_deposits(date_str):
     unmatched_crm = unmatched_crm[unmatched_crm['crm_date'] <= cutoff]
     if unmatched_crm.empty:
         print(f"No unmatched CRM deposits after cutoff filter for {date_str}, skipping file creation.")
-        return
+        return None
     # Sort by crm_date from newest to oldest
     unmatched_crm = unmatched_crm.sort_values(by='crm_date', ascending=False)
     # Select specified columns
@@ -109,12 +109,8 @@ def generate_unmatched_crm_deposits(date_str):
         'crm_transaction_id': 'Transaction ID'
     }
     unmatched_crm.rename(columns=rename_dict, inplace=True)
-    # Save to output/dated/unmatched_crm_deposits.xlsx
-    output_dir = OUTPUT_DIR / date_str
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "Unmatched CRM Deposits.xlsx"
-    save_excel(unmatched_crm, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
-    print(f"Unmatched CRM deposits saved to {output_path}")
+    print(f"Unmatched CRM deposits DataFrame prepared for {date_str}")
+    return unmatched_crm
 
 def generate_unapproved_crm_deposits(date_str):
     deposits_matching_path = LISTS_DIR / date_str / "deposits_matching.xlsx"
@@ -178,7 +174,7 @@ def generate_unmatched_proc_deposits(date_str):
     deposits_matching_path = LISTS_DIR / date_str / "deposits_matching.xlsx"
     if not deposits_matching_path.exists():
         print(f"Deposits matching file not found: {deposits_matching_path}")
-        return
+        return None
     df = pd.read_excel(deposits_matching_path, dtype={'proc_transaction_id': str, 'proc_last4': str, 'crm_last4': str})
     df['proc_amount'] = df['proc_amount'].apply(clean_value)
     df['proc_amount'] = pd.to_numeric(df['proc_amount'], errors='coerce')
@@ -187,7 +183,7 @@ def generate_unmatched_proc_deposits(date_str):
     unmatched_proc = unmatched_proc.copy() # Fix SettingWithCopyWarning
     if unmatched_proc.empty:
         print(f"No unmatched processor deposits found for {date_str}, skipping file creation.")
-        return
+        return None
     # Clean processor columns
     columns_to_clean = [
         'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_tp', 'proc_amount', 'proc_currency',
@@ -231,12 +227,8 @@ def generate_unmatched_proc_deposits(date_str):
     # Sort by Date from newest to oldest
     unmatched_proc['Date'] = pd.to_datetime(unmatched_proc['Date'], errors='coerce')
     unmatched_proc = unmatched_proc.sort_values(by='Date', ascending=False)
-    # Save to output/dated/unmatched_proc_deposits.xlsx with text format for specific columns
-    output_dir = OUTPUT_DIR / date_str
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "Unmatched Processors Deposits.xlsx"
-    save_excel(unmatched_proc, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
-    print(f"Unmatched processor deposits saved to {output_path}")
+    print(f"Unmatched processor deposits DataFrame prepared for {date_str}")
+    return unmatched_proc
 
 def clean_value(val, join_list=False, is_email=False):
     if isinstance(val, str) and val.strip() == '[nan]':
@@ -507,7 +499,7 @@ def generate_unmatched_proc_withdrawals(date_str, matching_df=None):
     if matching_df is None:
         matching_df = load_matching_df(date_str)
         if matching_df is None:
-            return
+            return None
     print(f"Total rows in withdrawals_matching: {len(matching_df)}")
     # Filter rows where warning == False
     df = matching_df[matching_df['warning'] == False]
@@ -529,7 +521,7 @@ def generate_unmatched_proc_withdrawals(date_str, matching_df=None):
     print(f"Rows after filtering NaN proc_email: {len(unmatched_proc)}")
     if unmatched_proc.empty:
         print(f"No unmatched processor withdrawals found for {date_str}, skipping file creation.")
-        return
+        return None
     # Process comments for unmatched (strips prefixes for warnings, sets non-warning to empty)
     unmatched_proc.loc[:, 'comment'] = unmatched_proc['comment'].apply(process_unmatched_comment)
     # Clean processor columns
@@ -576,23 +568,18 @@ def generate_unmatched_proc_withdrawals(date_str, matching_df=None):
     # Sort by Date from newest to oldest
     unmatched_proc['Date'] = pd.to_datetime(unmatched_proc['Date'], errors='coerce')
     unmatched_proc = unmatched_proc.sort_values(by='Date', ascending=False)
-    # Save to output/dated/unmatched_proc_withdrawals.xlsx
-    output_dir = OUTPUT_DIR / date_str
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "Unmatched Processors Withdrawals.xlsx"
-    save_excel(unmatched_proc, output_path, text_columns=['Last 4 Digits'])
-    print(f"Unmatched processor withdrawals saved to {output_path}")
+    print(f"Unmatched processor withdrawals DataFrame prepared for {date_str}")
+    return unmatched_proc
 
-def remove_compensated_entries(date_str):
-    deposits_path = OUTPUT_DIR / date_str / "Unmatched Processors Deposits.xlsx"
-    withdrawals_path = OUTPUT_DIR / date_str / "Unmatched Processors Withdrawals.xlsx"
-    if not deposits_path.exists() or not withdrawals_path.exists():
-        print(f"Missing files for compensated entries removal in {date_str}, skipping.")
-        return None, None
-    deposits_df = pd.read_excel(deposits_path, dtype={'Last 4 Digits': str, 'Transaction ID': str})
+def remove_compensated_entries(proc_deps_df, proc_wds_df):
+    if proc_deps_df is None or proc_wds_df is None:
+        print("Missing processor DFs for compensated entries removal, skipping.")
+        return proc_deps_df, proc_wds_df, None, None
+    # Use the DFs directly (no file loading)
+    deposits_df = proc_deps_df.copy()
+    withdrawals_df = proc_wds_df.copy()
     deposits_df['Amount'] = deposits_df['Amount'].apply(clean_value)
     deposits_df['Amount'] = pd.to_numeric(deposits_df['Amount'], errors='coerce')
-    withdrawals_df = pd.read_excel(withdrawals_path, dtype={'Last 4 Digits': str})
     withdrawals_df['Amount'] = withdrawals_df['Amount'].apply(clean_value)
     withdrawals_df['Amount'] = pd.to_numeric(withdrawals_df['Amount'], errors='coerce')
     # Temporarily rename deposits_df columns to match proc_ prefix for merging
@@ -629,8 +616,10 @@ def remove_compensated_entries(date_str):
     merge_columns = ['norm_amount', 'proc_currency', 'norm_last4', 'proc_processor_name', 'proc_email']
     matched = pd.merge(deposits_df.reset_index(), withdrawals_df.reset_index(), on=merge_columns, how='inner', suffixes=('_dep', '_wd'))
     if matched.empty:
-        print(f"No compensated entries found for {date_str}.")
-        return None, None
+        print("No compensated entries found.")
+        return deposits_df.drop(columns=['norm_last4', 'norm_amount']).rename(columns={v: k for k, v in original_columns_deposits.items()}), \
+               withdrawals_df.drop(columns=['norm_last4', 'norm_amount']).rename(columns={v: k for k, v in original_columns_withdrawals.items()}), \
+               None, None
     # Get indices to drop
     dep_indices_to_drop = matched['index_dep'].unique()
     wd_indices_to_drop = matched['index_wd'].unique()
@@ -647,18 +636,15 @@ def remove_compensated_entries(date_str):
     # Rename withdrawals_df columns back to original
     reverse_columns_withdrawals = {v: k for k, v in original_columns_withdrawals.items()}
     withdrawals_df = withdrawals_df.rename(columns=reverse_columns_withdrawals)
-    # Save updated files
-    save_excel(deposits_df, deposits_path, text_columns=['Last 4 Digits', 'Transaction ID'])
-    print(f"Updated Unmatched Processors Deposits.xlsx after removing {len(dep_indices_to_drop)} compensated entries.")
-    save_excel(withdrawals_df, withdrawals_path, text_columns=['Last 4 Digits'])
-    print(f"Updated Unmatched Processors Withdrawals.xlsx after removing {len(wd_indices_to_drop)} compensated entries.")
-    return compensated_deposits, compensated_withdrawals
+    print(f"Removed {len(dep_indices_to_drop)} compensated entries from processor deposits DF.")
+    print(f"Removed {len(wd_indices_to_drop)} compensated entries from processor withdrawals DF.")
+    return deposits_df, withdrawals_df, compensated_deposits, compensated_withdrawals
 
 def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
     if matching_df is None:
         matching_df = load_matching_df(date_str)
         if matching_df is None:
-            return
+            return None
     # Apply warning == False to all groups
     df = matching_df[matching_df['warning'] == False]
     # Group 1: match_status == 0 and payment_status == 0 and comment == "No matching processor row found"
@@ -730,7 +716,7 @@ def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
     unmatched_crm = pd.concat([group1, group2, group3, group4], ignore_index=True)
     if unmatched_crm.empty:
         print(f"No unmatched CRM withdrawals found for {date_str}, skipping file creation.")
-        return
+        return None
 
     # Format crm_date consistently (applies to all groups, including regular unmatched)
     unmatched_crm['crm_date'] = unmatched_crm['crm_date'].apply(lambda x: format_date(x, is_proc=False))
@@ -762,12 +748,8 @@ def generate_unmatched_crm_withdrawals(date_str, matching_df=None):
     # Sort by Date from newest to oldest
     unmatched_crm['Date'] = pd.to_datetime(unmatched_crm['Date'], errors='coerce')
     unmatched_crm = unmatched_crm.sort_values(by='Date', ascending=False)
-    # Save to output/dated/unmatched_crm_withdrawals.xlsx
-    output_dir = OUTPUT_DIR / date_str
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "Unmatched CRM Withdrawals.xlsx"
-    save_excel(unmatched_crm, output_path, text_columns=['Last 4 Digits'])
-    print(f"Unmatched CRM withdrawals saved to {output_path}")
+    print(f"Unmatched CRM withdrawals DataFrame prepared for {date_str}")
+    return unmatched_crm
 
 def generate_matched_deposits(date_str, compensated_deps=None):
     deposits_matching_path = LISTS_DIR / date_str / "deposits_matching.xlsx"
@@ -937,6 +919,93 @@ def generate_matched_withdrawals(date_str, compensated_wds=None):
     save_excel(all_withdrawals, output_path, text_columns=['CRM Last 4 Digits', 'PSP Last 4 Digits'])
     print(f"Matched withdrawals (including cancellations) saved to {output_path}")
 
+def save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, proc_wds_df):
+    output_dir = OUTPUT_DIR / date_str
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "Unmatched.xlsx"
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        if crm_deps_df is not None and not crm_deps_df.empty:
+            crm_deps_df.to_excel(writer, index=False, sheet_name='CRM Deps')
+            worksheet = writer.sheets['CRM Deps']
+            # Set text format for specified columns
+            text_columns = ['Last 4 Digits', 'Transaction ID']
+            for col in text_columns:
+                if col in crm_deps_df.columns:
+                    col_idx = crm_deps_df.columns.get_loc(col) + 1
+                    for row_idx in range(2, len(crm_deps_df) + 2):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.number_format = '@'
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+        if proc_deps_df is not None and not proc_deps_df.empty:
+            proc_deps_df.to_excel(writer, index=False, sheet_name='PSP Deps')
+            worksheet = writer.sheets['PSP Deps']
+            # Set text format for specified columns
+            text_columns = ['Last 4 Digits', 'Transaction ID']
+            for col in text_columns:
+                if col in proc_deps_df.columns:
+                    col_idx = proc_deps_df.columns.get_loc(col) + 1
+                    for row_idx in range(2, len(proc_deps_df) + 2):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.number_format = '@'
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+        if crm_wds_df is not None and not crm_wds_df.empty:
+            crm_wds_df.to_excel(writer, index=False, sheet_name='CRM Wds')
+            worksheet = writer.sheets['CRM Wds']
+            # Set text format for specified columns
+            text_columns = ['Last 4 Digits']
+            for col in text_columns:
+                if col in crm_wds_df.columns:
+                    col_idx = crm_wds_df.columns.get_loc(col) + 1
+                    for row_idx in range(2, len(crm_wds_df) + 2):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.number_format = '@'
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+        if proc_wds_df is not None and not proc_wds_df.empty:
+            proc_wds_df.to_excel(writer, index=False, sheet_name='PSP Wds')
+            worksheet = writer.sheets['PSP Wds']
+            # Set text format for specified columns
+            text_columns = ['Last 4 Digits']
+            for col in text_columns:
+                if col in proc_wds_df.columns:
+                    col_idx = proc_wds_df.columns.get_loc(col) + 1
+                    for row_idx in range(2, len(proc_wds_df) + 2):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.number_format = '@'
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+    print(f"Unmatched data saved to {output_path} with sheets: CRM Deps, CRM Wds, PSP Deps, PSP Wds")
+
 def main(date_str):
     # Clear OUTPUT_DIR contents fully (rmtree all subdirs/files to prevent any stale remnants)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Ensure output exists
@@ -967,12 +1036,13 @@ def main(date_str):
             print(f"Total shifts by currency saved to {output_path}")
     generate_warning_withdrawals(date_str)  # Standalone; overridden in frontend
     # Phase 2
-    generate_unmatched_crm_deposits(date_str)
+    crm_deps_df = generate_unmatched_crm_deposits(date_str)
     generate_unapproved_crm_deposits(date_str)
-    generate_unmatched_proc_deposits(date_str)
-    generate_unmatched_proc_withdrawals(date_str)
-    compensated_deps, compensated_wds = remove_compensated_entries(date_str)
-    generate_unmatched_crm_withdrawals(date_str)
+    proc_deps_df = generate_unmatched_proc_deposits(date_str)
+    proc_wds_df = generate_unmatched_proc_withdrawals(date_str)
+    proc_deps_df, proc_wds_df, compensated_deps, compensated_wds = remove_compensated_entries(proc_deps_df, proc_wds_df)
+    crm_wds_df = generate_unmatched_crm_withdrawals(date_str)
+    save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, proc_wds_df)
     generate_matched_deposits(date_str, compensated_deps)
     generate_matched_withdrawals(date_str, compensated_wds)
 

@@ -7,7 +7,8 @@ from src.config import LISTS_DIR
 import sys
 from src.output import (generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
                 generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
-                remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits, generate_matched_withdrawals)
+                remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits, generate_matched_withdrawals,
+                save_unmatched_to_excel)
 from src.shifts_handler import main as handle_shifts
 from src.config import OUTPUT_DIR
 
@@ -292,12 +293,13 @@ class FourthWindow(QWidget):
 
             # Phase 2: Generate all output files (unmatched/unapproved/etc.)
             print("Debug: Running phase 2")
-            generate_unmatched_crm_deposits(self.date_str)
+            crm_deps_df = generate_unmatched_crm_deposits(self.date_str)
             generate_unapproved_crm_deposits(self.date_str)
-            generate_unmatched_proc_deposits(self.date_str)
-            generate_unmatched_proc_withdrawals(self.date_str)
-            compensated_deps, compensated_wds = remove_compensated_entries(self.date_str)
-            generate_unmatched_crm_withdrawals(self.date_str)
+            proc_deps_df = generate_unmatched_proc_deposits(self.date_str)
+            proc_wds_df = generate_unmatched_proc_withdrawals(self.date_str)
+            proc_deps_df, proc_wds_df, compensated_deps, compensated_wds = remove_compensated_entries(proc_deps_df, proc_wds_df)
+            crm_wds_df = generate_unmatched_crm_withdrawals(self.date_str)
+            save_unmatched_to_excel(self.date_str, crm_deps_df, crm_wds_df, proc_deps_df, proc_wds_df)
             generate_matched_deposits(self.date_str, compensated_deps)
             generate_matched_withdrawals(self.date_str, compensated_wds)
             print("Debug: Phase 2 complete—all files generated")

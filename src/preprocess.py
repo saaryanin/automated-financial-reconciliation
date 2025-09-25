@@ -1230,6 +1230,7 @@ def combine_processed_files(
             return 'EUR'
         else:
             return Counter(currencies).most_common(1)[0][0]
+
     def group_crm_withdrawals(df, exchange_rate_map):
         df = df.copy()
         # Always clean
@@ -1266,7 +1267,7 @@ def combine_processed_files(
                     continue
                 currencies = sub_group['Currency'].tolist()
                 tgt_cur = choose_target_currency(currencies)
-                amounts = []
+                converted_amounts = []
                 for _, row in sub_group.iterrows():
                     amt = float(row['Amount'])
                     if row.get('Name', '') == 'withdrawal cancelled':
@@ -1281,9 +1282,9 @@ def combine_processed_files(
                         if exchange_rate_map and key in exchange_rate_map:
                             converted = amt * exchange_rate_map[key]
                         else:
-                            converted = amt
-                    amounts.append(converted)
-                total_amt = sum(amounts)
+                            converted = amt  # Fallback if no rate
+                    converted_amounts.append(converted)
+                total_amt = sum(converted_amounts)
                 if abs(total_amt) < 1e-6:
                     continue
                 # Determine type based on sign
@@ -1314,6 +1315,7 @@ def combine_processed_files(
                 grouped_rows.append(row0)
         out_df = pd.DataFrame(grouped_rows)
         return out_df
+
     def group_processor_withdrawals(df, exchange_rate_map):
         df = df.copy()
         # Clean string columns used in grouping to avoid issues
@@ -1347,14 +1349,31 @@ def combine_processed_files(
                         for i, j, _ in high_similar:
                             unique_rows.add(i)
                             unique_rows.add(j)
+                        agg_rows = subg.loc[subg.index[list(unique_rows)]]
+                        currencies = agg_rows['currency'].tolist()
+                        tgt_cur = choose_target_currency(currencies)
+                        converted_amounts = []
+                        for _, row in agg_rows.iterrows():
+                            amt = float(row['amount'])
+                            src_cur = row['currency']
+                            if src_cur == tgt_cur:
+                                converted = amt
+                            else:
+                                key = (src_cur, tgt_cur)
+                                if exchange_rate_map and key in exchange_rate_map:
+                                    converted = amt * exchange_rate_map[key]
+                                else:
+                                    converted = amt  # Fallback if no rate
+                            converted_amounts.append(converted)
+                        total_amt = sum(converted_amounts)
                         agg_row = subg.iloc[0].copy()
-                        agg_row['amount'] = subg.loc[subg.index[list(unique_rows)], 'amount'].sum()
-                        agg_row['email'] = list(set([emails[i] for i in unique_rows])) # Use set to remove duplicates
-                        agg_row['currency'] = choose_target_currency(subg['currency'].tolist())
+                        agg_row['amount'] = total_amt
+                        agg_row['currency'] = tgt_cur
+                        agg_row['email'] = list(set([emails[i] for i in unique_rows]))  # Use set to remove duplicates
                         grouped_rows.append(agg_row)
                         # Keep non-aggregated rows
                         for idx in subg.index:
-                            if idx not in [subg.index[i] for i in unique_rows]:
+                            if idx not in agg_rows.index:
                                 grouped_rows.append(subg.loc[idx].copy())
                     else:
                         grouped_rows.extend([row.copy() for _, row in subg.iterrows()])

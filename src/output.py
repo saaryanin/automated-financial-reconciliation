@@ -755,7 +755,7 @@ def generate_matched_deposits(date_str, compensated_deps=None):
     deposits_matching_path = LISTS_DIR / date_str / "deposits_matching.xlsx"
     if not deposits_matching_path.exists():
         print(f"Deposits matching file not found: {deposits_matching_path}")
-        return
+        return None
     df = pd.read_excel(deposits_matching_path, dtype={'crm_last4': str, 'proc_last4': str, 'crm_transaction_id': str, 'proc_transaction_id': str})
     df['crm_amount'] = df['crm_amount'].apply(clean_value)
     df['proc_amount'] = df['proc_amount'].apply(clean_value)
@@ -824,19 +824,15 @@ def generate_matched_deposits(date_str, compensated_deps=None):
     all_deposits = all_deposits.sort_values(by=['sort_group', 'Date'], ascending=[True, False])
     all_deposits = all_deposits.drop(columns=['sort_group'])
     if all_deposits.empty:
-        print(f"No data for matched deposits (including cancellations) for {date_str}, skipping file creation.")
-        return
-    # Save
-    output_dir = OUTPUT_DIR / date_str
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "Matched Deposits.xlsx"
-    save_excel(all_deposits, output_path, text_columns=['CRM Last 4 Digits', 'PSP Last 4 Digits', 'CRM Transaction ID', 'PSP Transaction ID'])
-    print(f"Matched deposits (including cancellations) saved to {output_path}")
+        print(f"No data for matched deposits (including cancellations) for {date_str}, skipping.")
+        return None
+    print(f"Matched deposits (including cancellations) DataFrame prepared for {date_str}")
+    return all_deposits
 
 def generate_matched_withdrawals(date_str, compensated_wds=None):
     matching_df = load_matching_df(date_str)
     if matching_df is None:
-        return
+        return None
     matched_df = matching_df[matching_df['match_status'] == 1].copy()
     if matched_df.empty:
         print(f"No matched withdrawals found for {date_str}.")
@@ -910,14 +906,10 @@ def generate_matched_withdrawals(date_str, compensated_wds=None):
     all_withdrawals = all_withdrawals.sort_values(by=['sort_group', 'Date'], ascending=[True, False])
     all_withdrawals = all_withdrawals.drop(columns=['sort_group'])
     if all_withdrawals.empty:
-        print(f"No data for matched withdrawals (including cancellations) for {date_str}, skipping file creation.")
-        return
-    # Save
-    output_dir = OUTPUT_DIR / date_str
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "Matched Withdrawals.xlsx"
-    save_excel(all_withdrawals, output_path, text_columns=['CRM Last 4 Digits', 'PSP Last 4 Digits'])
-    print(f"Matched withdrawals (including cancellations) saved to {output_path}")
+        print(f"No data for matched withdrawals (including cancellations) for {date_str}, skipping.")
+        return None
+    print(f"Matched withdrawals (including cancellations) DataFrame prepared for {date_str}")
+    return all_withdrawals
 
 def save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, proc_wds_df):
     output_dir = OUTPUT_DIR / date_str
@@ -1006,6 +998,53 @@ def save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, pro
                 worksheet.column_dimensions[column_letter].width = adjusted_width
     print(f"Unmatched data saved to {output_path} with sheets: CRM Deps, CRM Wds, PSP Deps, PSP Wds")
 
+def save_matched_to_excel(date_str, deps_df, wds_df):
+    output_dir = OUTPUT_DIR / date_str
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "Matched.xlsx"
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        if deps_df is not None and not deps_df.empty:
+            deps_df.to_excel(writer, index=False, sheet_name='Deps')
+            worksheet = writer.sheets['Deps']
+            # Set text format for specified columns
+            text_columns = ['CRM Last 4 Digits', 'PSP Last 4 Digits', 'CRM Transaction ID', 'PSP Transaction ID']
+            for col in text_columns:
+                if col in deps_df.columns:
+                    col_idx = deps_df.columns.get_loc(col) + 1
+                    for row_idx in range(2, len(deps_df) + 2):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.number_format = '@'
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+        if wds_df is not None and not wds_df.empty:
+            wds_df.to_excel(writer, index=False, sheet_name='Wds')
+            worksheet = writer.sheets['Wds']
+            # Set text format for specified columns
+            text_columns = ['CRM Last 4 Digits', 'PSP Last 4 Digits']
+            for col in text_columns:
+                if col in wds_df.columns:
+                    col_idx = wds_df.columns.get_loc(col) + 1
+                    for row_idx in range(2, len(wds_df) + 2):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.number_format = '@'
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+    print(f"Matched data saved to {output_path} with sheets: Deps, Wds")
+
 def main(date_str):
     # Clear OUTPUT_DIR contents fully (rmtree all subdirs/files to prevent any stale remnants)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Ensure output exists
@@ -1042,9 +1081,10 @@ def main(date_str):
     proc_wds_df = generate_unmatched_proc_withdrawals(date_str)
     proc_deps_df, proc_wds_df, compensated_deps, compensated_wds = remove_compensated_entries(proc_deps_df, proc_wds_df)
     crm_wds_df = generate_unmatched_crm_withdrawals(date_str)
+    deps_df = generate_matched_deposits(date_str, compensated_deps)
+    wds_df = generate_matched_withdrawals(date_str, compensated_wds)
+    save_matched_to_excel(date_str, deps_df, wds_df)
     save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, proc_wds_df)
-    generate_matched_deposits(date_str, compensated_deps)
-    generate_matched_withdrawals(date_str, compensated_wds)
 
 if __name__ == "__main__":
     DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-09-02" # Default date for testing; use command-line arg in production

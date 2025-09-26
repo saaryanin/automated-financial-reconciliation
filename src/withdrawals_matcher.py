@@ -567,9 +567,10 @@ class ReconciliationEngine:
         # Rule 2: Last4 digits matching
         crm_last4s = set()
         for m in matches:
-            raw = str(m.get('crm_last4', '')).strip()
-            if raw.lower() != 'nan' and raw:
-                crm_last4s.add(raw[:-2] if raw.endswith('.0') else raw)
+            if m['match_status'] == 0 and m.get('crm_date') is not None:
+                raw = str(m.get('crm_last4', '')).strip()
+                if raw.lower() != 'nan' and raw:
+                    crm_last4s.add(raw[:-2] if raw.endswith('.0') else raw)
         flagged_unmatched_last4_rows = defaultdict(list)
         flagged_matched_last4_rows = defaultdict(list)
         for i, m in enumerate(matches):
@@ -590,6 +591,8 @@ class ReconciliationEngine:
                 print(f"Row {i + 1} breaks Rule 2: Unmatched-processor last4 {raw_str} found in CRM last4s")
         for i, m in enumerate(matches):
             if m.get('crm_date') is None:
+                continue
+            if m['match_status'] != 0:
                 continue
             raw = str(m.get('crm_last4', '')).strip()
             code = raw[:-2] if raw.endswith('.0') else raw

@@ -2,7 +2,7 @@ import os
 import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QGridLayout, QFileDialog, QMessageBox, QCalendarWidget,
-                             QToolButton)
+                             QToolButton, QSizePolicy)
 from PyQt5.QtCore import Qt, QDate, QRegExp
 from PyQt5.QtGui import QRegExpValidator
 from second_window import SecondWindow  # NEW: Import the new second window class
@@ -18,18 +18,18 @@ class DropButton(QPushButton):
         super().__init__(text, parent)
         self.window = window
         self.setAcceptDrops(True)
-        self.setMinimumSize(200, 100)
+        self.setMinimumHeight(250)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setStyleSheet("""
-                border: 4px dashed #4a90e2;
-                background: #e6f0fa;
-                min-height: 100px;
-                min-width: 200px;
-                border-radius: 8px;
-            """)
+            if not self.window.crm_file and not self.window.processor_files:
+                self.setStyleSheet("""
+                    border: 4px dashed #4a90e2;
+                    background: #e6f0fa;
+                    min-height: 250px;
+                    border-radius: 8px;
+                """)
             print("Drag enter accepted")
 
     def dropEvent(self, event):
@@ -37,83 +37,37 @@ class DropButton(QPushButton):
         if mime_data.hasUrls():
             file_paths = [u.toLocalFile() for u in mime_data.urls()]
             try:
-                if self.objectName() == "crm-button":  # CRM button
-                    success = False
-                    if len(file_paths) == 1:
-                        source_path = file_paths[0]
-                        file_name = os.path.basename(source_path)
-                        if file_name in self.window.moved_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
-                            self.setStyleSheet("")
-                            return
-                        dest_path = RAW_ATTACHED_FILES / file_name
-                        shutil.copy(str(source_path), str(dest_path))
-                        self.window.crm_file = str(dest_path)
-                        self.setText(f"📊 {file_name}")
-                        self.window.moved_files.add(file_name)
-                        success = True
-                    else:
-                        self.window.show_warning("Invalid Drop", "Please drop only one file for CRM.")
-                        self.setStyleSheet("")
-                    if success:
-                        self.setStyleSheet("""
-                            border: 4px dashed #003366;
-                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
-                            min-height: 100px;
-                            min-width: 200px;
-                            border-radius: 8px;
-                        """)
-                else:  # Processors button
-                    new_files = []
-                    for source_path in file_paths:
-                        file_name = os.path.basename(source_path)
-                        if file_name.startswith("crm_"):  # Detect CRM file
-                            self.window.show_warning("Invalid Drop", "CRM files should be dropped in the CRM area.")
-                            self.setStyleSheet("")
-                            continue  # Reject drop for CRM files
-                        if file_name in self.window.moved_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
+                for source_path in file_paths:
+                    file_name = os.path.basename(source_path)
+                    if file_name in self.window.moved_files:
+                        self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
+                        continue
+                    if file_name.startswith("crm_"):
+                        if self.window.crm_file:
+                            self.window.show_warning("Duplicate CRM", "CRM file already set. Only one allowed.")
                             continue
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.copy(str(source_path), str(dest_path))
+                        self.window.crm_file = str(dest_path)
                         self.window.moved_files.add(file_name)
-                        new_files.append(str(dest_path))
-                    self.window.processor_files += new_files
-                    if new_files:
-                        names = [os.path.basename(p) for p in self.window.processor_files]
-                        self.setText(f"💳 {', '.join(names)}")
-                    if len(self.window.processor_files) > 0:
-                        self.setStyleSheet("""
-                            border: 4px dashed #006600;
-                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
-                            min-height: 100px;
-                            min-width: 200px;
-                            border-radius: 8px;
-                        """)
                     else:
-                        self.setStyleSheet("")
-                self.window.check_files_ready()
+                        dest_path = RAW_ATTACHED_FILES / file_name
+                        shutil.copy(str(source_path), str(dest_path))
+                        self.window.processor_files.append(str(dest_path))
+                        self.window.moved_files.add(file_name)
+                self.window.update_upload_button()
             except Exception as e:
                 print(f"Drop error: {e}")
                 self.window.show_error("Error", f"Failed to process drop: {e}")
                 self.setStyleSheet("")
         event.accept()
 
-    def _detect_processor(self, filename):
-        """Detect processor name from filename based on patterns."""
-        filename_lower = filename.lower()
-        for processor in ["safecharge", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
-                          "trustpayments", "paysafe"]:
-            if processor in filename_lower:
-                return processor
-        return "unknown"  # Default if no match
-
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet("")
+        self.window.update_upload_button()
         if event is not None:
             event.accept()
 
@@ -127,6 +81,15 @@ class ReconciliationWindow(QWidget):
         self.valid_date_str = None  # Track valid date string
         self.initUI()
         self.moved_files = set()  # Track moved file names to avoid duplicates
+
+    def _detect_processor(self, filename):
+        """Detect processor name from filename based on patterns."""
+        filename_lower = filename.lower()
+        for processor in ["safecharge", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
+                          "trustpayments", "paysafe"]:
+            if processor in filename_lower:
+                return processor
+        return "unknown"  # Default if no match
 
     def initUI(self):
         self.setWindowTitle('CRM-Processor Reconciliation System')
@@ -180,10 +143,10 @@ class ReconciliationWindow(QWidget):
                 margin-bottom: 15px;
                 box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
             }
-            #crm-button, #processor-button {
-                min-height: 100px;
-                min-width: 200px;
-                font-size: 14px;
+            #upload-button {
+                min-height: 200px;
+                font-size: 24px;
+                font-weight: bold;
             }
             #date-lineedit {
                 padding: 8px;
@@ -263,7 +226,7 @@ class ReconciliationWindow(QWidget):
         """)
 
         screen = QApplication.desktop().screenGeometry()
-        self.setGeometry((screen.width() - 900) // 2, 50, 900, 600)
+        self.setGeometry((screen.width() - 500) // 2, 50, 500, 600)
 
         main_layout = QVBoxLayout()
         main_layout.setSpacing(20)
@@ -372,22 +335,12 @@ class ReconciliationWindow(QWidget):
         file_section.setObjectName("section")
         file_layout = QVBoxLayout()
         file_section.setLayout(file_layout)
-        file_label = QLabel('📁 Upload Files')
-        file_label.setStyleSheet("font-size: 18px; margin-bottom: 10px;")
-        file_layout.addWidget(file_label)
 
-        file_grid = QHBoxLayout()
-        file_grid.setSpacing(20)
-        self.crm_file_btn = DropButton('📊 CRM File', self)
-        self.crm_file_btn.setObjectName("crm-button")
-        self.crm_file_btn.clicked.connect(lambda: self.select_file('crm'))
-        file_grid.addWidget(self.crm_file_btn)
-
-        self.processor_file_btn = DropButton('💳 Processors Files', self)
-        self.processor_file_btn.setObjectName("processor-button")
-        self.processor_file_btn.clicked.connect(lambda: self.select_file('processor'))
-        file_grid.addWidget(self.processor_file_btn)
-        file_layout.addLayout(file_grid)
+        self.upload_btn = DropButton('📁 Attach Files Here', self)
+        self.upload_btn.setObjectName("upload-button")
+        self.upload_btn.clicked.connect(lambda: self.select_file('all'))
+        self.upload_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        file_layout.addWidget(self.upload_btn)
 
         main_layout.addWidget(file_section)
 
@@ -403,6 +356,24 @@ class ReconciliationWindow(QWidget):
         button_layout.addWidget(self.reset_btn)
         button_layout.addStretch(1)
         main_layout.addLayout(button_layout)
+
+    def update_upload_button(self):
+        if self.crm_file or self.processor_files:
+            num_files = len(self.processor_files) + (1 if self.crm_file else 0)
+            self.upload_btn.setText(f"{num_files} Files Were Attached")
+            self.upload_btn.setStyleSheet("""
+                border: none;
+                background: #2c3e50;
+                color: #ffffff;
+                font-size: 24px;
+                font-weight: bold;
+                min-height: 250px;
+                border-radius: 8px;
+            """)
+        else:
+            self.upload_btn.setText("📁 Attach Files Here")
+            self.upload_btn.setStyleSheet("")
+        self.check_files_ready()
 
     def update_calendar_layout(self, year, month):
         """Force layout update when the calendar page changes."""
@@ -473,54 +444,28 @@ class ReconciliationWindow(QWidget):
 
     def select_file(self, file_type):
         file_dialog = QFileDialog()
-        if file_type == 'crm':
-            file_path, _ = file_dialog.getOpenFileName(self, "Select CRM File", "", "CSV Files (*.csv *.xlsx *.xls)")
-            if file_path:
-                file_name = os.path.basename(file_path)
-                if file_name in self.moved_files:
-                    self.show_warning("Duplicate", f"{file_name} already selected.")
-                    return
-                dest_path = RAW_ATTACHED_FILES / file_name
-                shutil.copy(file_path, str(dest_path))
-                self.crm_file = str(dest_path)
-                self.crm_file_btn.setText(f"📊 {file_name}")
-                self.moved_files.add(file_name)
-                self.crm_file_btn.setStyleSheet("""
-                    border: 4px dashed #003366;
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
-                    min-height: 100px;
-                    min-width: 200px;
-                    border-radius: 8px;
-                """)
-        else:
-            file_paths, _ = file_dialog.getOpenFileNames(self, "Select Processors Files", "",
-                                                        "CSV Files (*.csv *.xlsx *.xls)")
+        if file_type == 'all':
+            file_paths, _ = file_dialog.getOpenFileNames(self, "Select Files", "", "CSV Files (*.csv *.xlsx *.xls)")
             if file_paths:
-                new_files = []
                 for source_path in file_paths:
                     file_name = os.path.basename(source_path)
-                    if file_name.startswith("crm_"):
-                        self.show_warning("Invalid File", "CRM files should be selected in CRM area.")
-                        continue
                     if file_name in self.moved_files:
                         self.show_warning("Duplicate", f"{file_name} already selected.")
                         continue
-                    dest_path = RAW_ATTACHED_FILES / file_name
-                    shutil.copy(source_path, str(dest_path))
-                    self.moved_files.add(file_name)
-                    new_files.append(str(dest_path))
-                self.processor_files += new_files
-                if new_files:
-                    names = [os.path.basename(p) for p in self.processor_files]
-                    self.processor_file_btn.setText(f"💳 {', '.join(names)}")
-                    self.processor_file_btn.setStyleSheet("""
-                        border: 4px dashed #006600;
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
-                        min-height: 100px;
-                        min-width: 200px;
-                        border-radius: 8px;
-                    """)
-        self.check_files_ready()
+                    if file_name.startswith("crm_"):
+                        if self.crm_file:
+                            self.show_warning("Duplicate CRM", "CRM file already set. Only one allowed.")
+                            continue
+                        dest_path = RAW_ATTACHED_FILES / file_name
+                        shutil.copy(source_path, str(dest_path))
+                        self.crm_file = str(dest_path)
+                        self.moved_files.add(file_name)
+                    else:
+                        dest_path = RAW_ATTACHED_FILES / file_name
+                        shutil.copy(source_path, str(dest_path))
+                        self.processor_files.append(str(dest_path))
+                        self.moved_files.add(file_name)
+                self.update_upload_button()
 
     def check_files_ready(self):
         files_ready = bool(self.crm_file and self.processor_files)
@@ -560,7 +505,7 @@ class ReconciliationWindow(QWidget):
             file_name = os.path.basename(source_path)
             dest_path = PROCESSOR_DIR / file_name
             if not re.match(r"^[a-zA-Z]+_\d{4}-\d{2}-\d{2}\.(csv|xlsx|xls)$", file_name):
-                processor = self.crm_file_btn._detect_processor(file_name)
+                processor = self._detect_processor(file_name)
                 new_name = f"{processor}_{selected_date}{Path(source_path).suffix}"
                 dest_path = PROCESSOR_DIR / new_name
             shutil.move(str(source_path), str(dest_path))
@@ -583,15 +528,11 @@ class ReconciliationWindow(QWidget):
         if self.crm_file and os.path.exists(self.crm_file):
             os.remove(self.crm_file)
         self.crm_file = None
-        self.crm_file_btn.setText("📊 CRM File")
-        self.crm_file_btn.setStyleSheet("")
 
         for file_path in self.processor_files:
             if os.path.exists(file_path):
                 os.remove(file_path)
         self.processor_files = []
-        self.processor_file_btn.setText("💳 Processors Files")
-        self.processor_file_btn.setStyleSheet("")
 
         self.process_btn.setEnabled(False)
 
@@ -600,6 +541,9 @@ class ReconciliationWindow(QWidget):
                 file.unlink()
 
         self.moved_files.clear()
+
+        self.upload_btn.setText("📁 Attach Files Here")
+        self.upload_btn.setStyleSheet("")
 
         self.show_info("Reset", "All fields and attachments have been reset.")
 

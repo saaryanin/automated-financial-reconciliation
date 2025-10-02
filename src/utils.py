@@ -155,3 +155,30 @@ def load_uk_holidays(use_cache=True):
             json.dump(cache_data, f)
         logging.info(f"Cached UK holidays to {HOLIDAYS_CACHE_FILE}")
     return holidays
+
+
+def categorize_regulation(site):
+    site = str(site).lower().strip()
+    if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
+        return 'belarus'
+    elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
+        return 'australia'
+    elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
+        return 'mauritius'
+    elif site == 'fortrade.ca':
+        return 'canada'
+    elif site == 'fortrade.cy':
+        return 'cyprus'
+    return 'unknown'
+
+def extract_date_from_filename(filepath: str) -> str:
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", filepath)
+    if match:
+        return match.group(1)
+    match_alt = re.search(r"(\d{2}\.\d{2}\.\d{4})", filepath)
+    if match_alt:
+        return datetime.strptime(match_alt.group(1), "%d.%m.%Y").strftime("%Y-%m-%d")
+    match_slash = re.search(r"(\d{2}_\d{2}_\d{4})", filepath)
+    if match_slash:
+        return datetime.strptime(match_slash.group(1), "%d_%m_%Y").strftime("%Y-%m-%d")
+    return "unknown_date"

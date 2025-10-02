@@ -138,7 +138,7 @@ def generate_unapproved_crm_deposits(date_str):
         print(f"No unapproved CRM deposits after cutoff filter for {date_str}, skipping file creation.")
         return
     # Sort by crm_date from newest to oldest
-    unapproved_crm = unapproved_crm.sort_values(by='crm_date', ascending=False)
+    unapproved_crm = unapproved_crm.sort_values(by='crm_date', ascending=True)
     # Select specified columns
     columns = [
         'crm_type', 'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_amount', 'crm_currency',
@@ -957,8 +957,8 @@ def save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, pro
                 adjusted_width = max_length + 2
                 worksheet.column_dimensions[column_letter].width = adjusted_width
         if crm_wds_df is not None and not crm_wds_df.empty:
-            crm_wds_df.to_excel(writer, index=False, sheet_name='CRM Wds')
-            worksheet = writer.sheets['CRM Wds']
+            crm_wds_df.to_excel(writer, index=False, sheet_name='CRM WDs')
+            worksheet = writer.sheets['CRM WDs']
             # Set text format for specified columns
             text_columns = ['Last 4 Digits']
             for col in text_columns:
@@ -977,8 +977,8 @@ def save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, pro
                 adjusted_width = max_length + 2
                 worksheet.column_dimensions[column_letter].width = adjusted_width
         if proc_wds_df is not None and not proc_wds_df.empty:
-            proc_wds_df.to_excel(writer, index=False, sheet_name='PSP Wds')
-            worksheet = writer.sheets['PSP Wds']
+            proc_wds_df.to_excel(writer, index=False, sheet_name='PSP WDs')
+            worksheet = writer.sheets['PSP WDs']
             # Set text format for specified columns
             text_columns = ['Last 4 Digits']
             for col in text_columns:
@@ -996,7 +996,7 @@ def save_unmatched_to_excel(date_str, crm_deps_df, crm_wds_df, proc_deps_df, pro
                         max_length = max(max_length, len(str(cell.value)))
                 adjusted_width = max_length + 2
                 worksheet.column_dimensions[column_letter].width = adjusted_width
-    print(f"Unmatched data saved to {output_path} with sheets: CRM Deps, CRM Wds, PSP Deps, PSP Wds")
+    print(f"Unmatched data saved to {output_path} with sheets: CRM Deps, CRM WDs, PSP Deps, PSP WDs")
 
 def save_matched_to_excel(date_str, deps_df, wds_df):
     output_dir = OUTPUT_DIR / date_str
@@ -1024,8 +1024,8 @@ def save_matched_to_excel(date_str, deps_df, wds_df):
                 adjusted_width = max_length + 2
                 worksheet.column_dimensions[column_letter].width = adjusted_width
         if wds_df is not None and not wds_df.empty:
-            wds_df.to_excel(writer, index=False, sheet_name='Wds')
-            worksheet = writer.sheets['Wds']
+            wds_df.to_excel(writer, index=False, sheet_name='WDs')
+            worksheet = writer.sheets['WDs']
             # Set text format for specified columns
             text_columns = ['CRM Last 4 Digits', 'PSP Last 4 Digits']
             for col in text_columns:
@@ -1043,7 +1043,7 @@ def save_matched_to_excel(date_str, deps_df, wds_df):
                         max_length = max(max_length, len(str(cell.value)))
                 adjusted_width = max_length + 2
                 worksheet.column_dimensions[column_letter].width = adjusted_width
-    print(f"Matched data saved to {output_path} with sheets: Deps, Wds")
+    print(f"Matched data saved to {output_path} with sheets: Deps, WDs")
 
 def main(date_str):
     # Clear OUTPUT_DIR contents fully (rmtree all subdirs/files to prevent any stale remnants)

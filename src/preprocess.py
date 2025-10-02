@@ -7,7 +7,7 @@ from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, CO
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
-from src.utils import clean_amount, clean_last4, load_uk_holidays
+from src.utils import clean_amount, clean_last4, load_uk_holidays, categorize_regulation, extract_date_from_filename
 import numpy as np
 from datetime import timedelta
 import logging
@@ -755,48 +755,6 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
 
     return pd.DataFrame()
 
-
-# def handle_withdrawal_cancellations(df):
-#     if "Name" not in df.columns:
-#         return df
-#     # Normalize columns for matching
-#     for col in ['tp', 'CC Last 4 Digits', 'Email (Account) (Account)', 'Amount', 'Name']:
-#         if col in df.columns:
-#             df[col] = df[col].fillna('').astype(str).str.strip()
-#     df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
-#     mask_cancel = df["Name"].str.lower().str.replace(' ', '', regex=False) == "withdrawalcancelled"
-#     mask_withdrawal = df["Name"].str.lower() == "withdrawal"
-#     cancels = df[mask_cancel].copy()
-#     withdrawals = df[mask_withdrawal].copy()
-#     to_drop = set()
-#     for idx_cancel, row_cancel in cancels.iterrows():
-#         tp_cancel = str(row_cancel["tp"]).strip()
-#         last4_cancel = clean_last4(row_cancel["CC Last 4 Digits"])
-#         email_cancel = str(row_cancel["Email (Account) (Account)"]).lower().str.strip()
-#         amt_cancel = pd.to_numeric(row_cancel["Amount"], errors='coerce')
-#         # Match on TP, last4, email
-#         matched = withdrawals[
-#             (withdrawals["tp"].astype(str).str.strip() == tp_cancel) &
-#             (withdrawals["CC Last 4 Digits"].apply(clean_last4) == last4_cancel) &
-#             (withdrawals["Email (Account) (Account)"].astype(str).str.lower().str.strip() == email_cancel)
-#         ]
-#         if matched.empty:
-#             # Unmatched cancellation: make amount positive and keep as 'withdrawal cancelled'
-#             df.at[idx_cancel, "Amount"] = abs(amt_cancel)
-#             df.at[idx_cancel, "Name"] = "Withdrawal Cancelled"  # Ensure crm_type stays
-#             continue
-#         # For matched, check if absolute amounts match
-#         for idx_withdrawal, row_withdrawal in matched.iterrows():
-#             amt_withdrawal = pd.to_numeric(row_withdrawal["Amount"], errors='coerce')
-#             if abs(abs(amt_cancel) - abs(amt_withdrawal)) < 1e-6:
-#                 to_drop.update([idx_cancel, idx_withdrawal])
-#                 break
-#             else:
-#                 logging.info(f"Matched on keys but amounts don't match magnitude: cancel={abs(amt_cancel)}, withdrawal={abs(amt_withdrawal)}")
-#     # Drop the matched pairs
-#     df = df.drop(index=list(to_drop))
-#     return df
-
 # ----------------------------
 # CRM Handling
 # ----------------------------
@@ -848,20 +806,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     # Load current raw CRM file
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
-    # Categorize regulation
-    def categorize_regulation(site):
-        site = str(site).lower().strip()
-        if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
-            return 'belarus'
-        elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
-            return 'australia'
-        elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
-            return 'mauritius'
-        elif site == 'fortrade.ca':
-            return 'canada'
-        elif site == 'fortrade.cy':
-            return 'cyprus'
-        return 'unknown'
     df['regulation'] = df['Site (Account) (Account)'].apply(categorize_regulation)
     # Filter out paypal and inpendium for australia regulation
     mask_aus = df['regulation'] == 'australia'
@@ -1092,17 +1036,6 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 # ----------------------------
 # Utility
 # ----------------------------
-def extract_date_from_filename(filepath: str) -> str:
-    match = re.search(r"(\d{4}-\d{2}-\d{2})", filepath)
-    if match:
-        return match.group(1)
-    match_alt = re.search(r"(\d{2}\.\d{2}\.\d{4})", filepath)
-    if match_alt:
-        return datetime.strptime(match_alt.group(1), "%d.%m.%Y").strftime("%Y-%m-%d")
-    match_slash = re.search(r"(\d{2}_\d{2}_\d{4})", filepath)
-    if match_slash:
-        return datetime.strptime(match_slash.group(1), "%d_%m_%Y").strftime("%Y-%m-%d")
-    return "unknown_date"
 
 def get_previous_business_day(current_date_str):
     current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
@@ -1399,30 +1332,19 @@ def combine_processed_files(
                 cancel_mask = df_raw["Name"].astype(str).str.strip().str.lower() == "withdrawal cancelled"
                 df_cancels = df_raw[cancel_mask].copy()
 
-                # The part of the code where it filters the rows that have balue in the PSP name column is commented because there might be scenarios when there is a value there
+                # The part of the code where it filters the rows that have value in the PSP name column is commented because there might be scenarios when there is a value there
                 # cancel_psp_na = df_cancels["PSP name"].isna() | (df_cancels["PSP name"].str.strip() == "")
                 # df_cancels = df_cancels[cancel_psp_na]
 
                 # Exclude cancellations with 'Wire Transfer' in Method of Payment
                 if 'Method of Payment' in df_cancels.columns:
                     df_cancels = df_cancels[~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]
-                def categorize_regulation(site):
-                    site = str(site).lower().strip()
-                    if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
-                        return 'belarus'
-                    elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
-                        return 'australia'
-                    elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
-                        return 'mauritius'
-                    elif site == 'fortrade.ca':
-                        return 'canada'
-                    elif site == 'fortrade.cy':
-                        return 'cyprus'
-                    return 'unknown'
                 df_cancels['regulation'] = df_cancels['Site (Account) (Account)'].apply(categorize_regulation)
                 mask_aus = df_cancels['regulation'] == 'australia'
                 mask_psp = df_cancels["PSP name"].str.lower().isin(['paypal', 'inpendium'])
                 df_cancels = df_cancels[~(mask_aus & mask_psp)]
+                mask_can = df_cancels['regulation'] == 'canada'
+                df_cancels = df_cancels[~mask_can]
                 if "Currency" in df_cancels.columns:
                     df_cancels["Currency"] = df_cancels["Currency"].replace({
                         "Euro": "EUR",
@@ -1485,19 +1407,6 @@ def combine_processed_files(
             'Approved On', 'TP Account', 'Internal Comment', 'Internal Type', 'Country Of Residence (Account) (Account)'
         ]
         combined_crm = combined_crm.drop(columns=[col for col in unwanted_columns if col in combined_crm.columns], errors='ignore')
-        def categorize_regulation(site):
-            site = str(site).lower().strip()
-            if site in ['fortrade.by', 'gcmasia by', 'kapitalrs by']:
-                return 'belarus'
-            elif site in ['kapitalrs au', 'fortrade.au', 'gcmasia asic']:
-                return 'australia'
-            elif site in ['fortrade.eu', 'gcmforex', 'gcmasia fsc', 'fortrade fsc', 'kapitalrs fsc']:
-                return 'mauritius'
-            elif site == 'fortrade.ca':
-                return 'canada'
-            elif site == 'fortrade.cy':
-                return 'cyprus'
-            return 'unknown'
         combined_crm['regulation'] = combined_crm['regulation'].apply(categorize_regulation)
         combined_crm = combined_crm[combined_crm['regulation'] != 'canada']
         # Define base column order with regulation between crm_last4 and crm_transaction_id

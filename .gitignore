@@ -18,3 +18,6 @@ temp/**
 !temp/
 !temp/**/
 !temp/**/.gitkeep
+
+# Ignore the word file of the Manual Guide
+Manual Guide.docx

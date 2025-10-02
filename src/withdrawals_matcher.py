@@ -169,10 +169,21 @@ class ReconciliationEngine:
         e2 = '' if pd.isna(e2) else str(e2)
         if not e1 or not e2:
             return 0.0
-        l1 = e1.lower().split('@')[0] if '@' in e1 else e1.lower()
-        l2 = e2.lower().split('@')[0] if '@' in e2 else e2.lower()
 
-        return SequenceMatcher(None, l1, l2).ratio()
+        # Handle multiple emails in e1 (CRM side) by splitting on comma and taking max similarity
+        if ',' in e1:
+            e1_list = [email.strip() for email in e1.split(',')]
+        else:
+            e1_list = [e1]
+
+        l2 = e2.lower().split('@')[0] if '@' in e2 else e2.lower()
+        max_sim = 0.0
+        for e1_single in e1_list:
+            l1 = e1_single.lower().split('@')[0] if '@' in e1_single else e1_single.lower()
+            sim = SequenceMatcher(None, l1, l2).ratio()
+            if sim > max_sim:
+                max_sim = sim
+        return max_sim
 
     def name_in_email(self, name, email):
         if not name or not email or pd.isna(name) or pd.isna(email):
@@ -237,7 +248,8 @@ class ReconciliationEngine:
 
         crm_amount = abs(crm_row.get('crm_amount'))  # Use abs for CRM too
         crm_currency = crm_row.get('crm_currency')
-        crm_email = safe_lower_strip(crm_row.get('crm_email'))
+        crm_email_raw = safe_lower_strip(crm_row.get('crm_email'))  # Raw for splitting
+        crm_emails = [safe_lower_strip(e) for e in crm_email_raw.split(',')]  # Split multiple emails
         crm_last4 = str(crm_row.get('crm_last4') or '').strip()
         crm_tp = str(crm_row.get('crm_tp') or '').strip()
 
@@ -265,12 +277,13 @@ class ReconciliationEngine:
         name_fallback_used = False
 
         if proc_name == 'shift4':
-            # Use shift4 prefix logic
-            crm_email = crm_email.lower()
+            # Use shift4 prefix logic, handling multiple CRM emails
             proc_email = proc_email.lower()
-            loc_crm = crm_email.split('@')[0] if crm_email else ''
             loc_proc = proc_email.split('@')[0] if proc_email else ''
-            email_prefix = (loc_crm[:2] == loc_proc[:2]) if loc_crm and loc_proc else False
+            email_prefix = any(
+                (c_email.split('@')[0][:2] == loc_proc[:2]) if '@' in c_email else False
+                for c_email in crm_emails
+            )
             crm_first = safe_lower_strip(crm_row.get('crm_firstname', ''))
             crm_last = safe_lower_strip(crm_row.get('crm_lastname', ''))
             proc_first = safe_lower_strip(proc_row.get('proc_firstname', ''))
@@ -285,10 +298,11 @@ class ReconciliationEngine:
         elif proc_name in ('safecharge', 'powercash'):
             # Use standard logic (assuming from _match_standard_row, similar to shift4 but full email or name)
             # Adjust if different; assuming prefix or full
-            loc_crm = crm_email.split('@')[0] if crm_email else ''
-            loc_proc = proc_email.split('@')[0] if proc_email else ''
-            email_prefix = (
-                    loc_crm == loc_proc) if loc_crm and loc_proc else False  # Full local part match or similarity
+            loc_proc = proc_email.split('@')[0] if '@' in proc_email else proc_email
+            email_prefix = any(
+                (c_email.split('@')[0] == loc_proc) if '@' in c_email else (c_email == loc_proc)
+                for c_email in crm_emails
+            )
             crm_first = safe_lower_strip(crm_row.get('crm_firstname', ''))
             crm_last = safe_lower_strip(crm_row.get('crm_lastname', ''))
             proc_first = safe_lower_strip(proc_row.get('proc_firstname', ''))
@@ -297,7 +311,7 @@ class ReconciliationEngine:
             last_match = crm_last == proc_last if crm_last and proc_last else False
             if not (email_prefix or first_match or last_match):
                 return None
-            email_sim = self.enhanced_email_similarity(crm_email, proc_email)
+            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email)  # Use raw to let method handle split
             name_fallback_used = first_match or last_match
 
         elif proc_name == 'trustpayments':
@@ -313,7 +327,7 @@ class ReconciliationEngine:
             proc_last = safe_lower_strip(proc_row.get('proc_lastname', ''))
             proc_tokens = set(proc_first.split() + proc_last.split())
 
-            email_sim = self.enhanced_email_similarity(crm_email, proc_email)
+            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email)  # Use raw
             full_name_match = crm_tokens == proc_tokens
             first_or_last_name_match = bool(crm_tokens & proc_tokens)
 
@@ -337,7 +351,7 @@ class ReconciliationEngine:
             name_fallback_used = tier in [4, 5]
         else:
             # Normal email_sim for other processors
-            email_sim = self.enhanced_email_similarity(crm_email, proc_email)
+            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email)  # Use raw
 
         if proc_config.require_email and email_sim < 0.2 and not last4_match:  # Lowered to 0.2
             return None
@@ -370,7 +384,7 @@ class ReconciliationEngine:
         # Build match dict (similar to other match_*_row methods)
         match = {
             'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_email,
+            'crm_email': crm_email_raw,  # Keep original raw for output
             'crm_firstname': crm_row.get('crm_firstname', ''),
             'crm_lastname': crm_row.get('crm_lastname', ''),
             'crm_last4': crm_last4,
@@ -498,8 +512,6 @@ class ReconciliationEngine:
                 else:
                     self.metrics['incorrect_payments'] += 1
 
-    # Modified _flag_warning function in src/withdrawals_matcher.py
-    # (Only the Rule 3 section is changed; rest remains identical)
     def _flag_warning(self, matches, processor_df):
         used_real = {
             idx
@@ -616,7 +628,7 @@ class ReconciliationEngine:
                 for m_i in matched_rows:
                     current_comment = matches[m_i].get('comment', '')
                     matches[m_i]['comment'] = current_comment + ' . ' + comment_m if current_comment else comment_m
-        # Rule 3: Cross processors (modified to handle fallback without duplicate comment)
+            # Rule 3: Cross processors (modified to handle fallback without duplicate comment)
             for i, m in enumerate(matches):
                 if m.get('match_status') == 1:
                     crm_pname = str(m.get('crm_processor_name', '')).lower()
@@ -654,8 +666,9 @@ class ReconciliationEngine:
                 continue
             prefix = proc_email[:2].lower()
             for crm_i in unmatched_crm_indices:
-                crm_email = matches[crm_i].get('crm_email', '').lower()
-                if crm_email.startswith(prefix):
+                crm_email_raw = matches[crm_i].get('crm_email', '').lower()
+                crm_emails = [e.strip() for e in crm_email_raw.split(',')]  # Handle multiple CRM emails
+                if any(e.startswith(prefix) for e in crm_emails):
                     flagged_shift4_proc_to_crm[proc_i].append(crm_i)
         for proc_i, crm_list in flagged_shift4_proc_to_crm.items():
             if crm_list:

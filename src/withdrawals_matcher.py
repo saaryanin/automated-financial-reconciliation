@@ -170,19 +170,24 @@ class ReconciliationEngine:
         if not e1 or not e2:
             return 0.0
 
-        # Handle multiple emails in e1 (CRM side) by splitting on comma and taking max similarity
+        # Split both sides
         if ',' in e1:
             e1_list = [email.strip() for email in e1.split(',')]
         else:
             e1_list = [e1]
+        if ',' in e2:
+            e2_list = [email.strip() for email in e2.split(',')]
+        else:
+            e2_list = [e2]
 
-        l2 = e2.lower().split('@')[0] if '@' in e2 else e2.lower()
         max_sim = 0.0
         for e1_single in e1_list:
             l1 = e1_single.lower().split('@')[0] if '@' in e1_single else e1_single.lower()
-            sim = SequenceMatcher(None, l1, l2).ratio()
-            if sim > max_sim:
-                max_sim = sim
+            for e2_single in e2_list:
+                l2 = e2_single.lower().split('@')[0] if '@' in e2_single else e2_single.lower()
+                sim = SequenceMatcher(None, l1, l2).ratio()
+                if sim > max_sim:
+                    max_sim = sim
         return max_sim
 
     def name_in_email(self, name, email):

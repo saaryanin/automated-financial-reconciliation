@@ -1261,28 +1261,60 @@ def combine_processed_files(
         for pname, group in df.groupby('processor_name'):
             grouped_rows = []
             if 'last_4cc' in group.columns and (group['last_4cc'].astype(str).str.strip() != '').any():
-                # Group by last_4cc first
+                # Group by last_4cc
                 for last4, subg in group.groupby('last_4cc', dropna=False):
                     if subg.empty or pd.isna(last4) or str(last4).strip() == '':
                         continue
-                    emails = subg['email'].dropna().tolist()
+                    # Assume all rows have email; filter to non-NaN for safety
+                    non_na_mask = subg['email'].notna() & (subg['email'].str.strip() != '')
+                    if not non_na_mask.any():
+                        # If all NaN emails, append rows as-is (or skip, depending on needs)
+                        grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
+                        continue
+                    subg = subg[non_na_mask].reset_index(drop=True)  # Reset index for iloc
+                    emails = subg['email'].tolist()
                     if len(emails) <= 1:
                         grouped_rows.append(subg.iloc[0].copy())
                         continue
-                    # Check email similarity for all pairs
+                    # Compute pairwise similarities
                     high_similar = []
                     for i, email1 in enumerate(emails):
                         for j, email2 in enumerate(emails[i + 1:], i + 1):
                             sim = enhance_email_similarity(email1, email2)
                             if sim >= 0.8:
                                 high_similar.append((i, j, sim))
-                    if high_similar:
-                        # Aggregate rows with high similarity
-                        unique_rows = set()
-                        for i, j, _ in high_similar:
-                            unique_rows.add(i)
-                            unique_rows.add(j)
-                        agg_rows = subg.loc[subg.index[list(unique_rows)]]
+                    if not high_similar:
+                        # No similarities: keep all rows separate
+                        grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
+                        continue
+                    # Build graph for connected components
+                    from collections import defaultdict
+                    graph = defaultdict(list)
+                    for i, j, _ in high_similar:
+                        graph[i].append(j)
+                        graph[j].append(i)
+                    # DFS to find components
+                    visited = set()
+                    components = []
+                    for idx in range(len(emails)):
+                        if idx not in visited:
+                            component = []
+                            stack = [idx]
+                            while stack:
+                                node = stack.pop()
+                                if node not in visited:
+                                    visited.add(node)
+                                    component.append(node)
+                                    for neigh in graph[node]:
+                                        if neigh not in visited:
+                                            stack.append(neigh)
+                            if component:
+                                components.append(component)
+                    # Aggregate within each component
+                    for component in components:
+                        if not component:
+                            continue
+                        agg_rows = subg.iloc[component]
                         currencies = agg_rows['currency'].tolist()
                         tgt_cur = choose_target_currency(currencies)
                         converted_amounts = []
@@ -1299,19 +1331,13 @@ def combine_processed_files(
                                     converted = amt  # Fallback if no rate
                             converted_amounts.append(converted)
                         total_amt = sum(converted_amounts)
-                        agg_row = subg.iloc[0].copy()
+                        agg_row = agg_rows.iloc[0].copy()  # Use first row in component as base
                         agg_row['amount'] = total_amt
                         agg_row['currency'] = tgt_cur
-                        agg_row['email'] = list(set([emails[i] for i in unique_rows]))  # Use set to remove duplicates
+                        agg_row['email'] = list(set(emails[idx] for idx in component))
                         grouped_rows.append(agg_row)
-                        # Keep non-aggregated rows
-                        for idx in subg.index:
-                            if idx not in agg_rows.index:
-                                grouped_rows.append(subg.loc[idx].copy())
-                    else:
-                        grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
             else:
-                # Fallback grouping if no last_4cc
+                # Fallback if no last_4cc: no aggregation
                 grouped_rows.extend([row.copy() for _, row in group.iterrows()])
             if grouped_rows:
                 out_dfs.append(pd.DataFrame(grouped_rows))

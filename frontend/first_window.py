@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from src.config import RATES_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
 from src.config import OUTPUT_DIR
+from src.files_renamer import PROCESSOR_PATTERNS
 
 
 class DropButton(QPushButton):
@@ -482,208 +483,6 @@ class ReconciliationWindow(QWidget):
         self.process_btn.setEnabled(files_ready and rates_entered)
 
     def is_recognized(self, filename):
-        PROCESSOR_PATTERNS = {
-            "safecharge": {
-                "pattern": r"126728__transaction-search_[0-9]+_[a-z0-9]+(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": None,
-                "type_group": None,
-                "date_column": "Date",
-                "header_row": 11
-            },
-            "bitpay": {
-                "pattern": r"(?i)bitpay-export-[a-zA-Z]{3}-\d{1,2}-\d{1,2}-\d{4}-_to_(\d{1,2}-\d{1,2}-\d{4})(?:\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%m-%d-%Y",
-                "date_group": 1,
-                "type_group": None,
-                "date_column": "date",
-                "header_row": 0
-            },
-            "ezeebill": {
-                "pattern": r"daily_transaction_report_\d{4}-\d{2}-\d{2}_to_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "type_group": None,
-                "date_column": None,
-                "header_row": 17
-            },
-            "paypal": {
-                "pattern": r"(?:download|Download)(?:\s*-\s*(\d{4}-\d{2}-\d{2})[Tt]\d{6}\.\d{3})?(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "date_group": 1,
-                "type_group": None,
-                "date_column": "Date",
-                "header_row": 0
-            },
-            "zotapay": {
-                "pattern": r"export(\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": None,
-                "type_group": None,
-                "date_column": "Ended At",
-                "header_row": 1
-            },
-            "paymentasia": {
-                "pattern": r"export_(transactions|payouts)_\d+(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": None,
-                "type_group": 1,
-                "date_column": "Completed Time",
-                "header_row": 0
-            },
-            "powercash": {
-                "pattern": r"(report-[a-zA-Z0-9]+|transactionlog(\s*\(\d+\))?)(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%d.%m.%Y", # Specify input format for Date column
-                "type_group": None,
-                "date_column": "Date",
-                "header_row": 0
-            },
-            "trustpayments": {
-                "pattern": r"searchresults(\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": None,
-                "type_group": None,
-                "date_column": "transactionstartedtimestamp",
-                "header_row": 0
-            },
-            "skrill": {
-                "pattern": r"transactions_\d+(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": None,
-                "type_group": None,
-                "date_column": "Time (CET)",
-                "header_row": 0
-            },
-            "neteller": {
-                "pattern": r"transactions_\d+(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": None,
-                "type_group": None,
-                "date_column": "Time (UTC)",
-                "header_row": 0
-            },
-            "shift4": {
-                "pattern": r"(?i)processingactivity_[0-9]{4}-[0-9]{2}-[0-9]{2}t[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": None,
-                "type_group": None,
-                "date_column": "Transaction Date",
-                "header_row": 0
-            },
-            "crm": {
-                "pattern": r"(?i)crm_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "type_group": None,
-                "date_column": None,
-                "header_row": None
-            }
-        }
-
-        PROCESSOR_PATTERNS.update({
-            "bitpay_renamed": {
-                "pattern": r"bitpay_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "bitpay",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "ezeebill_renamed": {
-                "pattern": r"ezeebill_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "ezeebill",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "neteller_renamed": {
-                "pattern": r"neteller_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "neteller",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "paypal_renamed": {
-                "pattern": r"paypal_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "paypal",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "paymentasia_renamed": {
-                "pattern": r"paymentasia_(deposits|withdrawals)_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "paymentasia",
-                "type_group": 1,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "powercash_renamed": {
-                "pattern": r"powercash_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "powercash",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "safecharge_renamed": {
-                "pattern": r"safecharge_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "safecharge",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "shift4_renamed": {
-                "pattern": r"shift4_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "shift4",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "skrill_renamed": {
-                "pattern": r"skrill_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "skrill",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "trustpayments_renamed": {
-                "pattern": r"trustpayments_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "trustpayments",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-            "zotapay_renamed": {
-                "pattern": r"zotapay_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
-                "date_format": "%Y-%m-%d",
-                "is_renamed": True,
-                "processor": "zotapay",
-                "type_group": None,
-                "date_column": None,
-                "header_row": None,
-                "dest_dir": PROCESSOR_DIR
-            },
-        })
         filename_lower = filename.lower()
         if self._detect_processor(filename) != "unknown":
             return True
@@ -703,7 +502,11 @@ class ReconciliationWindow(QWidget):
             if not self.is_recognized(file_name):
                 unrecognized.append(file_name)
         if unrecognized:
-            msg = "\n".join([f"The file {f} has not been recognized by the system. Please change its name according to the following format: processor name_YYYY-MM-DD for example: safecharge_2025-10-17." for f in unrecognized])
+            if len(unrecognized) == 1:
+                msg = f"The file {unrecognized[0]} has not been recognized by the system. Please change its name according to the following format: processor name_YYYY-MM-DD for example: safecharge_2025-10-17."
+            else:
+                files_list = ", ".join(unrecognized)
+                msg = f"The files {files_list} have not been recognized by the system. Please change their names according to the following format: processor name_YYYY-MM-DD for example: safecharge_2025-10-17."
             self.show_warning("Unrecognized Files", msg + "\nResetting the attached window. Please attach again after renaming.")
             self.reset_attachments()
             return

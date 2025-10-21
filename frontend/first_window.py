@@ -9,7 +9,7 @@ from second_window import SecondWindow  # NEW: Import the new second window clas
 import pandas as pd
 import re
 from pathlib import Path
-from src.config import RATES_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES,CRM_DIR
+from src.config import RATES_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
 from src.config import OUTPUT_DIR
 
 
@@ -566,11 +566,9 @@ class ReconciliationWindow(QWidget):
                 "pattern": r"(?i)crm_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
                 "date_format": "%Y-%m-%d",
                 "is_renamed": True,
-
                 "type_group": None,
                 "date_column": None,
-                "header_row": None,
-                "dest_dir": CRM_DIR # Move to crm_reports
+                "header_row": None
             }
         }
 
@@ -705,9 +703,9 @@ class ReconciliationWindow(QWidget):
             if not self.is_recognized(file_name):
                 unrecognized.append(file_name)
         if unrecognized:
-            msg = "\n".join([f"The file {f} has not been recognized by the system please change its name according to the following format:processor name_YYYY_MM_DD" for f in unrecognized])
-            self.show_warning("Unrecognized Files", msg + "\nResetting the window. Please attach again after renaming.")
-            self.reset_fields()
+            msg = "\n".join([f"The file {f} has not been recognized by the system. Please change its name according to the following format: processor name_YYYY-MM-DD for example: safecharge_2025-10-17." for f in unrecognized])
+            self.show_warning("Unrecognized Files", msg + "\nResetting the attached window. Please attach again after renaming.")
+            self.reset_attachments()
             return
 
         selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
@@ -745,6 +743,24 @@ class ReconciliationWindow(QWidget):
                 dest_path = PROCESSOR_DIR / new_name
             shutil.move(str(source_path), str(dest_path))
         self.processor_files = [str(PROCESSOR_DIR / n) for n in [os.path.basename(p) for p in file_paths]]
+
+    def reset_attachments(self):
+        if self.crm_file and os.path.exists(self.crm_file):
+            os.remove(self.crm_file)
+        self.crm_file = None
+
+        for file_path in self.processor_files:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        self.processor_files = []
+
+        for file in RAW_ATTACHED_FILES.glob("*.*"):
+            if file.is_file() and file.name != ".gitkeep":
+                file.unlink()
+
+        self.moved_files.clear()
+
+        self.update_upload_button()
 
     def reset_fields(self):
         for _, (input_field, calc_label) in self.rate_inputs.items():

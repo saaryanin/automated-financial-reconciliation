@@ -58,7 +58,7 @@ PROCESSOR_PATTERNS = {
         "header_row": 0
     },
     "powercash": {
-        "pattern": r"report-[a-zA-Z0-9]+(?i:\.csv|\.xlsx|\.xls)",
+        "pattern": r"(report-[a-zA-Z0-9]+|transactionlog(\s*\(\d+\))?)(?i:\.csv|\.xlsx|\.xls)",
         "date_format": "%d.%m.%Y", # Specify input format for Date column
         "type_group": None,
         "date_column": "Date",
@@ -223,6 +223,8 @@ def detect_processor_from_name(filename):
     filename_lower = filename.lower()
     if filename_lower.startswith("crm_"):
         return "crm"
+    if "transactionlog" in filename_lower:
+        return "powercash"
     processors = [
         "safecharge", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
         "trustpayments", "paysafe", "skrill", "neteller", "shift4"

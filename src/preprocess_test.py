@@ -806,7 +806,7 @@ def extract_crm_transaction_id(comment: str, processor: str):
         "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
         "ezeebill": r"(\d{7}-\d{18})",
         "paymentasia": r"(\d{7}-\d{18})",
-        "barclays": r"PSP TransactionId:(\d+)",  # Placeholder pattern for barclays; update as needed
+        "barclays": r"PSP TransactionId:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
     }
     pattern = patterns.get(processor)
     if not pattern:

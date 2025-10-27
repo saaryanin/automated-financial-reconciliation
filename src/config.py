@@ -1,4 +1,4 @@
-# config.py (Updated to handle base TEMP_DIR without regulation-specific nesting)
+# config.py (Updated to remove automatic dir creation at top-level; dirs are created per regulation in scripts)
 import sys
 from pathlib import Path
 import tempfile
@@ -15,7 +15,7 @@ else:
 MODEL_DIR = BASE_DIR / "model"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
-# Writable dirs under TEMP_DIR (no regulation here; handled in scripts)
+# Writable dirs under TEMP_DIR (definitions only; creation handled in scripts)
 DATA_DIR = TEMP_DIR / "data"
 OUTPUT_DIR = TEMP_DIR / "output"
 CRM_DIR = DATA_DIR / "crm_reports"
@@ -34,8 +34,6 @@ TRUE_TRAINING_DIR = TRAINING_DATASET_DIR / "check_newversion_datasets"
 FALSE_TRAINING_DIR = TRAINING_DATASET_DIR / "false_training_datasets"
 TEST_MODEL_DIR = TRAINING_DATASET_DIR / "model_testing"
 
-# Ensure all dirs exist
-for dir_path in [TEMP_DIR, DATA_DIR, OUTPUT_DIR, CRM_DIR, PROCESSOR_DIR, RAW_TRACKING_DIR, RAW_ATTACHED_FILES,
-                 PROCESSED_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, RATES_DIR, LISTS_DIR, COMBINED_CRM_DIR,
-                 PROCESSED_UNMATCHED_SHIFTED_DEPOSITS_DIR, TRAINING_DATASET_DIR, TRUE_TRAINING_DIR, FALSE_TRAINING_DIR, TEST_MODEL_DIR]:
-    dir_path.mkdir(parents=True, exist_ok=True)
+# Remove the for loop that creates dirs automatically
+# for dir_path in [...]:
+#     dir_path.mkdir(parents=True, exist_ok=True)

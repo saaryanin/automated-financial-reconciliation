@@ -1,3 +1,5 @@
+# testing_regulation.py (General script to handle both ROW and UK; run for each or in sequence)
+
 import pandas as pd
 from pathlib import Path
 import shutil
@@ -6,119 +8,117 @@ from src.preprocess_test import load_crm_file, load_processor_file, combine_proc
 from concurrent.futures import ThreadPoolExecutor
 from src.config import BASE_DIR, TEMP_DIR
 
-# Setup ROW structure if not exists (move existing temp contents to ROW if applicable)
-ROW_ROOT = TEMP_DIR / "ROW"
-if not ROW_ROOT.exists() and any((TEMP_DIR / sub).exists() for sub in ['data', 'output', 'raw_attached_files']):
-    ROW_ROOT.mkdir(parents=True, exist_ok=True)
-    for sub in ['data', 'output', 'raw_attached_files']:
-        src = TEMP_DIR / sub
-        dst = ROW_ROOT / sub
-        if src.exists():
-            shutil.move(str(src), str(dst))
+def setup_regulation_structure(regulation):
+    reg_upper = regulation.upper()
+    reg_root = TEMP_DIR / reg_upper
+    reg_data_dir = reg_root / "data"
+    reg_output_dir = reg_root / "output"
+    reg_raw_attached_files = reg_root / "raw_attached_files"
 
-# Clean up any unnecessary top-level data/output/raw_attached_files if they still exist after move
-for sub in ['data', 'output', 'raw_attached_files']:
-    unnecessary = TEMP_DIR / sub
-    if unnecessary.exists():
-        shutil.rmtree(unnecessary)
+    # Create directories
+    for d in [reg_data_dir, reg_output_dir, reg_raw_attached_files]:
+        d.mkdir(parents=True, exist_ok=True)
 
-# Setup UK structure
-UK_ROOT = TEMP_DIR / "UK"
-UK_DATA_DIR = UK_ROOT / "data"
-UK_OUTPUT_DIR = UK_ROOT / "output"
-UK_RAW_ATTACHED_FILES = UK_ROOT / "raw_attached_files"
+    # Subdirs
+    reg_crm_dir = reg_data_dir / "crm_reports"
+    reg_processor_dir = reg_data_dir / "processor_reports"
+    reg_raw_tracking_dir = reg_data_dir / "raw_tracking_lists"
+    reg_processed_dir = reg_data_dir / "processed"
+    reg_processed_crm_dir = reg_processed_dir / "crm"
+    reg_processed_processor_dir = reg_processed_dir / "processors"
+    reg_rates_dir = reg_data_dir / "rates"
+    reg_lists_dir = reg_data_dir / "lists"
+    reg_combined_crm_dir = reg_processed_crm_dir / "combined"
+    reg_processed_unmatched_shifted_deposits_dir = reg_processed_crm_dir / "unmatched_shifted_deposits"
+    reg_training_dataset_dir = reg_data_dir / "training_dataset"
+    reg_true_training_dir = reg_training_dataset_dir / "check_newversion_datasets"
+    reg_false_training_dir = reg_training_dataset_dir / "false_training_datasets"
+    reg_test_model_dir = reg_training_dataset_dir / "model_testing"
 
-# Create directories
-for d in [UK_DATA_DIR, UK_OUTPUT_DIR, UK_RAW_ATTACHED_FILES]:
-    d.mkdir(parents=True, exist_ok=True)
+    # Create all subdirs
+    for d in [reg_crm_dir, reg_processor_dir, reg_raw_tracking_dir, reg_processed_dir, reg_processed_crm_dir,
+              reg_processed_processor_dir, reg_rates_dir, reg_lists_dir, reg_combined_crm_dir,
+              reg_processed_unmatched_shifted_deposits_dir, reg_training_dataset_dir, reg_true_training_dir,
+              reg_false_training_dir, reg_test_model_dir]:
+        d.mkdir(parents=True, exist_ok=True)
 
-# Override subdirs for UK
-UK_CRM_DIR = UK_DATA_DIR / "crm_reports"
-UK_PROCESSOR_DIR = UK_DATA_DIR / "processor_reports"
-UK_RAW_TRACKING_DIR = UK_DATA_DIR / "raw_tracking_lists"
-UK_PROCESSED_DIR = UK_DATA_DIR / "processed"
-UK_PROCESSED_CRM_DIR = UK_PROCESSED_DIR / "crm"
-UK_PROCESSED_PROCESSOR_DIR = UK_PROCESSED_DIR / "processors"
-UK_RATES_DIR = UK_DATA_DIR / "rates"
-UK_LISTS_DIR = UK_DATA_DIR / "lists"
-UK_COMBINED_CRM_DIR = UK_PROCESSED_CRM_DIR / "combined"
-UK_PROCESSED_UNMATCHED_SHIFTED_DEPOSITS_DIR = UK_PROCESSED_CRM_DIR / "unmatched_shifted_deposits"
-UK_TRAINING_DATASET_DIR = UK_DATA_DIR / "training_dataset"
-UK_TRUE_TRAINING_DIR = UK_TRAINING_DATASET_DIR / "check_newversion_datasets"
-UK_FALSE_TRAINING_DIR = UK_TRAINING_DATASET_DIR / "false_training_datasets"
-UK_TEST_MODEL_DIR = UK_TRAINING_DATASET_DIR / "model_testing"
+    # Copy shared CRM to reg CRM dir
+    shared_crm_filepath = BASE_DIR / "data" / "crm_reports" / "crm_2025-10-20.xlsx"
+    reg_crm_filepath = reg_crm_dir / shared_crm_filepath.name
+    if shared_crm_filepath.exists():
+        shutil.copy(shared_crm_filepath, reg_crm_filepath)
+    else:
+        print(f"CRM file not found at {shared_crm_filepath}")
+        exit(1)
 
-# Create all subdirs
-for d in [UK_CRM_DIR, UK_PROCESSOR_DIR, UK_RAW_TRACKING_DIR, UK_PROCESSED_DIR, UK_PROCESSED_CRM_DIR,
-          UK_PROCESSED_PROCESSOR_DIR, UK_RATES_DIR, UK_LISTS_DIR, UK_COMBINED_CRM_DIR,
-          UK_PROCESSED_UNMATCHED_SHIFTED_DEPOSITS_DIR, UK_TRAINING_DATASET_DIR, UK_TRUE_TRAINING_DIR,
-          UK_FALSE_TRAINING_DIR, UK_TEST_MODEL_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
-
-# Copy the shared CRM file to UK input dir
-shared_crm_filepath = BASE_DIR / "data" / "crm_reports" / "crm_2025-10-20.xlsx"
-uk_crm_filepath = UK_CRM_DIR / shared_crm_filepath.name
-if shared_crm_filepath.exists():
-    shutil.copy(shared_crm_filepath, uk_crm_filepath)
-else:
-    print(f"CRM file not found at {shared_crm_filepath}")
-    exit(1)
-
-# Define processors for UK (including barclays)
-uk_processors = [
-    'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
-    'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'barclays'
-]
+    return {
+        'root': reg_root,
+        'data_dir': reg_data_dir,
+        'crm_dir': reg_crm_dir,
+        'processor_dir': reg_processor_dir,
+        'processed_crm_dir': reg_processed_crm_dir,
+        'processed_processor_dir': reg_processed_processor_dir,
+        'lists_dir': reg_lists_dir,
+        'combined_crm_dir': reg_combined_crm_dir,
+        'processed_unmatched_shifted_deposits_dir': reg_processed_unmatched_shifted_deposits_dir,
+        'crm_filepath': reg_crm_filepath
+    }
 
 # Date from the file
 date_str = '2025-10-20'
 
-# Function to preprocess for a given transaction type and regulation (now handles both CRM and processors)
-def preprocess_for_uk(transaction_type='deposit'):
-    print(f"Using UK_PROCESSED_CRM_DIR: {UK_PROCESSED_CRM_DIR}")
-    print(f"Using UK_PROCESSED_PROCESSOR_DIR: {UK_PROCESSED_PROCESSOR_DIR}")
+# Processors (ROW without barclays, UK with barclays)
+row_processors = [
+    'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
+    'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia'
+]
+uk_processors = row_processors + ['barclays']
 
-    # No override of module; pass params
+def preprocess_for_regulation(regulation, transaction_type='deposit'):
+    dirs = setup_regulation_structure(regulation)
+    processors = row_processors if regulation == 'row' else uk_processors
+
+    print(f"Using {regulation.upper()}_PROCESSED_CRM_DIR: {dirs['processed_crm_dir']}")
+    print(f"Using {regulation.upper()}_PROCESSED_PROCESSOR_DIR: {dirs['processed_processor_dir']}")
 
     # Process CRM
-    crm_file_paths = [uk_crm_filepath] * len(uk_processors)
-    processed_crm_dfs = process_files_in_parallel(crm_file_paths, processor_names=uk_processors, is_crm=True, save_clean=True, transaction_type=transaction_type, regulation='uk',
-                                                  lists_dir=UK_LISTS_DIR, processed_unmatched_shifted_deposits_dir=UK_PROCESSED_UNMATCHED_SHIFTED_DEPOSITS_DIR, processed_crm_dir=UK_PROCESSED_CRM_DIR)
+    crm_file_paths = [dirs['crm_filepath']] * len(processors)
+    processed_crm_dfs = process_files_in_parallel(crm_file_paths, processor_names=processors, is_crm=True, save_clean=True, transaction_type=transaction_type, regulation=regulation,
+                                                  lists_dir=dirs['lists_dir'], processed_unmatched_shifted_deposits_dir=dirs['processed_unmatched_shifted_deposits_dir'], processed_crm_dir=dirs['processed_crm_dir'])
 
-    # Add print for debug: check if processed_dfs have data
+    # Debug print for processed CRM
     for i, df in enumerate(processed_crm_dfs):
-        print(f"Processed DF for {uk_processors[i]} {transaction_type}: {len(df)} rows")
+        print(f"Processed DF for {processors[i]} {transaction_type} ({regulation}): {len(df)} rows")
 
-    # Process processors
-    processor_file_paths = []  # Collect actual processor file paths
-    for proc in uk_processors:
-        # Try both .xlsx and .csv extensions
+    # Process processors (assuming processor raw files are in reg_processor_dir; place them accordingly for ROW/UK)
+    processor_file_paths = []
+    for proc in processors:
         for ext in ['xlsx', 'csv']:
-            proc_file = UK_PROCESSOR_DIR / f"{proc}_{date_str}.{ext}"
+            proc_file = dirs['processor_dir'] / f"{proc}_{date_str}.{ext}"
             if proc_file.exists():
                 processor_file_paths.append(proc_file)
                 break
         else:
-            processor_file_paths.append(None)  # No file found
+            processor_file_paths.append(None)
 
-    processed_proc_dfs = process_files_in_parallel(processor_file_paths, processor_names=uk_processors, is_crm=False, save_clean=True, transaction_type=transaction_type, regulation='uk',
-                                                   processed_processor_dir=UK_PROCESSED_PROCESSOR_DIR)
+    processed_proc_dfs = process_files_in_parallel(processor_file_paths, processor_names=processors, is_crm=False, save_clean=True, transaction_type=transaction_type, regulation=regulation,
+                                                   processed_processor_dir=dirs['processed_processor_dir'])
 
     # Combine
     combine_processed_files(
         date_str,
-        uk_processors,
-        processed_crm_dir=UK_PROCESSED_CRM_DIR,
-        processed_proc_dir=UK_PROCESSED_PROCESSOR_DIR,
-        out_crm_dir=UK_COMBINED_CRM_DIR,
-        out_proc_dir=UK_PROCESSED_PROCESSOR_DIR / "combined",
+        processors,
+        processed_crm_dir=dirs['processed_crm_dir'],
+        processed_proc_dir=dirs['processed_processor_dir'],
+        out_crm_dir=dirs['combined_crm_dir'],
+        out_proc_dir=dirs['processed_processor_dir'] / "combined",
         transaction_type=transaction_type,
-        regulation='uk'
+        regulation=regulation
     )
-    print(f"Preprocessed and combined {transaction_type}s for UK regulation saved successfully.")
+    print(f"Preprocessed and combined {transaction_type}s for {regulation.upper()} regulation saved successfully.")
 
-
-# Run for deposits and withdrawals to check
+# Run for both ROW and UK, deposits and withdrawals
 if __name__ == "__main__":
-    preprocess_for_uk('deposit')
-    preprocess_for_uk('withdrawal')
+    for reg in ['row', 'uk']:
+        preprocess_for_regulation(reg, 'deposit')
+        preprocess_for_regulation(reg, 'withdrawal')

@@ -1,3 +1,4 @@
+# utils.py (No major changes needed, but ensure load_uk_holidays caches correctly)
 import pandas as pd
 import logging
 from pathlib import Path
@@ -169,6 +170,8 @@ def categorize_regulation(site):
         return 'canada'
     elif site == 'fortrade.cy':
         return 'cyprus'
+    elif site in ['fortrade.com', 'kapitalrs']:
+        return 'uk'
     return 'unknown'
 
 def extract_date_from_filename(filepath: str) -> str:

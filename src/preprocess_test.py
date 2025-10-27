@@ -1,9 +1,10 @@
+# preprocess_test.py (Corrected with proper print placements, fixed typos, and syntax; added optional path params for flexibility)
 import pandas as pd
 import re
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, COMBINED_CRM_DIR
+import src.config as config
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
@@ -29,10 +30,10 @@ PSP_NAME_MAP = {
     'acquiring com': 'trustpayments',
     'trust payments': 'trustpayments',
     'paysafe': 'skrill',
+    'barclay card': 'barclays',
+    'barclays': 'barclays',
     # Add any other known aliases as needed
 }
-
-
 
 processed_unmatched_files = set()
 
@@ -249,6 +250,20 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df = df[["transaction_id", "amount", "currency", "date"]]
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         df['tp'] = df['transaction_id'].astype(str).str.split('-').str[0].str.strip()
+        df['processor_name'] = processor
+
+    elif processor == "barclays":
+        # Assuming Barclays has a similar structure to SafeCharge or TrustPayments; adjust as per actual format
+        # This is a placeholder - update with actual standardization logic for Barclays deposits
+        df = df[(df.get("Transaction Type", "").str.lower() == "sale") & (df.get("Status", "").str.lower() == "approved")]
+        keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "PAN"] if "PAN" in df.columns else ["Transaction ID", "Date", "Amount", "Currency"]
+        df = df[keep_cols]
+        df = df.rename(
+            columns={"Transaction ID": "transaction_id", "Date": "date", "Amount": "amount", "Currency": "currency"})
+        df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
+        if "PAN" in df.columns:
+            df['last_4digits'] = df['PAN'].astype(str).str[-4:].str.zfill(4)
+            df = df.drop(columns=['PAN'])
         df['processor_name'] = processor
 
     # Common cleanup for all processors
@@ -574,7 +589,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             amount = clean_amount(refund_row["Amount"])
             currency = refund_row["Currency"]
 
-            # Scan for matching referral credit rows (above/below), same email/amount/currency
+            # Scan for matching referral credit rows (above/below), same email/amount+currency
             mask = (
                     (df["Operation Type"] == "referral credit") &
                     (df["Cardholder Email"] == email) &
@@ -753,6 +768,23 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         ]
         return df[keep]
 
+    elif processor.lower() == "barclays":
+        # Placeholder for Barclays withdrawals standardization; adjust as per actual format
+        df = df[(df.get("Transaction Type", "").str.lower() == "refund") & (df.get("Status", "").str.lower() == "approved")]
+        df = df.rename(columns={
+            "Transaction ID": "transaction_id",
+            "Date": "date",
+            "Amount": "amount",
+            "Currency": "currency"
+        })
+        df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
+        df['last_4cc'] = df.get('PAN', '').astype(str).str[-4:].str.zfill(4)
+        df['processor_name'] = processor
+        df['first_name'] = ''
+        df['last_name'] = ''
+        df['email'] = ''
+        return df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
+
     return pd.DataFrame()
 
 # ----------------------------
@@ -774,6 +806,7 @@ def extract_crm_transaction_id(comment: str, processor: str):
         "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
         "ezeebill": r"(\d{7}-\d{18})",
         "paymentasia": r"(\d{7}-\d{18})",
+        "barclays": r"PSP TransactionId:(\d+)",  # Placeholder pattern for barclays; update as needed
     }
     pattern = patterns.get(processor)
     if not pattern:
@@ -795,7 +828,14 @@ def clean_crm_amount(amt):
     except ValueError:
         return 0.0
 
-def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
+def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clean=False, transaction_type="deposit",
+                  lists_dir=None, processed_unmatched_shifted_deposits_dir=None, processed_crm_dir=None):
+    lists_dir = lists_dir or config.LISTS_DIR
+    processed_unmatched_shifted_deposits_dir = processed_unmatched_shifted_deposits_dir or config.PROCESSED_UNMATCHED_SHIFTED_DEPOSITS_DIR
+    processed_crm_dir = processed_crm_dir or config.PROCESSED_CRM_DIR
+
+    print(f"Using processed_crm_dir for load_crm_file: {processed_crm_dir}")
+
     # Define normalized_processor at the start
     normalized_processor = processor_name.lower()
     # Calculate relevant previous date based on the current day
@@ -807,12 +847,20 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
     df['regulation'] = df['Site (Account) (Account)'].apply(categorize_regulation)
-    # Filter out paypal and inpendium for australia regulation
-    mask_aus = df['regulation'] == 'australia'
-    mask_psp = df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
-    df = df[~(mask_aus & mask_psp)]
+    # Filter for the specified regulation
+    if regulation == 'row':
+        row_regs = ['mauritius', 'cyprus', 'australia']
+        df = df[df['regulation'].isin(row_regs)]
+    elif regulation == 'uk':
+        df = df[df['regulation'] == 'uk']
+
+    # Filter out paypal and inpendium for australia regulation (only for row)
+    if regulation == 'row':
+        mask_aus = df['regulation'] == 'australia'
+        mask_psp = df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
+        df = df[~(mask_aus & mask_psp)]
     # Load and process unmatched_shifted_deposits from the previous day
-    previous_unmatched_path = LISTS_DIR / previous_date_str / "unmatched_shifted_deposits.xlsx"
+    previous_unmatched_path = lists_dir / previous_date_str / "unmatched_shifted_deposits.xlsx"  # Removed regulation.upper()
     if previous_unmatched_path.exists():
         unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
         logging.info(
@@ -908,7 +956,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             logging.info(f"Added {len(new_deposits)} new unmatched deposits from {previous_date_str}")
         # Save the processed unmatched data
         if save_clean:
-            unmatched_out_path = PROCESSED_CRM_DIR / "unmatched_shifted_deposits" / date_str / "unmatched_shifted_deposits.xlsx"
+            unmatched_out_path = processed_unmatched_shifted_deposits_dir / date_str / "unmatched_shifted_deposits.xlsx"  # Removed regulation.upper()
             unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
             unmatched_mapped.to_excel(unmatched_out_path, index=False)
             logging.info(f"Saved unmatched deposits to {unmatched_out_path}")
@@ -987,10 +1035,11 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        # Save processed CRM file
+        # Save processed CRM file without extra regulation folder
         folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
         folder = f"{folder_name}_{transaction_type}s.xlsx"
-        out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
+        out_path = processed_crm_dir / folder_name / date_str / folder
+        print(f"Calculated out_path: {out_path}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         # If df is empty after filtering, create an empty DataFrame with the needed columns
         if df.empty:
@@ -1054,25 +1103,41 @@ def get_previous_business_day(current_date_str):
 # ----------------------------
 # Parallel Batch Processor
 # ----------------------------
-def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True,
-                              transaction_type="deposit"):
-    valid_paths = [str(p) for p in file_paths if Path(p).exists()]
-    if not valid_paths:
+def process_files_in_parallel(file_paths, processor_names=None, is_crm=False, save_clean=True,
+                              transaction_type="deposit", regulation=None, lists_dir=None, processed_unmatched_shifted_deposits_dir=None, processed_crm_dir=None, processed_processor_dir=None):
+    if processor_names and len(processor_names) != len(file_paths):
+        raise ValueError("processor_names must match length of file_paths if provided")
+
+    # Get valid indices (skip None or non-existing paths)
+    valid_indices = [i for i, p in enumerate(file_paths) if p is not None and Path(p).exists()]
+
+    if not valid_indices:
         return []
+
     with ThreadPoolExecutor() as executor:
         futures = []
-        for path in file_paths:
+        for i in valid_indices:
+            path = file_paths[i]
+            p_name = processor_names[i] if processor_names else None
+            if p_name is None:
+                raise ValueError("processor_names must be provided for multiple processors")
             if is_crm:
-                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean, transaction_type))
+                futures.append(
+                    executor.submit(load_crm_file, str(path), p_name, regulation, save_clean, transaction_type, lists_dir=lists_dir, processed_unmatched_shifted_deposits_dir=processed_unmatched_shifted_deposits_dir, processed_crm_dir=processed_crm_dir))
             else:
-                futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean, transaction_type=transaction_type))
+                futures.append(executor.submit(load_processor_file, str(path), p_name, save_clean, transaction_type=transaction_type, processed_processor_dir=processed_processor_dir))
         results = [f.result() for f in futures]
     return results
 
 # ----------------------------
 # Processor File Loader
 # ----------------------------
-def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
+def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit",
+                        processed_processor_dir=None) -> pd.DataFrame:
+    processed_processor_dir = processed_processor_dir or config.PROCESSED_PROCESSOR_DIR
+
+    print(f"Using processed_processor_dir for load_processor_file: {processed_processor_dir}")
+
     # Check if file exists before processing
     if not Path(filepath).exists():
         return None  # Return None instead of raising error
@@ -1108,7 +1173,8 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
             date_str = extract_date_from_filename(filepath)
             folder_name = processor_name.lower()
             out_filename = f"{folder_name}_{transaction_type}s.xlsx"
-            out_path = PROCESSED_PROCESSOR_DIR / folder_name / date_str / out_filename
+            out_path = processed_processor_dir / folder_name / date_str / out_filename
+            print(f"Calculated out_path: {out_path}")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             df_clean.to_excel(out_path, index=False)
         else:
@@ -1119,14 +1185,21 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
 # Updated combine_processed_files to read with dtype for transaction_id
 def combine_processed_files(
     date, processors, processor_name=None, # Added processor_name as optional parameter
-    processed_crm_dir=PROCESSED_CRM_DIR,
-    processed_proc_dir=PROCESSED_PROCESSOR_DIR,
+    processed_crm_dir=None,
+    processed_proc_dir=None,
     out_crm_dir=None,
     out_proc_dir=None,
     transaction_type="withdrawal",
     exchange_rate_map=None,
-    extra_processors=None
+    extra_processors=None,
+    regulation: str = None
 ):
+    processed_crm_dir = processed_crm_dir or config.PROCESSED_CRM_DIR
+    processed_proc_dir = processed_proc_dir or config.PROCESSED_PROCESSOR_DIR
+
+    print(f"Using processed_crm_dir for combine: {processed_crm_dir}")
+    print(f"Using processed_proc_dir for combine: {processed_proc_dir}")
+
     if extra_processors is None:
         extra_processors = []
     all_processors = list(processors) + list(extra_processors)
@@ -1140,9 +1213,10 @@ def combine_processed_files(
     crm_dfs, proc_dfs = [], []
     crm_file_template = f"{{}}_{transaction_type}s.xlsx"
     proc_file_template = f"{{}}_{transaction_type}s.xlsx"
-    # Load other processed CRM files
+    # Load other processed CRM files (removed regulation.upper() from path)
     for proc in all_processors:
         crm_f = processed_crm_dir / proc / date / f"{proc}_{transaction_type}s.xlsx"
+        print(f"Looking for CRM file: {crm_f}")
         if crm_f.exists():
             df = pd.read_excel(crm_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)
             crm_dfs.append(df)
@@ -1150,6 +1224,7 @@ def combine_processed_files(
             print(f" CRM processed file not found for {proc}: {crm_f}")
     for proc in all_processors: # Only original processors for processor files
         proc_f = processed_proc_dir / proc / date / proc_file_template.format(proc)
+        print(f"Looking for processor file: {proc_f}")
         if proc_f.exists():
             df = pd.read_excel(proc_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)
             proc_dfs.append(df)
@@ -1350,8 +1425,7 @@ def combine_processed_files(
     if crm_dfs:
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
         if transaction_type == "withdrawal":
-            from src.config import CRM_DIR
-            raw_crm_path = CRM_DIR / f"crm_{date}.xlsx"
+            raw_crm_path = config.CRM_DIR / f"crm_{date}.xlsx"
             if raw_crm_path.exists():
                 df_raw = pd.read_excel(raw_crm_path, engine="openpyxl")
                 df_raw.columns = df_raw.columns.str.strip()
@@ -1366,6 +1440,8 @@ def combine_processed_files(
                 if 'Method of Payment' in df_cancels.columns:
                     df_cancels = df_cancels[~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]
                 df_cancels['regulation'] = df_cancels['Site (Account) (Account)'].apply(categorize_regulation)
+                # Filter for current regulation
+                df_cancels = df_cancels[df_cancels['regulation'] == regulation]
                 mask_aus = df_cancels['regulation'] == 'australia'
                 mask_psp = df_cancels["PSP name"].str.lower().isin(['paypal', 'inpendium'])
                 df_cancels = df_cancels[~(mask_aus & mask_psp)]
@@ -1433,8 +1509,9 @@ def combine_processed_files(
             'Approved On', 'TP Account', 'Internal Comment', 'Internal Type', 'Country Of Residence (Account) (Account)'
         ]
         combined_crm = combined_crm.drop(columns=[col for col in unwanted_columns if col in combined_crm.columns], errors='ignore')
-        combined_crm['regulation'] = combined_crm['regulation'].apply(categorize_regulation)
-        combined_crm = combined_crm[combined_crm['regulation'] != 'canada']
+        if not combined_crm.empty:
+            combined_crm['regulation'] = combined_crm['regulation'].apply(categorize_regulation)
+            combined_crm = combined_crm[combined_crm['regulation'] != 'canada']
         # Define base column order with regulation between crm_last4 and crm_transaction_id
         base_columns = [
             'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount', 'crm_currency',
@@ -1448,7 +1525,7 @@ def combine_processed_files(
         custom_columns = base_columns + [col for col in existing_columns if col not in base_columns]
         # Reorder columns, using only those that exist
         combined_crm = combined_crm[[col for col in custom_columns if col in existing_columns]]
-        out_crm_date_dir = out_crm_dir / date
+        out_crm_date_dir = out_crm_dir / date  # Removed regulation.upper()
         out_crm_date_dir.mkdir(parents=True, exist_ok=True)
         combined_crm_path = out_crm_date_dir / f"combined_crm_{transaction_type}s.xlsx"
         with pd.ExcelWriter(combined_crm_path, engine='openpyxl') as writer:
@@ -1533,7 +1610,7 @@ def combine_processed_files(
         # Reorder columns, using only those that exist
         existing_proc_columns = combined_proc.columns.tolist()
         combined_proc = combined_proc[[col for col in custom_proc_columns if col in existing_proc_columns]]
-        out_proc_date_dir = out_proc_dir / date
+        out_proc_date_dir = out_proc_dir / date  # Removed regulation.upper()
         out_proc_date_dir.mkdir(parents=True, exist_ok=True)
         combined_proc_path = out_proc_date_dir / f"combined_processor_{transaction_type}s.xlsx"
         combined_proc.to_excel(combined_proc_path, index=False)
@@ -1542,8 +1619,9 @@ def combine_processed_files(
     else:
         print("No processor files found to combine.")
 
-def append_unmatched_to_combined(date_str, unmatched_path_str):
-    combined_path = Path(COMBINED_CRM_DIR) / date_str / "combined_crm_deposits.xlsx"
+def append_unmatched_to_combined(date_str, unmatched_path_str, regulation: str, combined_crm_dir=None):
+    combined_crm_dir = combined_crm_dir or config.COMBINED_CRM_DIR
+    combined_path = combined_crm_dir / date_str / "combined_crm_deposits.xlsx"  # Removed regulation.upper()
     unmatched_path = Path(unmatched_path_str)
 
     if not combined_path.exists():

@@ -1,10 +1,11 @@
+# config.py (Updated to handle base TEMP_DIR without regulation-specific nesting)
 import sys
 from pathlib import Path
 import tempfile
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
-    TEMP_DIR = Path(tempfile.gettempdir()) / 'reconciliation_temp'
+    TEMP_DIR = BASE_DIR / "temp"
     TEMP_DIR.mkdir(exist_ok=True)
 else:
     BASE_DIR = Path(__file__).resolve().parent.parent
@@ -14,7 +15,7 @@ else:
 MODEL_DIR = BASE_DIR / "model"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
-# Writable dirs under TEMP_DIR
+# Writable dirs under TEMP_DIR (no regulation here; handled in scripts)
 DATA_DIR = TEMP_DIR / "data"
 OUTPUT_DIR = TEMP_DIR / "output"
 CRM_DIR = DATA_DIR / "crm_reports"

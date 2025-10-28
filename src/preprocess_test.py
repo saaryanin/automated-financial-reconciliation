@@ -76,7 +76,10 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         drop_cols = ["Time zone", "Status", "Fee", "Gross", "To Email Address", "Date", "Time", "Name", "Type"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
 
-    elif processor == "safecharge":
+
+    # In standardize_processor_columns_deposits, change the "safecharge" block to handle both:
+
+    elif processor in ["safecharge", "safechargeuk"]:
         df = df[(df["Transaction Type"].str.lower() == "sale") & (df["Transaction Result"].str.lower() == "approved")]
         keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result", "PAN",
                      "Email Address"]  # Added "Email Address"
@@ -434,7 +437,9 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         ]]
 
 
-    elif processor.lower() == "safecharge":
+
+    # In standardize_processor_columns_withdrawals, change the "safecharge" block to handle both:
+    elif processor in ["safecharge", "safechargeuk"]:
         df.columns = df.columns.str.strip()
         colmap = {col.lower().replace(" ", ""): col for col in df.columns}
 
@@ -514,8 +519,9 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             pan_col: "last_4cc" if pan_col else "last_4cc"
         })
         df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$") if pan_col else ""
-        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
-        df["processor_name"] = "safecharge"
+        df["currency"] = df["currency"].replace(
+            {"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
+        df["processor_name"] = processor
         df["first_name"] = ""
         df["last_name"] = ""
         return df[[
@@ -1150,7 +1156,8 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         "ID of the corresponding Neteller transaction": str,
         'Pan':str,
     }
-    skip = 15 if processor_name.lower() == "ezeebill" else 11 if processor_name.lower() == "safecharge" else 0
+    # In load_processor_file, update the skip logic to include "safechargeuk":
+    skip = 15 if processor_name.lower() == "ezeebill" else 11 if processor_name.lower() in ["safecharge","safechargeuk"] else 0
 
     if ext == ".csv":
         df = pd.read_csv(filepath, dtype=dtype, encoding="utf-8-sig", skiprows=skip)

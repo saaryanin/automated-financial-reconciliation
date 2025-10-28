@@ -1,4 +1,4 @@
-# testing_regulation.py (General script to handle both ROW and UK; run for each or in sequence)
+# testing_regulation.py (Updated copy logic for selective processor files)
 
 import pandas as pd
 from pathlib import Path
@@ -8,7 +8,7 @@ from src.preprocess_test import load_crm_file, load_processor_file, combine_proc
 from concurrent.futures import ThreadPoolExecutor
 from src.config import BASE_DIR, TEMP_DIR
 
-def setup_regulation_structure(regulation):
+def setup_regulation_structure(regulation, processors):
     reg_upper = regulation.upper()
     reg_root = TEMP_DIR / reg_upper
     reg_data_dir = reg_root / "data"
@@ -51,6 +51,15 @@ def setup_regulation_structure(regulation):
         print(f"CRM file not found at {shared_crm_filepath}")
         exit(1)
 
+    # Copy relevant processor files from shared to reg_processor_dir
+    shared_processor_dir = BASE_DIR / "data" / "processor_reports"
+    if shared_processor_dir.exists():
+        for proc_file in shared_processor_dir.glob("*"):
+            # Extract processor name from filename (before first '_')
+            proc_name = proc_file.stem.split('_')[0].lower()
+            if proc_name in processors:
+                shutil.copy(proc_file, reg_processor_dir / proc_file.name)
+
     return {
         'root': reg_root,
         'data_dir': reg_data_dir,
@@ -67,16 +76,19 @@ def setup_regulation_structure(regulation):
 # Date from the file
 date_str = '2025-10-20'
 
-# Processors (ROW without barclays, UK with barclays)
+# Processors (ROW without barclays/safechargeuk/barclaycard, UK with extras)
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
     'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia'
 ]
-uk_processors = row_processors + ['barclays']
+uk_processors = [
+    'paypal', 'safechargeuk', 'powercash', 'shift4', 'skrill', 'neteller',
+    'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'barclays', 'barclaycard'
+]
 
 def preprocess_for_regulation(regulation, transaction_type='deposit'):
-    dirs = setup_regulation_structure(regulation)
     processors = row_processors if regulation == 'row' else uk_processors
+    dirs = setup_regulation_structure(regulation, processors)  # Pass processors to setup for selective copy
 
     print(f"Using {regulation.upper()}_PROCESSED_CRM_DIR: {dirs['processed_crm_dir']}")
     print(f"Using {regulation.upper()}_PROCESSED_PROCESSOR_DIR: {dirs['processed_processor_dir']}")

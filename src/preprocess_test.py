@@ -256,10 +256,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['processor_name'] = processor
 
 
-
-    # In standardize_processor_columns_deposits, update barclays block:
-
-    elif processor == "barclays":
+    elif processor in ["barclays", "barclaycard"]:
         df = df[df["Current Status"].str.lower() == "captured"]
         df = df[df["Trans Type Code"].str.lower() == "purchase"]
         df["transaction_id"] = df["Audit Reference"]
@@ -781,7 +778,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
 
     # In standardize_processor_columns_withdrawals, update barclays block:
 
-    elif processor == "barclays":
+    elif processor in ["barclays", "barclaycard"]:
         df = df[df["Current Status"].str.lower() == "captured"]
         df = df[df["Trans Type Code"].str.lower() == "refund"]
         df["transaction_id"] = df["Audit Reference"]
@@ -874,107 +871,113 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
         mask_aus = df['regulation'] == 'australia'
         mask_psp = df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
         df = df[~(mask_aus & mask_psp)]
-    # Load and process unmatched_shifted_deposits from the previous day
-    previous_unmatched_path = lists_dir / previous_date_str / "unmatched_shifted_deposits.xlsx"  # Removed regulation.upper()
-    if previous_unmatched_path.exists():
-        unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
-        logging.info(
-            f"Loaded unmatched_shifted_deposits from {previous_unmatched_path} with columns: {unmatched_df.columns.tolist()}")
-        # Expanded mapping based on sample unmatched file
-        mapping = {
-            'Name': 'crm_type',
-            'Created On': 'crm_date',
-            'First Name (Account) (Account)': 'crm_firstname',
-            'Last Name (Account) (Account)': 'crm_lastname',
-            'Email (Account) (Account)': 'crm_email',
-            'Amount': 'crm_amount',
-            'Currency': 'crm_currency',
-            'Approved': 'crm_approved',
-            'Approved On': 'crm_approved_on', # Optional
-            'TP Account': 'crm_tp',
-            'Internal Comment': 'internal_comment',
-            'Method of Payment': 'payment_method',
-            'Internal Type': 'internal_type', # Optional
-            'Site (Account) (Account)': 'regulation',
-            'Country Of Residence (Account) (Account)': 'country_of_residence', # Optional
-            'PSP name': 'crm_processor_name',
-            'CC Last 4 Digits': 'crm_last4'
-        }
-        unmatched_mapped = unmatched_df.rename(columns=mapping, errors='ignore')
-        # Log columns after mapping
-        logging.debug(f"Columns in unmatched_mapped after mapping: {unmatched_mapped.columns.tolist()}")
-        # Normalize crm_processor_name
-        if 'crm_processor_name' in unmatched_mapped.columns:
-            unmatched_mapped['crm_processor_name'] = unmatched_mapped['crm_processor_name'].astype(
-                str).str.strip().str.lower().replace(PSP_NAME_MAP)
+    # Load and process unmatched_shifted_deposits from the previous day ONLY for deposits
+    if transaction_type != "deposit":
+        unmatched_df = pd.DataFrame()  # Skip unmatched for non-deposits
+    else:
+        previous_unmatched_path = lists_dir / previous_date_str / "unmatched_shifted_deposits.xlsx"  # Removed regulation.upper()
+        if previous_unmatched_path.exists():
+            unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
+            logging.info(
+                f"Loaded unmatched_shifted_deposits from {previous_unmatched_path} with columns: {unmatched_df.columns.tolist()}")
+            # Expanded mapping based on sample unmatched file
+            mapping = {
+                'Name': 'crm_type',
+                'Created On': 'crm_date',
+                'First Name (Account) (Account)': 'crm_firstname',
+                'Last Name (Account) (Account)': 'crm_lastname',
+                'Email (Account) (Account)': 'crm_email',
+                'Amount': 'crm_amount',
+                'Currency': 'crm_currency',
+                'Approved': 'crm_approved',
+                'Approved On': 'crm_approved_on', # Optional
+                'TP Account': 'crm_tp',
+                'Internal Comment': 'internal_comment',
+                'Method of Payment': 'payment_method',
+                'Internal Type': 'internal_type', # Optional
+                'Site (Account) (Account)': 'regulation',
+                'Country Of Residence (Account) (Account)': 'country_of_residence', # Optional
+                'PSP name': 'crm_processor_name',
+                'CC Last 4 Digits': 'crm_last4'
+            }
+            unmatched_mapped = unmatched_df.rename(columns=mapping, errors='ignore')
+            # Log columns after mapping
+            logging.debug(f"Columns in unmatched_mapped after mapping: {unmatched_mapped.columns.tolist()}")
+            # Normalize crm_processor_name
+            if 'crm_processor_name' in unmatched_mapped.columns:
+                unmatched_mapped['crm_processor_name'] = unmatched_mapped['crm_processor_name'].astype(
+                    str).str.strip().str.lower().replace(PSP_NAME_MAP)
+            else:
+                logging.warning(f"'crm_processor_name' column missing in {previous_unmatched_path}")
+                unmatched_mapped['crm_processor_name'] = 'unknown'
+            # Extract transaction_id from internal_comment using per-row processor
+            if 'internal_comment' in unmatched_mapped.columns and 'crm_processor_name' in unmatched_mapped.columns:
+                unmatched_mapped['crm_transaction_id'] = unmatched_mapped.apply(
+                    lambda row: extract_crm_transaction_id(row['internal_comment'], row['crm_processor_name'])
+                    if pd.notna(row['internal_comment']) and pd.notna(row['crm_processor_name']) else None,
+                    axis=1
+                )
+                unmatched_mapped['crm_transaction_id'] = unmatched_mapped['crm_transaction_id'].astype(str).fillna(
+                    'UNKNOWN')
+            else:
+                logging.warning(
+                    f"Internal Comment or crm_processor_name column not found in {previous_unmatched_path}, columns available: {unmatched_mapped.columns.tolist()}")
+                unmatched_mapped['crm_transaction_id'] = 'UNKNOWN'
+            # Log for debugging
+            for idx, row in unmatched_mapped.iterrows():
+                if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
+                    logging.debug(
+                        f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
+            # Define required columns for final output
+            required_columns = ['crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount',
+                                'crm_currency', 'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4',
+                                'regulation', 'crm_transaction_id', 'crm_type']
+            for col in required_columns:
+                if col not in unmatched_mapped.columns:
+                    unmatched_mapped[col] = pd.NA
+            unmatched_mapped = unmatched_mapped[required_columns]
+            # Convert data types
+            if 'crm_date' in unmatched_mapped.columns:
+                unmatched_mapped['crm_date'] = pd.to_datetime(unmatched_mapped['crm_date'], errors='coerce').fillna(
+                    pd.NaT).dt.strftime('%m/%d/%Y %I:%M:%S %p')
+            for col in ['crm_amount', 'crm_last4']:
+                if col in unmatched_mapped.columns:
+                    unmatched_mapped[col] = pd.to_numeric(unmatched_mapped[col], errors='coerce').fillna(0)
+            # Standardize crm_currency
+            if 'crm_currency' in unmatched_mapped.columns:
+                unmatched_mapped['crm_currency'] = unmatched_mapped['crm_currency'].replace({
+                    'US Dollar': 'USD',
+                    'Euro': 'EUR'
+                })
+            # Convert crm_approved to 1/0
+            if 'crm_approved' in unmatched_mapped.columns:
+                unmatched_mapped['crm_approved'] = unmatched_mapped['crm_approved'].str.strip().str.lower().map(
+                    {'yes': 'Yes', 'no': 'No'}).fillna(0)
+            # Categorize regulation
+            if 'regulation' in unmatched_mapped.columns:
+                unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
+            # Append to current CRM if new transactions
+            existing_transaction_ids = set(df['Internal Comment'].apply(
+                lambda x: extract_crm_transaction_id(x, normalized_processor) if pd.notna(x) else None).dropna().unique())
+            new_deposits = unmatched_mapped[~unmatched_mapped['crm_transaction_id'].isin(existing_transaction_ids)]
+            if not new_deposits.empty:
+                for col in df.columns:
+                    if col not in new_deposits.columns:
+                        new_deposits[col] = pd.NA
+                for col in new_deposits.columns:
+                    if col not in df.columns:
+                        df[col] = pd.NA
+                df = pd.concat([df, new_deposits], ignore_index=True)
+                logging.info(f"Added {len(new_deposits)} new unmatched deposits from {previous_date_str}")
+            # Save the processed unmatched data
+            if save_clean:
+                unmatched_out_path = processed_unmatched_shifted_deposits_dir / date_str / "unmatched_shifted_deposits.xlsx"  # Removed regulation.upper()
+                unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
+                unmatched_mapped.to_excel(unmatched_out_path, index=False)
+                logging.info(f"Saved unmatched deposits to {unmatched_out_path}")
         else:
-            logging.warning(f"'crm_processor_name' column missing in {previous_unmatched_path}")
-            unmatched_mapped['crm_processor_name'] = 'unknown'
-        # Extract transaction_id from internal_comment using per-row processor
-        if 'internal_comment' in unmatched_mapped.columns and 'crm_processor_name' in unmatched_mapped.columns:
-            unmatched_mapped['crm_transaction_id'] = unmatched_mapped.apply(
-                lambda row: extract_crm_transaction_id(row['internal_comment'], row['crm_processor_name'])
-                if pd.notna(row['internal_comment']) and pd.notna(row['crm_processor_name']) else None,
-                axis=1
-            )
-            unmatched_mapped['crm_transaction_id'] = unmatched_mapped['crm_transaction_id'].astype(str).fillna(
-                'UNKNOWN')
-        else:
-            logging.warning(
-                f"Internal Comment or crm_processor_name column not found in {previous_unmatched_path}, columns available: {unmatched_mapped.columns.tolist()}")
-            unmatched_mapped['crm_transaction_id'] = 'UNKNOWN'
-        # Log for debugging
-        for idx, row in unmatched_mapped.iterrows():
-            if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
-                logging.debug(
-                    f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
-        # Define required columns for final output
-        required_columns = ['crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount',
-                            'crm_currency', 'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4',
-                            'regulation', 'crm_transaction_id', 'crm_type']
-        for col in required_columns:
-            if col not in unmatched_mapped.columns:
-                unmatched_mapped[col] = pd.NA
-        unmatched_mapped = unmatched_mapped[required_columns]
-        # Convert data types
-        if 'crm_date' in unmatched_mapped.columns:
-            unmatched_mapped['crm_date'] = pd.to_datetime(unmatched_mapped['crm_date'], errors='coerce').fillna(
-                pd.NaT).dt.strftime('%m/%d/%Y %I:%M:%S %p')
-        for col in ['crm_amount', 'crm_last4']:
-            if col in unmatched_mapped.columns:
-                unmatched_mapped[col] = pd.to_numeric(unmatched_mapped[col], errors='coerce').fillna(0)
-        # Standardize crm_currency
-        if 'crm_currency' in unmatched_mapped.columns:
-            unmatched_mapped['crm_currency'] = unmatched_mapped['crm_currency'].replace({
-                'US Dollar': 'USD',
-                'Euro': 'EUR'
-            })
-        # Convert crm_approved to 1/0
-        if 'crm_approved' in unmatched_mapped.columns:
-            unmatched_mapped['crm_approved'] = unmatched_mapped['crm_approved'].str.strip().str.lower().map(
-                {'yes': 'Yes', 'no': 'No'}).fillna(0)
-        # Categorize regulation
-        if 'regulation' in unmatched_mapped.columns:
-            unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
-        # Append to current CRM if new transactions
-        existing_transaction_ids = set(df['Internal Comment'].apply(
-            lambda x: extract_crm_transaction_id(x, normalized_processor) if pd.notna(x) else None).dropna().unique())
-        new_deposits = unmatched_mapped[~unmatched_mapped['crm_transaction_id'].isin(existing_transaction_ids)]
-        if not new_deposits.empty:
-            for col in df.columns:
-                if col not in new_deposits.columns:
-                    new_deposits[col] = pd.NA
-            for col in new_deposits.columns:
-                if col not in df.columns:
-                    df[col] = pd.NA
-            df = pd.concat([df, new_deposits], ignore_index=True)
-            logging.info(f"Added {len(new_deposits)} new unmatched deposits from {previous_date_str}")
-        # Save the processed unmatched data
-        if save_clean:
-            unmatched_out_path = processed_unmatched_shifted_deposits_dir / date_str / "unmatched_shifted_deposits.xlsx"  # Removed regulation.upper()
-            unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
-            unmatched_mapped.to_excel(unmatched_out_path, index=False)
-            logging.info(f"Saved unmatched deposits to {unmatched_out_path}")
+            unmatched_df = pd.DataFrame()  # No file exists, set to empty
+
     df["PSP name"] = (
         df["PSP name"]
         .astype(str)
@@ -982,6 +985,8 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
         .str.lower()
         .replace(PSP_NAME_MAP)
     )
+    if regulation == 'uk':
+        df["PSP name"] = df["PSP name"].replace({'safecharge': 'safechargeuk'})
     df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
     df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor))
     df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
@@ -1010,6 +1015,8 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
             "Canadian Dollar": "CAD",
             "Australian Dollar": "AUD"
         })
+    if df.empty:
+        return None
     if transaction_type == "withdrawal":
         needed_columns = [
             "Created On",
@@ -1056,39 +1063,6 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
         out_path = processed_crm_dir / folder_name / date_str / folder
         print(f"Calculated out_path: {out_path}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        # If df is empty after filtering, create an empty DataFrame with the needed columns
-        if df.empty:
-            needed_columns = [
-                "Created On",
-                "First Name (Account) (Account)",
-                "Last Name (Account) (Account)",
-                "Email (Account) (Account)",
-                "tp",
-                "Amount",
-                "Currency",
-                "Method of Payment",
-                "PSP name",
-                "CC Last 4 Digits",
-                "transaction_id",
-                "Approved",
-                "Name",
-                "Site (Account) (Account)"
-            ] if transaction_type == "deposit" else [
-                "Created On",
-                "First Name (Account) (Account)",
-                "Last Name (Account) (Account)",
-                "Email (Account) (Account)",
-                "tp",
-                "Amount",
-                "Currency",
-                "Method of Payment",
-                "PSP name",
-                "CC Last 4 Digits",
-                "Name",
-                "Site (Account) (Account)"
-            ]
-            df = pd.DataFrame(columns=[col for col in needed_columns])
-            logging.info(f"Creating empty processed CRM file for {normalized_processor} {transaction_type}s")
         with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')
             if "transaction_id" in df.columns and transaction_type == "deposit":
@@ -1120,6 +1094,8 @@ def get_previous_business_day(current_date_str):
 # ----------------------------
 def process_files_in_parallel(file_paths, processor_names=None, is_crm=False, save_clean=True,
                               transaction_type="deposit", regulation=None, lists_dir=None, processed_unmatched_shifted_deposits_dir=None, processed_crm_dir=None, processed_processor_dir=None):
+    if isinstance(processor_names, str):
+        processor_names = [processor_names]  # Convert single str to list for consistency
     if processor_names and len(processor_names) != len(file_paths):
         raise ValueError("processor_names must match length of file_paths if provided")
 
@@ -1200,6 +1176,7 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
     return df_clean
 
 # Updated combine_processed_files to read with dtype for transaction_id
+# Updated combine_processed_files to read with dtype for transaction_id
 def combine_processed_files(
     date, processors, processor_name=None, # Added processor_name as optional parameter
     processed_crm_dir=None,
@@ -1209,10 +1186,11 @@ def combine_processed_files(
     transaction_type="withdrawal",
     exchange_rate_map=None,
     extra_processors=None,
-    regulation: str = None
+    regulation: str = None,
+    crm_dir=None  # Added for raw CRM path
 ):
-    processed_crm_dir = processed_crm_dir or config.PROCESSED_CRM_DIR
-    processed_proc_dir = processed_proc_dir or config.PROCESSED_PROCESSOR_DIR
+    processed_crm_dir = processed_crm_dir or config.LISTS_DIR  # Fallback, but should be passed
+    processed_proc_dir = processed_proc_dir or config.LISTS_DIR  # Fallback
 
     print(f"Using processed_crm_dir for combine: {processed_crm_dir}")
     print(f"Using processed_proc_dir for combine: {processed_proc_dir}")
@@ -1440,9 +1418,11 @@ def combine_processed_files(
         return out_df
     # Combine and save
     if crm_dfs:
+        # Filter non-empty before concat to avoid FutureWarning
+        crm_dfs = [df for df in crm_dfs if not df.empty]
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
         if transaction_type == "withdrawal":
-            raw_crm_path = config.CRM_DIR / f"crm_{date}.xlsx"
+            raw_crm_path = crm_dir / f"crm_{date}.xlsx"  # Use passed crm_dir
             if raw_crm_path.exists():
                 df_raw = pd.read_excel(raw_crm_path, engine="openpyxl")
                 df_raw.columns = df_raw.columns.str.strip()
@@ -1563,6 +1543,8 @@ def combine_processed_files(
     else:
         print("No CRM files found to combine.")
     if proc_dfs:
+        # Filter non-empty before concat to avoid FutureWarning
+        proc_dfs = [df for df in proc_dfs if not df.empty]
         combined_proc = pd.concat(proc_dfs, ignore_index=True)
         if transaction_type == "withdrawal":
             combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map)

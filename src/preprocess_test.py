@@ -255,19 +255,23 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['tp'] = df['transaction_id'].astype(str).str.split('-').str[0].str.strip()
         df['processor_name'] = processor
 
+
+
+    # In standardize_processor_columns_deposits, update barclays block:
+
     elif processor == "barclays":
-        # Assuming Barclays has a similar structure to SafeCharge or TrustPayments; adjust as per actual format
-        # This is a placeholder - update with actual standardization logic for Barclays deposits
-        df = df[(df.get("Transaction Type", "").str.lower() == "sale") & (df.get("Status", "").str.lower() == "approved")]
-        keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "PAN"] if "PAN" in df.columns else ["Transaction ID", "Date", "Amount", "Currency"]
-        df = df[keep_cols]
-        df = df.rename(
-            columns={"Transaction ID": "transaction_id", "Date": "date", "Amount": "amount", "Currency": "currency"})
-        df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        if "PAN" in df.columns:
-            df['last_4digits'] = df['PAN'].astype(str).str[-4:].str.zfill(4)
-            df = df.drop(columns=['PAN'])
+        df = df[df["Current Status"].str.lower() == "captured"]
+        df = df[df["Trans Type Code"].str.lower() == "purchase"]
+        df["transaction_id"] = df["Audit Reference"]
+        df["currency"] = df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
+        df["amount"] = pd.to_numeric(df["Trans Amount(HUC)"], errors='coerce').abs()
+        df["date"] = df["Transaction Date"]
+        df["tp"] = df["Sales Details"].astype(str).apply(
+            lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
         df['processor_name'] = processor
+        df['last_4digits'] = ''  # Not available for deposits
+        keep_cols = ["transaction_id", "date", "amount", "currency", "tp", "processor_name"]
+        df = df[keep_cols]
 
     # Common cleanup for all processors
     if 'transaction_id' in df:
@@ -774,22 +778,27 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         ]
         return df[keep]
 
-    elif processor.lower() == "barclays":
-        # Placeholder for Barclays withdrawals standardization; adjust as per actual format
-        df = df[(df.get("Transaction Type", "").str.lower() == "refund") & (df.get("Status", "").str.lower() == "approved")]
-        df = df.rename(columns={
-            "Transaction ID": "transaction_id",
-            "Date": "date",
-            "Amount": "amount",
-            "Currency": "currency"
-        })
-        df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['last_4cc'] = df.get('PAN', '').astype(str).str[-4:].str.zfill(4)
+
+    # In standardize_processor_columns_withdrawals, update barclays block:
+
+    elif processor == "barclays":
+        df = df[df["Current Status"].str.lower() == "captured"]
+        df = df[df["Trans Type Code"].str.lower() == "refund"]
+        df["transaction_id"] = df["Audit Reference"]
+        df["currency"] = df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
+        df["amount"] = pd.to_numeric(df["Trans Amount(HUC)"], errors='coerce').abs()
+        df["date"] = df["Transaction Date"]
+        df["tp"] = df["Sales Details"].astype(str).apply(
+            lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
+        df['last_4cc'] = df['Online Token'].astype(str).str[-4:]
         df['processor_name'] = processor
         df['first_name'] = ''
         df['last_name'] = ''
         df['email'] = ''
-        return df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
+        keep_cols = ["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name",
+                     "tp"]
+        df = df[keep_cols]
+        return df
 
     return pd.DataFrame()
 
@@ -1138,6 +1147,7 @@ def process_files_in_parallel(file_paths, processor_names=None, is_crm=False, sa
 # ----------------------------
 # Processor File Loader
 # ----------------------------
+
 def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit",
                         processed_processor_dir=None) -> pd.DataFrame:
     processed_processor_dir = processed_processor_dir or config.PROCESSED_PROCESSOR_DIR
@@ -1156,13 +1166,13 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         "ID of the corresponding Neteller transaction": str,
         'Pan':str,
     }
-    # In load_processor_file, update the skip logic to include "safechargeuk":
-    skip = 15 if processor_name.lower() == "ezeebill" else 11 if processor_name.lower() in ["safecharge","safechargeuk"] else 0
+    skip = 15 if processor_name.lower() == "ezeebill" else 11 if processor_name.lower() in ["safecharge", "safechargeuk"] else 4 if processor_name.lower() == "barclays" else 0
 
     if ext == ".csv":
         df = pd.read_csv(filepath, dtype=dtype, encoding="utf-8-sig", skiprows=skip)
-    elif ext == ".xlsx":
-        df = pd.read_excel(filepath, dtype=dtype, skiprows=skip, engine="openpyxl")
+    elif ext in [".xlsx", ".xls"]:
+        engine = 'xlrd' if ext == ".xls" else 'openpyxl'
+        df = pd.read_excel(filepath, dtype=dtype, skiprows=skip, engine=engine)
     else:
         raise ValueError("Unsupported file type")
 

@@ -105,7 +105,7 @@ def preprocess_for_regulation(regulation, transaction_type='deposit'):
     # Process processors (assuming processor raw files are in reg_processor_dir; place them accordingly for ROW/UK)
     processor_file_paths = []
     for proc in processors:
-        for ext in ['xlsx', 'csv']:
+        for ext in ['xlsx', 'csv', 'xls']:
             proc_file = dirs['processor_dir'] / f"{proc}_{date_str}.{ext}"
             if proc_file.exists():
                 processor_file_paths.append(proc_file)

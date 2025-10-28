@@ -1008,6 +1008,8 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
 
         else:
             df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
+        if regulation == 'uk' and normalized_processor == 'safechargeuk':
+            df["PSP name"] = 'safecharge'
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({
             "Euro": "EUR",
@@ -1058,7 +1060,8 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
     if save_clean:
         date_str = extract_date_from_filename(filepath)
         # Save processed CRM file without extra regulation folder
-        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
+        folder_name = 'safecharge' if regulation == 'uk' and normalized_processor == 'safechargeuk' else (
+            "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor)
         folder = f"{folder_name}_{transaction_type}s.xlsx"
         out_path = processed_crm_dir / folder_name / date_str / folder
         print(f"Calculated out_path: {out_path}")
@@ -1210,7 +1213,7 @@ def combine_processed_files(
     proc_file_template = f"{{}}_{transaction_type}s.xlsx"
     # Load other processed CRM files (removed regulation.upper() from path)
     for proc in all_processors:
-        crm_f = processed_crm_dir / proc / date / f"{proc}_{transaction_type}s.xlsx"
+        crm_f = processed_crm_dir / (proc if not (regulation == 'uk' and proc == 'safechargeuk') else 'safecharge') / date / f"{proc if not (regulation == 'uk' and proc == 'safechargeuk') else 'safecharge'}_{transaction_type}s.xlsx"
         print(f"Looking for CRM file: {crm_f}")
         if crm_f.exists():
             df = pd.read_excel(crm_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)

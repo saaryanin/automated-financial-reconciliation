@@ -32,6 +32,7 @@ PSP_NAME_MAP = {
     'paysafe': 'skrill',
     'barclay card': 'barclays',
     'barclays': 'barclays',
+    'bridgerpay': 'bridgerpay',
     # Add any other known aliases as needed
 }
 
@@ -820,6 +821,12 @@ def extract_crm_transaction_id(comment: str, processor: str):
         "paymentasia": r"(\d{7}-\d{18})",
         "barclays": r"PSP TransactionId:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
     }
+    if processor == "bridgerpay":
+        for p, pattern in patterns.items():
+            match = re.search(pattern, text)
+            if match:
+                return next((g for g in match.groups() if g), None)
+        return None
     pattern = patterns.get(processor)
     if not pattern:
         return None
@@ -988,7 +995,11 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
     if regulation == 'uk':
         df["PSP name"] = df["PSP name"].replace({'safecharge': 'safechargeuk'})
     df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
-    df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor))
+    if normalized_processor == 'bridgerpay':
+        df['transaction_id'] = df.get('Internal Comment', pd.Series(index=df.index, dtype=str)).astype(str).str.strip()
+    else:
+        df['transaction_id'] = df['Internal Comment'].apply(
+            lambda c: extract_crm_transaction_id(c, normalized_processor))
     df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
     if normalized_processor in ["zotapay", "paymentasia"]:
         name_has_chinese = (
@@ -1533,14 +1544,8 @@ def combine_processed_files(
             if 'crm_transaction_id' in combined_crm.columns and not combined_crm.empty:
                 worksheet = writer.sheets['Sheet1']
                 trans_col = combined_crm.columns.get_loc('crm_transaction_id') + 1
-                row_count = int(combined_crm.shape[0]) if not combined_crm.empty and isinstance(combined_crm.shape[0], (
-                int, np.integer)) else 0 # Ensure scalar int
-                print(f"Debug: row_count: {row_count}") # Debug
-                if row_count > 0:
-                    for row in range(2, row_count + 2): # Use validated row_count
-                        worksheet.cell(row=row, column=trans_col).number_format = '@'
-                else:
-                    print("Debug: No rows to format in combined_crm")
+                for row in range(2, len(combined_crm) + 2):
+                    worksheet.cell(row=row, column=trans_col).number_format = '@'
         print(f"Combined CRM columns: {combined_crm.columns.tolist()}") # Debug print
         print(f"Combined CRM {transaction_type}s saved to {combined_crm_path}")
     else:

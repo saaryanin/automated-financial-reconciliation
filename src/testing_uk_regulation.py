@@ -1,3 +1,5 @@
+# testing_uk_regulation.py (my main basically):
+
 # testing_regulation.py (Updated copy logic for selective processor files)
 
 import pandas as pd
@@ -48,11 +50,10 @@ date_str = '2025-10-20'
 # Processors (ROW without barclays/safechargeuk/barclaycard, UK with extras)
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
-    'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia'
+    'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
 ]
 uk_processors = [
-    'paypal', 'safechargeuk', 'powercash', 'shift4', 'skrill', 'neteller',
-    'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'barclays', 'barclaycard'
+    'safechargeuk', 'barclays', 'barclaycard'
 ]
 
 def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None):

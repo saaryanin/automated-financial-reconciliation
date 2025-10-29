@@ -12,6 +12,7 @@ from src.config import BASE_DIR, TEMP_DIR
 import time  # Added for timing
 from src.utils import categorize_regulation  # Added import for categorize_regulation
 from src.deposits_matcher_test import match_deposits_for_date  # Import the matching function
+from src.shifts_handler_test import main as handle_shifts  # Import the shifts handler
 
 def setup_regulation_structure(regulation, processors):
     start_time = time.time()  # Timing start
@@ -156,3 +157,12 @@ if __name__ == "__main__":
 
     # Run deposits matching after preprocessing
     match_deposits_for_date(date_str)
+
+    # Run shifts handler after matching
+    matched_sums = handle_shifts(date_str)
+    if matched_sums:
+        print("Matched Shifted Deposits by Currency:")
+        for reg, sums in matched_sums.items():
+            print(f"{reg.upper()}:")
+            for currency, amount in sums.items():
+                print(f"  {currency}: {amount}")

@@ -24,6 +24,7 @@ def match_deposits_for_date(date_str: str):
 
     if uk_crm.empty or uk_proc.empty:
         print(f"Skipping UK matching: Missing combined files for {date_str}")
+        uk_df = pd.DataFrame()
     else:
         # General UK Local Matching: Match on transaction_id and processor_name (excludes SafeCharge due to mismatch)
         matched_local_uk_general = pd.merge(
@@ -78,35 +79,16 @@ def match_deposits_for_date(date_str: str):
                 final_unmatched_uk_crm.loc[:, col] = np.nan
             final_unmatched_uk_crm.loc[:, 'match_status'] = 0
 
-        # Unmatched UK processors (only from local, cross doesn't affect UK proc)
-        matched_uk_proc_ids = matched_local_uk['proc_transaction_id'].unique()
-        unmatched_uk_proc = uk_proc[~uk_proc['proc_transaction_id'].isin(matched_uk_proc_ids)].copy()
+        # Preliminary unmatched UK processors (after local only)
+        matched_uk_proc_ids_local = matched_local_uk['proc_transaction_id'].unique()
+        preliminary_unmatched_uk_proc = uk_proc[~uk_proc['proc_transaction_id'].isin(matched_uk_proc_ids_local)].copy()
 
-        # Add CRM columns as NaN to unmatched UK proc if not empty
-        if not unmatched_uk_proc.empty:
-            crm_cols = [col for col in uk_crm.columns if col not in unmatched_uk_proc.columns]
-            for col in crm_cols:
-                unmatched_uk_proc.loc[:, col] = np.nan
-            unmatched_uk_proc.loc[:, 'match_status'] = 0
-
-        # Combine for UK file
-        uk_df = pd.concat([all_matched_uk, final_unmatched_uk_crm, unmatched_uk_proc], ignore_index=True)
-        uk_df = uk_df.sort_values('match_status', ascending=False)
-
-        # Move crm_type to front if exists
-        if 'crm_type' in uk_df.columns:
-            cols = ['crm_type'] + [col for col in uk_df.columns if col != 'crm_type']
-            uk_df = uk_df[cols]
-
-        # Save UK deposits matching
-        uk_report_dir = uk_dirs['lists_dir'] / date_str
-        uk_report_dir.mkdir(parents=True, exist_ok=True)
-        uk_path = uk_report_dir / "uk_deposits_matching.xlsx"
-        uk_df.to_excel(uk_path, index=False)
-        print(f"UK deposits matching report saved to {uk_path}")
+        # Set available_uk_proc for ROW cross
+        available_uk_proc = preliminary_unmatched_uk_proc.copy()
 
     if row_crm.empty or row_proc.empty:
         print(f"Skipping ROW matching: Missing combined files for {date_str}")
+        row_df = pd.DataFrame()
     else:
         # Get IDs matched to UK from ROW proc (for tagging/exclusion)
         matched_cross_uk_proc_ids = matched_cross_uk['proc_transaction_id'].unique() if 'matched_cross_uk' in locals() and not matched_cross_uk.empty else []
@@ -127,11 +109,8 @@ def match_deposits_for_date(date_str: str):
         matched_ids_row_local = matched_local_row['crm_transaction_id'].unique()
         unmatched_row_crm_local = row_crm[~row_crm['crm_transaction_id'].isin(matched_ids_row_local)]
 
-        # Available UK proc for cross (unmatched UK proc)
-        available_uk_proc = unmatched_uk_proc if 'unmatched_uk_proc' in locals() and not unmatched_uk_proc.empty else pd.DataFrame()
-
         # ROW Cross Matching with available UK processors: Match on transaction_id only
-        if not available_uk_proc.empty:
+        if 'available_uk_proc' in locals() and not available_uk_proc.empty:
             matched_cross_row = pd.merge(
                 unmatched_row_crm_local, available_uk_proc,
                 left_on='crm_transaction_id',
@@ -183,3 +162,31 @@ def match_deposits_for_date(date_str: str):
         row_path = row_report_dir / "row_deposits_matching.xlsx"
         row_df.to_excel(row_path, index=False)
         print(f"ROW deposits matching report saved to {row_path}")
+
+    # Now update unmatched_uk_proc to exclude those matched in ROW cross
+    if 'preliminary_unmatched_uk_proc' in locals():
+        row_cross_matched_uk_proc_ids = matched_cross_row['proc_transaction_id'].unique() if not matched_cross_row.empty else []
+        unmatched_uk_proc = preliminary_unmatched_uk_proc[~preliminary_unmatched_uk_proc['proc_transaction_id'].isin(row_cross_matched_uk_proc_ids)].copy()
+
+        # Add CRM columns as NaN to updated unmatched UK proc if not empty
+        if not unmatched_uk_proc.empty:
+            crm_cols = [col for col in uk_crm.columns if col not in unmatched_uk_proc.columns]
+            for col in crm_cols:
+                unmatched_uk_proc.loc[:, col] = np.nan
+            unmatched_uk_proc.loc[:, 'match_status'] = 0
+
+        # Combine for UK file with updated unmatched_uk_proc
+        uk_df = pd.concat([all_matched_uk, final_unmatched_uk_crm, unmatched_uk_proc], ignore_index=True)
+        uk_df = uk_df.sort_values('match_status', ascending=False)
+
+        # Move crm_type to front if exists
+        if 'crm_type' in uk_df.columns:
+            cols = ['crm_type'] + [col for col in uk_df.columns if col != 'crm_type']
+            uk_df = uk_df[cols]
+
+        # Save UK deposits matching
+        uk_report_dir = uk_dirs['lists_dir'] / date_str
+        uk_report_dir.mkdir(parents=True, exist_ok=True)
+        uk_path = uk_report_dir / "uk_deposits_matching.xlsx"
+        uk_df.to_excel(uk_path, index=False)
+        print(f"UK deposits matching report saved to {uk_path} (updated after ROW cross)")

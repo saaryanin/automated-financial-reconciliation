@@ -820,6 +820,7 @@ def extract_crm_transaction_id(comment: str, processor: str):
         "ezeebill": r"(\d{7}-\d{18})",
         "paymentasia": r"(\d{7}-\d{18})",
         "barclays": r"PSP TransactionId:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
+        'safechargeuk': r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
     }
     if processor == "bridgerpay":
         for p, pattern in patterns.items():

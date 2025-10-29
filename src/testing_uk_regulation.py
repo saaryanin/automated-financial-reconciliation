@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from src.config import BASE_DIR, TEMP_DIR
 import time  # Added for timing
 from src.utils import categorize_regulation  # Added import for categorize_regulation
+from src.deposits_matcher_test import match_deposits_for_date  # Import the matching function
 
 def setup_regulation_structure(regulation, processors):
     start_time = time.time()  # Timing start
@@ -152,3 +153,6 @@ if __name__ == "__main__":
         preprocess_for_regulation(reg, 'withdrawal', dirs=dirs)
     overall_end = time.time()
     print(f"Overall processing time: {overall_end - overall_start:.2f} seconds")
+
+    # Run deposits matching after preprocessing
+    match_deposits_for_date(date_str)

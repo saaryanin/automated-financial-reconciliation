@@ -1,26 +1,20 @@
-# testing_uk_regulation.py (updated)
-
-# testing_uk_regulation.py (basically my main right now, should immitate reports_creator):
-
+# testing_uk_regulation.py (basically my main):
 # testing_regulation.py (Updated copy logic for selective processor files)
-
 import pandas as pd
 from pathlib import Path
 import shutil
 import src.config as config
-from src.preprocess_test import load_crm_file, load_processor_file, combine_processed_files, process_files_in_parallel, PSP_NAME_MAP  # Added PSP_NAME_MAP import
+from src.preprocess_test import load_crm_file, load_processor_file, combine_processed_files, process_files_in_parallel, PSP_NAME_MAP # Added PSP_NAME_MAP import
 from concurrent.futures import ThreadPoolExecutor
 from src.config import BASE_DIR, TEMP_DIR
-import time  # Added for timing
-from src.utils import categorize_regulation  # Added import for categorize_regulation
-from src.deposits_matcher_test import match_deposits_for_date  # Import the matching function
-from src.shifts_handler_test import main as handle_shifts  # Import the shifts handler
-from src.withdrawals_matcher_test import match_withdrawals_for_date  # New import for withdrawals matching
-
+import time # Added for timing
+from src.utils import categorize_regulation # Added import for categorize_regulation
+from src.deposits_matcher_test import match_deposits_for_date # Import the matching function
+from src.shifts_handler_test import main as handle_shifts # Import the shifts handler
+from src.withdrawals_matcher_test import match_withdrawals_for_date # New import for withdrawals matching
 def setup_regulation_structure(regulation, processors):
-    start_time = time.time()  # Timing start
-    dirs = config.setup_dirs_for_reg(regulation, create=True)  # Use config to get and create dirs
-
+    start_time = time.time() # Timing start
+    dirs = config.setup_dirs_for_reg(regulation, create=True) # Use config to get and create dirs
     # Copy shared CRM to reg CRM dir only if not exists
     shared_crm_filepath = BASE_DIR / "data" / "crm_reports" / "crm_2025-10-20.xlsx"
     reg_crm_filepath = dirs['crm_dir'] / shared_crm_filepath.name
@@ -29,7 +23,6 @@ def setup_regulation_structure(regulation, processors):
     elif not shared_crm_filepath.exists():
         print(f"CRM file not found at {shared_crm_filepath}")
         exit(1)
-
     # Copy relevant processor files from shared to reg_processor_dir only if not exists
     shared_processor_dir = BASE_DIR / "data" / "processor_reports"
     if shared_processor_dir.exists():
@@ -40,18 +33,14 @@ def setup_regulation_structure(regulation, processors):
                 target_file = dirs['processor_dir'] / proc_file.name
                 if not target_file.exists():
                     shutil.copy(proc_file, target_file)
-
-    end_time = time.time()  # Timing end
+    end_time = time.time() # Timing end
     print(f"Setup for {regulation.upper()} took {end_time - start_time:.2f} seconds")
-
     return {
         **dirs,
         'crm_filepath': reg_crm_filepath
     }
-
 # Date from the file
 date_str = '2025-10-20'
-
 # Processors (ROW without barclays/safechargeuk/barclaycard, UK with extras)
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
@@ -60,13 +49,11 @@ row_processors = [
 uk_processors = [
     'safechargeuk', 'barclays', 'barclaycard'
 ]
-
 def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None):
-    start_time = time.time()  # Timing start for preprocess
+    start_time = time.time() # Timing start for preprocess
     processors = row_processors if regulation == 'row' else uk_processors
     if dirs is None:
-        dirs = setup_regulation_structure(regulation, processors)  # Fallback if not passed
-
+        dirs = setup_regulation_structure(regulation, processors) # Fallback if not passed
     # Load CRM once to get unique relevant processors and cache it
     crm_df = pd.read_excel(dirs['crm_filepath'], engine="openpyxl")
     crm_df.columns = crm_df.columns.str.strip()
@@ -85,17 +72,15 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
         crm_df["PSP name"] = crm_df["PSP name"].replace({'safecharge': 'safechargeuk'})
     name_mask = crm_df["Name"].str.lower() == transaction_type
     unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
-    filtered_processors = [p for p in processors if p in unique_psps]
-
-    crm_start = time.time()  # Timing for CRM
+    filtered_processors = list(unique_psps)
+    crm_start = time.time() # Timing for CRM
     # Process CRM only for filtered_processors, passing cached crm_df if possible (but since load_crm_file needs filepath for unmatched, keep as is)
     crm_file_paths = [dirs['crm_filepath']] * len(filtered_processors)
     processed_crm_dfs = process_files_in_parallel(crm_file_paths, processor_names=filtered_processors, is_crm=True, save_clean=True, transaction_type=transaction_type, regulation=regulation,
                                                   lists_dir=dirs['lists_dir'], processed_unmatched_shifted_deposits_dir=dirs['processed_unmatched_shifted_deposits_dir'], processed_crm_dir=dirs['processed_crm_dir'])
     crm_end = time.time()
     print(f"CRM processing for {regulation.upper()} {transaction_type} took {crm_end - crm_start:.2f} seconds")
-
-    proc_start = time.time()  # Timing for processors
+    proc_start = time.time() # Timing for processors
     # Process processors (only if file exists, but use filtered_processors to align with CRM)
     processor_file_paths = []
     for proc in filtered_processors:
@@ -106,12 +91,10 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
                 break
         else:
             processor_file_paths.append(None)
-
     processed_proc_dfs = process_files_in_parallel(processor_file_paths, processor_names=filtered_processors, is_crm=False, save_clean=True, transaction_type=transaction_type, regulation=regulation,
                                                    processed_processor_dir=dirs['processed_processor_dir'])
     proc_end = time.time()
     print(f"Processor processing for {regulation.upper()} {transaction_type} took {proc_end - proc_start:.2f} seconds")
-
     # Special combine for zotapay and paymentasia for withdrawals
     if transaction_type == 'withdrawal' and 'zotapay' in filtered_processors and 'paymentasia' in filtered_processors:
         zotapay_file = dirs['processed_processor_dir'] / "zotapay" / date_str / "zotapay_withdrawals.xlsx"
@@ -125,8 +108,7 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
             combined_out_dir.mkdir(parents=True, exist_ok=True)
             combined_df.to_excel(combined_out_file, index=False)
             print(f"Combined Zotapay + PaymentAsia withdrawals saved to {combined_out_file}")
-
-    combine_start = time.time()  # Timing for combine
+    combine_start = time.time() # Timing for combine
     # Combine using filtered_processors
     extra_processors = ['zotapay_paymentasia'] if transaction_type == 'withdrawal' and 'zotapay' in filtered_processors and 'paymentasia' in filtered_processors else []
     combine_processed_files(
@@ -138,29 +120,25 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
         out_proc_dir=dirs['processed_processor_dir'] / "combined",
         transaction_type=transaction_type,
         regulation=regulation,
-        crm_dir=dirs['crm_dir'],  # Added this to pass the per-reg CRM dir
+        crm_dir=dirs['crm_dir'], # Added this to pass the per-reg CRM dir
         extra_processors=extra_processors
     )
     combine_end = time.time()
     print(f"Combining for {regulation.upper()} {transaction_type} took {combine_end - combine_start:.2f} seconds")
-
-    end_time = time.time()  # Total timing end
+    end_time = time.time() # Total timing end
     print(f"Preprocessed and combined {transaction_type}s for {regulation.upper()} regulation saved successfully. Total time: {end_time - start_time:.2f} seconds.")
-
 # Run for both ROW and UK, deposits and withdrawals
 if __name__ == "__main__":
-    overall_start = time.time()  # Overall timing
+    overall_start = time.time() # Overall timing
     for reg in ['row', 'uk']:
         processors = row_processors if reg == 'row' else uk_processors
-        dirs = setup_regulation_structure(reg, processors)  # Setup once per regulation
+        dirs = setup_regulation_structure(reg, processors) # Setup once per regulation
         preprocess_for_regulation(reg, 'deposit', dirs=dirs)
         preprocess_for_regulation(reg, 'withdrawal', dirs=dirs)
     overall_end = time.time()
     print(f"Overall processing time: {overall_end - overall_start:.2f} seconds")
-
     # Run deposits matching after preprocessing
     match_deposits_for_date(date_str)
-
     # Run shifts handler after matching
     matched_sums = handle_shifts(date_str)
     if matched_sums:
@@ -168,8 +146,7 @@ if __name__ == "__main__":
         for reg, sums in matched_sums.items():
             print(f"{reg.upper()}:")
             for currency, amount in sums.items():
-                print(f"  {currency}: {amount}")
-
+                print(f" {currency}: {amount}")
     # Load exchange rates (assuming shared rates file)
     rates_path = BASE_DIR / "data" / "rates" / f"rates_{date_str}.csv"
     if rates_path.exists():
@@ -183,6 +160,5 @@ if __name__ == "__main__":
     else:
         exchange_rate_map = {}
         print("No rates file found; using empty exchange rate map.")
-
     # Run withdrawals matching
     match_withdrawals_for_date(date_str, exchange_rate_map)

@@ -900,6 +900,8 @@ class ReconciliationEngine:
             self.get_processor_config(proc)
         )
 
+    # In _match_standard_row, replace the entire function with this updated version
+
     def _match_standard_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
         crm_last4_normalized = normalize_string(crm_last4, is_last4=True)
@@ -910,7 +912,8 @@ class ReconciliationEngine:
         crm_last = str(crm_row.get('crm_lastname', ''))
         crm_proc_name = crm_row.get('crm_processor_name', '').lower()
 
-        is_apple_pay = 'apple pay' in str(crm_row.get('payment_method', '')).lower() and crm_row.get('regulation', '').lower() == 'uk'
+        is_apple_pay = 'apple pay' in str(crm_row.get('payment_method', '')).lower() and crm_row.get('regulation',
+                                                                                                     '').lower() == 'uk'
 
         candidates = []
         indices = [i for i in proc_dict if
@@ -950,8 +953,23 @@ class ReconciliationEngine:
             # Special Apple Pay logic for UK safecharge
             if is_apple_pay:
                 if email_sim < 0.75:
-                    if crm_first and crm_last and self.name_in_email(crm_first, proc_email) and self.name_in_email(crm_last, proc_email):
+                    if crm_first and crm_last and self.name_in_email(crm_first, proc_email) and self.name_in_email(
+                            crm_last, proc_email):
                         name_fallback = True
+                    else:
+                        continue
+
+            # Special logic for safechargeuk when no last4
+            if crm_proc_name == 'safechargeuk' and not valid_last4:
+                if email_sim > 0.8:
+                    last4_match = False  # Since no last4
+                else:
+                    full_name = crm_first + " " + crm_last
+                    proc_local = proc_email.split('@')[0] if '@' in proc_email else proc_email
+                    name_sim = SequenceMatcher(None, full_name.lower(), proc_local.lower()).ratio()
+                    if name_sim > 0.7:
+                        name_fallback = True
+                        last4_match = False
                     else:
                         continue
 

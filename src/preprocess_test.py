@@ -647,15 +647,30 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         return df
     elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
         return patch_standardize_zotapay_paymentasia_withdrawals(df, processor)
+
+
     elif processor.lower() == "trustpayments":
+        print(f"Entering standardize_processor_columns_withdrawals for trustpayments")
+        print(f"Initial df columns: {df.columns.tolist()}")
+        print(f"Initial df shape: {df.shape}")
+        # Check if required columns exist
+        required_cols = ["requesttypedescription", "errorcode", "billingfullname", "transactionstartedtimestamp",
+                         "maskedpan", "currencyiso3a", "mainamount", "orderreference"]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            print(f"Missing required columns: {missing_cols}")
+            return pd.DataFrame()
         # Filter to only REFUND type and errorcode == 0
         df = df[
             (df["requesttypedescription"].str.upper() == "REFUND") &
             (df["errorcode"] == 0)
             ].copy()
-        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR", "GBP"])].copy()
+        print(f"After REFUND and errorcode filter: df shape {df.shape}")
         if df.empty:
+            print("DataFrame is empty after filtering. Sample raw data before filter:")
+            print(df.head(5))  # Print sample of original df if empty after filter
             return pd.DataFrame()
+
         def split_billingfullname(name):
             if pd.isna(name):
                 return "", ""
@@ -663,6 +678,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             first = parts[0]
             last = parts[1] if len(parts) > 1 else ""
             return first, last
+
         df["first_name"], df["last_name"] = zip(*df["billingfullname"].apply(split_billingfullname))
         df["date"] = pd.to_datetime(df["transactionstartedtimestamp"], errors="coerce")
         df["last_4cc"] = df["maskedpan"].astype(str).str[-4:]
@@ -679,7 +695,10 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "amount", "currency", "date", "last_4cc", "email",
             "first_name", "last_name", "processor_name", "tp"
         ]
-        return df[keep]
+        final_df = df[keep]
+        print(f"Final df shape after processing: {final_df.shape}")
+        print(f"Sample processed rows: {final_df.head(2)}")
+        return final_df
     # In standardize_processor_columns_withdrawals, update barclays block:
     elif processor in ["barclays", "barclaycard"]:
         df = df[df["Current Status"].str.lower() == "captured"]
@@ -897,20 +916,10 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
     df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
     if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
         name_col_match = df["Name"].str.lower() == "withdrawal"
-        psp_match = df["PSP name"].str.contains("pamy|zotapay|paymentasia|payment asia", case=False, na=False)
-        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
+        psp_match = df["PSP name"].str.contains("pamy|zotapay|paymentasia|payment asia|zotapay_paymentasia|wire", case=False, na=False)
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|pa-my", case=False, na=False)
         full_mask = name_col_match & (psp_match | method_match)
         df = df[full_mask].reset_index(drop=True)
-    elif normalized_processor in ["wire withdrawal", "wirewithdrawal"]:
-        psp_mask = df["PSP name"] == normalized_processor
-        if transaction_type == "withdrawal":
-            name_mask = df["Name"].str.lower() == "withdrawal"
-            method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
-            df = df[psp_mask & name_mask & method_match].reset_index(drop=True)
-        else:
-            df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
-        if df.empty:
-            return None
     else:
         psp_mask = df["PSP name"] == normalized_processor
         if transaction_type == "withdrawal":
@@ -1054,11 +1063,13 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         df = pd.read_excel(filepath, dtype=dtype, skiprows=skip, engine=engine)
     else:
         raise ValueError("Unsupported file type")
+    print(f"Loaded raw file for {processor_name} {transaction_type}: shape {df.shape}, columns {df.columns.tolist()}")
     if transaction_type == "deposit":
         df_clean = standardize_processor_columns_deposits(df, processor_name)
     else:
         df_clean = standardize_processor_columns_withdrawals(df, processor_name)
     if df_clean is None or df_clean.empty:
+        print(f"Cleaned df for {processor_name} {transaction_type} is empty or None")
         return None
     if save_clean:
         # Only save if we have data
@@ -1073,8 +1084,6 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         else:
             print(f" Not saving empty {processor_name} {transaction_type}s")
     return df_clean
-# Updated combine_processed_files to read with dtype for transaction_id
-# Updated combine_processed_files to read with dtype for transaction_id
 def combine_processed_files(
     date, processors, processor_name=None, # Added processor_name as optional parameter
     processed_crm_dir=None,
@@ -1213,6 +1222,7 @@ def combine_processed_files(
                 grouped_rows.append(row0)
         out_df = pd.DataFrame(grouped_rows)
         return out_df
+
     def group_processor_withdrawals(df, exchange_rate_map):
         df = df.copy()
         # Clean string columns used in grouping to avoid issues
@@ -1224,85 +1234,116 @@ def combine_processed_files(
         out_dfs = []
         for pname, group in df.groupby('processor_name'):
             grouped_rows = []
-            if 'last_4cc' in group.columns and (group['last_4cc'].astype(str).str.strip() != '').any():
-                # Group by last_4cc
-                for last4, subg in group.groupby('last_4cc', dropna=False):
-                    if subg.empty or pd.isna(last4) or str(last4).strip() == '':
+            if pname == 'safechargeuk':
+                # Special handling for safechargeuk: group by email
+                for email, sub_group in group.groupby('email'):
+                    if sub_group.empty:
                         continue
-                    # Assume all rows have email; filter to non-NaN for safety
-                    non_na_mask = subg['email'].notna() & (subg['email'].str.strip() != '')
-                    if not non_na_mask.any():
-                        # If all NaN emails, append rows as-is (or skip, depending on needs)
-                        grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
-                        continue
-                    subg = subg[non_na_mask].reset_index(drop=True) # Reset index for iloc
-                    emails = subg['email'].tolist()
-                    if len(emails) <= 1:
-                        grouped_rows.append(subg.iloc[0].copy())
-                        continue
-                    # Compute pairwise similarities
-                    high_similar = []
-                    for i, email1 in enumerate(emails):
-                        for j, email2 in enumerate(emails[i + 1:], i + 1):
-                            sim = enhance_email_similarity(email1, email2)
-                            if sim >= 0.8:
-                                high_similar.append((i, j, sim))
-                    if not high_similar:
-                        # No similarities: keep all rows separate
-                        grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
-                        continue
-                    # Build graph for connected components
-                    from collections import defaultdict
-                    graph = defaultdict(list)
-                    for i, j, _ in high_similar:
-                        graph[i].append(j)
-                        graph[j].append(i)
-                    # DFS to find components
-                    visited = set()
-                    components = []
-                    for idx in range(len(emails)):
-                        if idx not in visited:
-                            component = []
-                            stack = [idx]
-                            while stack:
-                                node = stack.pop()
-                                if node not in visited:
-                                    visited.add(node)
-                                    component.append(node)
-                                    for neigh in graph[node]:
-                                        if neigh not in visited:
-                                            stack.append(neigh)
-                            if component:
-                                components.append(component)
-                    # Aggregate within each component
-                    for component in components:
-                        if not component:
-                            continue
-                        agg_rows = subg.iloc[component]
-                        currencies = agg_rows['currency'].tolist()
-                        tgt_cur = choose_target_currency(currencies)
-                        converted_amounts = []
-                        for _, row in agg_rows.iterrows():
-                            amt = float(row['amount'])
-                            src_cur = row['currency']
-                            if src_cur == tgt_cur:
-                                converted = amt
+                    currencies = sub_group['currency'].tolist()
+                    tgt_cur = choose_target_currency(currencies)
+                    converted_amounts = []
+                    for _, row in sub_group.iterrows():
+                        amt = float(row['amount'])
+                        src_cur = row['currency']
+                        if src_cur == tgt_cur:
+                            converted = amt
+                        else:
+                            key = (src_cur, tgt_cur)
+                            if exchange_rate_map and key in exchange_rate_map:
+                                converted = amt * exchange_rate_map[key]
                             else:
-                                key = (src_cur, tgt_cur)
-                                if exchange_rate_map and key in exchange_rate_map:
-                                    converted = amt * exchange_rate_map[key]
-                                else:
-                                    converted = amt # Fallback if no rate
-                            converted_amounts.append(converted)
-                        total_amt = sum(converted_amounts)
-                        agg_row = agg_rows.iloc[0].copy() # Use first row in component as base
-                        agg_row['amount'] = total_amt
-                        agg_row['currency'] = tgt_cur
-                        agg_row['email'] = list(set(emails[idx] for idx in component))
-                        grouped_rows.append(agg_row)
+                                converted = amt
+                        converted_amounts.append(converted)
+                    total_amt = sum(converted_amounts)
+                    if abs(total_amt) < 1e-6:
+                        continue
+                    agg_row = sub_group.iloc[0].copy()
+                    agg_row['amount'] = total_amt
+                    agg_row['currency'] = tgt_cur
+                    # Collect unique last_4cc into a comma-separated string
+                    unique_last4 = sorted(set(str(l4).strip() for l4 in sub_group['last_4cc'] if str(l4).strip()))
+                    agg_row['last_4cc'] = ','.join(unique_last4)
+                    grouped_rows.append(agg_row)
             else:
-                # Fallback if no last_4cc: no aggregation
-                grouped_rows.extend([row.copy() for _, row in group.iterrows()])
+                if 'last_4cc' in group.columns and (group['last_4cc'].astype(str).str.strip() != '').any():
+                    # Group by last_4cc
+                    for last4, subg in group.groupby('last_4cc', dropna=False):
+                        if subg.empty or pd.isna(last4) or str(last4).strip() == '':
+                            continue
+                        # Assume all rows have email; filter to non-NaN for safety
+                        non_na_mask = subg['email'].notna() & (subg['email'].str.strip() != '')
+                        if not non_na_mask.any():
+                            # If all NaN emails, append rows as-is (or skip, depending on needs)
+                            grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
+                            continue
+                        subg = subg[non_na_mask].reset_index(drop=True)  # Reset index for iloc
+                        emails = subg['email'].tolist()
+                        if len(emails) <= 1:
+                            grouped_rows.append(subg.iloc[0].copy())
+                            continue
+                        # Compute pairwise similarities
+                        high_similar = []
+                        for i, email1 in enumerate(emails):
+                            for j, email2 in enumerate(emails[i + 1:], i + 1):
+                                sim = enhance_email_similarity(email1, email2)
+                                if sim >= 0.8:
+                                    high_similar.append((i, j, sim))
+                        if not high_similar:
+                            # No similarities: keep all rows separate
+                            grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
+                            continue
+                        # Build graph for connected components
+                        from collections import defaultdict
+                        graph = defaultdict(list)
+                        for i, j, _ in high_similar:
+                            graph[i].append(j)
+                            graph[j].append(i)
+                        # DFS to find components
+                        visited = set()
+                        components = []
+                        for idx in range(len(emails)):
+                            if idx not in visited:
+                                component = []
+                                stack = [idx]
+                                while stack:
+                                    node = stack.pop()
+                                    if node not in visited:
+                                        visited.add(node)
+                                        component.append(node)
+                                        for neigh in graph[node]:
+                                            if neigh not in visited:
+                                                stack.append(neigh)
+                                if component:
+                                    components.append(component)
+                        # Aggregate within each component
+                        for component in components:
+                            if not component:
+                                continue
+                            agg_rows = subg.iloc[component]
+                            currencies = agg_rows['currency'].tolist()
+                            tgt_cur = choose_target_currency(currencies)
+                            converted_amounts = []
+                            for _, row in agg_rows.iterrows():
+                                amt = float(row['amount'])
+                                src_cur = row['currency']
+                                if src_cur == tgt_cur:
+                                    converted = amt
+                                else:
+                                    key = (src_cur, tgt_cur)
+                                    if exchange_rate_map and key in exchange_rate_map:
+                                        converted = amt * exchange_rate_map[key]
+                                    else:
+                                        converted = amt  # Fallback if no rate
+                                converted_amounts.append(converted)
+                            total_amt = sum(converted_amounts)
+                            agg_row = agg_rows.iloc[0].copy()  # Use first row in component as base
+                            agg_row['amount'] = total_amt
+                            agg_row['currency'] = tgt_cur
+                            agg_row['email'] = list(set(emails[idx] for idx in component))
+                            grouped_rows.append(agg_row)
+                else:
+                    # Fallback if no last_4cc: no aggregation
+                    grouped_rows.extend([row.copy() for _, row in group.iterrows()])
             if grouped_rows:
                 out_dfs.append(pd.DataFrame(grouped_rows))
         if out_dfs:

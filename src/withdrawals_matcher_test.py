@@ -1,3 +1,5 @@
+# withdrawals_matcher_test.py (updated with fixes)
+
 from datetime import datetime, timedelta
 from functools import lru_cache
 import pandas as pd
@@ -32,6 +34,13 @@ class ProcessorConfig:
 # Processor-specific configurations
 PROCESSOR_CONFIGS = {
     'safecharge': ProcessorConfig(
+        email_threshold=0.6,
+        require_last4=True,
+        require_email=True,
+        tolerance=0.1,
+        allow_last4_only_if_email_blank=True
+    ),
+    'safechargeuk': ProcessorConfig(
         email_threshold=0.6,
         require_last4=True,
         require_email=True,
@@ -158,7 +167,7 @@ class ReconciliationEngine:
         """Get configuration for specific processor"""
         processor_name = processor_name.lower()
         # ─── alias PowerCash to SafeCharge ────────────────────────────────
-        if processor_name == "powercash":
+        if processor_name == "powercash" or processor_name == "safechargeuk":
             processor_name = "safecharge"
         # ───────────────────────────────────────────────────────────────────
         return PROCESSOR_CONFIGS.get(processor_name, ProcessorConfig())
@@ -440,7 +449,7 @@ class ReconciliationEngine:
 
     #Handles matched unmatched rows of different processors
     def _cross_processor_last_chance(self, crm_df, processor_df, used_crm, used_proc, matches):
-        card_group = {"safecharge", "shift4", "powercash", "trustpayments"}
+        card_group = {"safecharge", "shift4", "powercash", "trustpayments", "safechargeuk"}
         ewallet_group = {"paypal", "skrill", "neteller"}
         other_group = set()
 
@@ -481,6 +490,10 @@ class ReconciliationEngine:
 
                 if proc_row['proc_processor_name'].lower() == crm_row['crm_processor_name'].lower():
                     continue  # Skip same processor
+
+                # Skip cross for safechargeuk CRM with safecharge proc
+                if crm_row['crm_processor_name'].lower() == 'safechargeuk' and proc_row['proc_processor_name'].lower() == 'safecharge':
+                    continue
 
                 proc_proc_name = proc_row['proc_processor_name'].lower()
                 proc_config = self.get_processor_config(proc_proc_name)
@@ -710,7 +723,7 @@ class ReconciliationEngine:
             cancelled.append(out)
         return cancelled
 
-    def match_withdrawals(self, crm_df, processor_df):
+    def match_withdrawals(self, crm_df, processor_df, add_unmatched_proc=True, add_unmatched_crm=True):
         """
         Main reconciliation loop: matches CRM withdrawals to processor withdrawals,
         then flags logic correctness on each match.
@@ -781,37 +794,39 @@ class ReconciliationEngine:
         # Add unmatched CRM rows after all matching (moved outside if)
         for idx in crm_df.index:
             if idx not in used_crm:
-                unmatched = self._create_unmatched_crm_record(crm_df.loc[idx])
-                ordered = {}
-                for k, v in unmatched.items():
-                    ordered[k] = v
-                    if k == 'crm_lastname': ordered['crm_tp'] = crm_df.loc[idx].get('crm_tp', '')
-                    if k == 'proc_email': ordered['proc_tp'] = []
-                matches.append(ordered)
-                self.metrics['unmatched'] += 1
-                if self.config['enable_diagnostics']:
-                    self.diagnostics.append({'crm_idx': idx, 'failure_reason': 'No match found'})
+                if add_unmatched_crm:
+                    unmatched = self._create_unmatched_crm_record(crm_df.loc[idx])
+                    ordered = {}
+                    for k, v in unmatched.items():
+                        ordered[k] = v
+                        if k == 'crm_lastname': ordered['crm_tp'] = crm_df.loc[idx].get('crm_tp', '')
+                        if k == 'proc_email': ordered['proc_tp'] = []
+                    matches.append(ordered)
+                    self.metrics['unmatched'] += 1
+                    if self.config['enable_diagnostics']:
+                        self.diagnostics.append({'crm_idx': idx, 'failure_reason': 'No match found'})
 
         # any processor-only rows left => unmatched processor
-        for pidx, prow in processor_df.iterrows():
-            if pidx not in used_proc:
-                base = {
-                    'crm_date': None, 'crm_email': None, 'crm_firstname': None, 'crm_lastname': None,
-                    'crm_tp': None, 'crm_last4': None, 'crm_currency': None, 'crm_amount': None,
-                    'crm_processor_name': None, 'regulation': '','proc_date': [prow.get('proc_date')],
-                    'proc_email': [prow.get('proc_email')], 'proc_last4': [prow.get('proc_last4')],
-                    'proc_currency': [prow.get('proc_currency')], 'proc_amount': [prow.get('proc_amount')],
-                    'proc_processor_name': prow.get('proc_processor_name'),
-                    'proc_firstname': [prow.get('proc_firstname')], 'proc_lastname': [prow.get('proc_lastname')],
-                    'email_similarity_avg': None, 'last4_match': None, 'name_fallback_used': False,
-                    'exact_match_used': False, 'match_status': 0, 'payment_status': 0,
-                    'comment': "No matching CRM row found", 'matched_proc_indices': [pidx]
-                }
-                entry = {}
-                for k, v in base.items():
-                    entry[k] = v
-                    if k == 'proc_email': entry['proc_tp'] = [prow.get('proc_tp', '')]
-                matches.append(entry)
+        if add_unmatched_proc:
+            for pidx, prow in processor_df.iterrows():
+                if pidx not in used_proc:
+                    base = {
+                        'crm_date': None, 'crm_email': None, 'crm_firstname': None, 'crm_lastname': None,
+                        'crm_tp': None, 'crm_last4': None, 'crm_currency': None, 'crm_amount': None,
+                        'crm_processor_name': None, 'regulation': '','proc_date': [prow.get('proc_date')],
+                        'proc_email': [prow.get('proc_email')], 'proc_last4': [prow.get('proc_last4')],
+                        'proc_currency': [prow.get('proc_currency')], 'proc_amount': [prow.get('proc_amount')],
+                        'proc_processor_name': prow.get('proc_processor_name'),
+                        'proc_firstname': [prow.get('proc_firstname')], 'proc_lastname': [prow.get('proc_lastname')],
+                        'email_similarity_avg': None, 'last4_match': None, 'name_fallback_used': False,
+                        'exact_match_used': False, 'match_status': 0, 'payment_status': 0,
+                        'comment': "No matching CRM row found", 'matched_proc_indices': [pidx]
+                    }
+                    entry = {}
+                    for k, v in base.items():
+                        entry[k] = v
+                        if k == 'proc_email': entry['proc_tp'] = [prow.get('proc_tp', '')]
+                    matches.append(entry)
 
         # finalize timing
         self.metrics['processing_time'] = (datetime.now() - self.start_time).total_seconds()
@@ -836,6 +851,9 @@ class ReconciliationEngine:
           • Zotapay/PaymentAsia combined: zotapay_paymentasia logic
         """
         proc = (crm_row.get('crm_processor_name') or '').strip().lower()
+
+        if proc in ['barclays', 'barclaycard']:
+            return None, {'failure_reason': 'Skipping barclays/barclaycard as per instructions'}
 
         # alias PowerCash → SafeCharge
         if proc == 'powercash':
@@ -892,6 +910,8 @@ class ReconciliationEngine:
         crm_last = str(crm_row.get('crm_lastname', ''))
         crm_proc_name = crm_row.get('crm_processor_name', '').lower()
 
+        is_apple_pay = 'apple pay' in str(crm_row.get('payment_method', '')).lower() and crm_row.get('regulation', '').lower() == 'uk'
+
         candidates = []
         indices = [i for i in proc_dict if
                    i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
@@ -917,16 +937,23 @@ class ReconciliationEngine:
             if proc_amt_crm_cur is None:
                 continue
 
-            email_sim = self.enhanced_email_similarity(crm_email, row.get('proc_email', ''))
-            proc_last4_str = normalize_string(row.get('proc_last4', ''), is_last4=True)
-            valid_last4 = crm_last4 not in ("", "0", "0000", "nan")
-            last4_match = crm_last4_normalized == proc_last4_str and valid_last4
-
-            # Safely handle proc_email to avoid AttributeError
             proc_email = str(row.get('proc_email', '')) if not pd.isna(row.get('proc_email')) else ''
             proc_email = proc_email.strip()
 
-            name_fallback = False  # Define default here
+            email_sim = self.enhanced_email_similarity(crm_email, proc_email)
+            proc_last4_str = normalize_string(row.get('proc_last4', ''), is_last4=True)
+            valid_last4 = crm_last4 not in ("", "0", "0000", "nan")
+            last4_match = valid_last4 and crm_last4_normalized == proc_last4_str
+
+            name_fallback = False
+
+            # Special Apple Pay logic for UK safecharge
+            if is_apple_pay:
+                if email_sim < 0.75:
+                    if crm_first and crm_last and self.name_in_email(crm_first, proc_email) and self.name_in_email(crm_last, proc_email):
+                        name_fallback = True
+                    else:
+                        continue
 
             # SafeCharge-specific logic: If proc_email is blank, rely only on last4
             if getattr(proc_config, 'allow_last4_only_if_email_blank', False) and not proc_email:
@@ -964,71 +991,70 @@ class ReconciliationEngine:
                 'exact_match': False
             })
 
+        if not candidates:
+            return None, {'failure_reason': 'No candidates found'}
 
-            if not candidates:
-                return None, {'failure_reason': 'No candidates found'}
+        candidates.sort(key=lambda c: (
+            -c['email_score'],
+            -int(c['last4_match']),
+            -int(c['name_fallback'])
+        ))
+        best = candidates[0]
 
-            candidates.sort(key=lambda c: (
-                -c['email_score'],
-                -int(c['last4_match']),
-                -int(c['name_fallback'])
-            ))
-            best = candidates[0]
+        proc_amt = best['proc_amount_crm_currency']
+        crm_amt_abs = abs(crm_amt)
+        proc_amt_abs = abs(proc_amt)
 
-            proc_amt = best['proc_amount_crm_currency']
-            crm_amt_abs = abs(crm_amt)
-            proc_amt_abs = abs(proc_amt)
+        diff = proc_amt_abs - crm_amt_abs
+        abs_diff = abs(diff)
+        tolerance = max(0.1, proc_config.tolerance * crm_amt_abs)
 
-            diff = proc_amt_abs - crm_amt_abs
-            abs_diff = abs(diff)
-            tolerance = max(0.1, proc_config.tolerance * crm_amt_abs)
+        payment_status = 1 if abs_diff <= tolerance else 0
+        comment = ""
+        if payment_status == 0:
+            if diff > 0:
+                comment = f"Overpaid by {round(diff, 2)} {crm_cur}"
+            elif diff < 0:
+                comment = f"Underpaid by {round(-diff, 2)} {crm_cur}"
+            else:
+                comment = "Amount mismatch"
 
-            payment_status = 1 if abs_diff <= tolerance else 0
-            comment = ""
-            if payment_status == 0:
-                if diff > 0:
-                    comment = f"Overpaid by {round(diff, 2)} {crm_cur}"
-                elif diff < 0:
-                    comment = f"Underpaid by {round(-diff, 2)} {crm_cur}"
-                else:
-                    comment = "Amount mismatch"
+        proc_date_raw = best['row_data'].get('proc_date')
+        proc_date_ts = pd.to_datetime(proc_date_raw, errors='coerce')
+        proc_date_ts = proc_date_ts.normalize() if proc_date_ts is not pd.NaT else None
 
-            proc_date_raw = best['row_data'].get('proc_date')
-            proc_date_ts = pd.to_datetime(proc_date_raw, errors='coerce')
-            proc_date_ts = proc_date_ts.normalize() if proc_date_ts is not pd.NaT else None
-
-            match = {
-                'crm_date': crm_row.get('crm_date'),
-                'crm_email': crm_email,
-                'crm_firstname': crm_row.get('crm_firstname', ''),
-                'crm_lastname': crm_row.get('crm_lastname', ''),
-                'crm_last4': crm_last4,
-                'crm_currency': crm_cur,
-                'crm_amount': crm_amt,
-                'crm_processor_name': crm_row.get('crm_processor_name'),
-                'regulation': crm_row.get('regulation', ''),
-                'proc_date': proc_date_ts,
-                'proc_email': best['row_data'].get('proc_email'),
-                'proc_firstname': best['row_data'].get('proc_firstname', ''),
-                'proc_lastname': best['row_data'].get('proc_lastname', ''),
-                'proc_last4': best['row_data'].get('proc_last4'),
-                'proc_currency': best['row_data'].get('proc_currency'),
-                'proc_amount': best['row_data'].get('proc_amount'),
-                'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
-                'proc_processor_name': best['row_data'].get('proc_processor_name'),
-                'email_similarity_avg': round(best['email_score'], 4),
-                'last4_match': best['last4_match'],
-                'name_fallback_used': best['name_fallback'],
-                'exact_match_used': False,
-                'converted': (best['proc_rate'] != 1.0),
-                'proc_combo_len': 1,
-                'crm_combo_len': 1,
-                'match_status': 1,
-                'payment_status': payment_status,
-                'comment': comment,
-                'matched_proc_indices': [best['index']]
-            }
-            return match, {}
+        match = {
+            'crm_date': crm_row.get('crm_date'),
+            'crm_email': crm_email,
+            'crm_firstname': crm_row.get('crm_firstname', ''),
+            'crm_lastname': crm_row.get('crm_lastname', ''),
+            'crm_last4': crm_last4,
+            'crm_currency': crm_cur,
+            'crm_amount': crm_amt,
+            'crm_processor_name': crm_row.get('crm_processor_name'),
+            'regulation': crm_row.get('regulation', ''),
+            'proc_date': proc_date_ts,
+            'proc_email': best['row_data'].get('proc_email'),
+            'proc_firstname': best['row_data'].get('proc_firstname', ''),
+            'proc_lastname': best['row_data'].get('proc_lastname', ''),
+            'proc_last4': best['row_data'].get('proc_last4'),
+            'proc_currency': best['row_data'].get('proc_currency'),
+            'proc_amount': best['row_data'].get('proc_amount'),
+            'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
+            'proc_processor_name': best['row_data'].get('proc_processor_name'),
+            'email_similarity_avg': round(best['email_score'], 4),
+            'last4_match': best['last4_match'],
+            'name_fallback_used': best['name_fallback'],
+            'exact_match_used': False,
+            'converted': (best['proc_rate'] != 1.0),
+            'proc_combo_len': 1,
+            'crm_combo_len': 1,
+            'match_status': 1,
+            'payment_status': payment_status,
+            'comment': comment,
+            'matched_proc_indices': [best['index']]
+        }
+        return match, {}
 
     def _match_zotapay_paymentasia_row(self, crm_row, proc_dict, last4_map, used, proc_config):
         crm_tp = str(crm_row.get('crm_tp', '')).strip()
@@ -1459,8 +1485,8 @@ class ReconciliationEngine:
                 continue
 
             # Convert amount to CRM currency
-            proc_amt_crm_cur, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
-            if proc_amt_crm_cur is None:
+            proc_amt_crm_currency, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
+            if proc_amt_crm_currency is None:
                 continue
 
             email = str(row.get('proc_email', '')).lower()
@@ -1480,7 +1506,7 @@ class ReconciliationEngine:
             if not (email_match or name_match or name_in_email_match):
                 continue
 
-            amount_diff = proc_amt_crm_cur - crm_amt
+            amount_diff = proc_amt_crm_currency - crm_amt
             amount_match = abs(amount_diff) <= tol
 
             proc_last4 = str(row.get('proc_last4', '')).strip()
@@ -1490,7 +1516,7 @@ class ReconciliationEngine:
 
             candidates.append({
                 'index': i,
-                'proc_amount_crm_currency': proc_amt_crm_cur,
+                'proc_amount_crm_currency': proc_amt_crm_currency,
                 'email_score': email_sim,
                 'currency': proc_cur,
                 'rate': rate,
@@ -1928,3 +1954,208 @@ class ReconciliationEngine:
         remaining_rows = total - done
         eta_seconds = avg_time_per_row * remaining_rows
         self.logger.info(f"Processed {done}/{total} rows. ETA: {timedelta(seconds=eta_seconds)}")
+
+import pandas as pd
+import numpy as np
+from src.config import setup_dirs_for_reg
+from src.utils import load_excel_if_exists, drop_cols
+
+def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
+    # Get directories for ROW and UK
+    row_dirs = setup_dirs_for_reg('row', create=False)
+    uk_dirs = setup_dirs_for_reg('uk', create=False)
+
+    # Load combined CRM and processor files for UK and ROW
+    uk_crm_path = uk_dirs['combined_crm_dir'] / date_str / "combined_crm_withdrawals.xlsx"
+    uk_proc_path = uk_dirs['processed_processor_dir'] / "combined" / date_str / "combined_processor_withdrawals.xlsx"
+    row_crm_path = row_dirs['combined_crm_dir'] / date_str / "combined_crm_withdrawals.xlsx"
+    row_proc_path = row_dirs['processed_processor_dir'] / "combined" / date_str / "combined_processor_withdrawals.xlsx"
+
+    uk_crm = pd.read_excel(uk_crm_path) if uk_crm_path.exists() else pd.DataFrame()
+    uk_proc = pd.read_excel(uk_proc_path) if uk_proc_path.exists() else pd.DataFrame()
+    row_crm = pd.read_excel(row_crm_path) if row_crm_path.exists() else pd.DataFrame()
+    row_proc = pd.read_excel(row_proc_path) if row_proc_path.exists() else pd.DataFrame()
+
+    if uk_crm.empty or uk_proc.empty:
+        print(f"Skipping UK withdrawals matching: Missing combined files for {date_str}")
+        uk_matches_df = pd.DataFrame()
+    else:
+        engine_uk_local = ReconciliationEngine(exchange_rate_map, {'enable_cross_processor': True, 'enable_warning_flag': True})
+        uk_non_cancelled = uk_crm[uk_crm['crm_type'].str.lower() != 'withdrawal cancelled']
+        matches_uk_local = engine_uk_local.match_withdrawals(uk_non_cancelled, uk_proc, add_unmatched_proc=True, add_unmatched_crm=True)
+
+        # Extract matched UK proc indices
+        matched_uk_proc_ids_local = set()
+        for m in matches_uk_local:
+            if m['match_status'] == 1:
+                matched_uk_proc_ids_local.update(m.get('matched_proc_indices', []))
+
+        # Unmatched UK CRM from local matches
+        uk_local_df = pd.DataFrame(matches_uk_local)
+        unmatched_uk_crm_local_mask = (uk_local_df['match_status'] == 0) & uk_local_df['crm_date'].notna()
+        unmatched_uk_crm_local = uk_local_df[unmatched_uk_crm_local_mask].copy()
+        # Project back to CRM columns (approximate, assuming order)
+        unmatched_uk_crm_local = uk_non_cancelled.iloc[unmatched_uk_crm_local_mask.values[:len(uk_non_cancelled)]].copy() if not unmatched_uk_crm_local.empty else pd.DataFrame()
+
+        # Cross match unmatched UK CRM with ROW proc
+        engine_uk_cross = ReconciliationEngine(exchange_rate_map, {'enable_cross_processor': True, 'enable_warning_flag': True})
+        matches_uk_cross_full = engine_uk_cross.match_withdrawals(unmatched_uk_crm_local, row_proc, add_unmatched_proc=False, add_unmatched_crm=False)
+        # Filter only matched from cross (exclude unmatched CRM from cross)
+        matches_uk_cross = [m for m in matches_uk_cross_full if m['match_status'] == 1]
+
+        # Extract matched ROW proc indices from UK cross
+        matched_row_proc_ids_from_uk = set()
+        for m in matches_uk_cross:
+            matched_row_proc_ids_from_uk.update(m.get('matched_proc_indices', []))
+
+        # Combine matches for UK
+        all_matches_uk = matches_uk_local + matches_uk_cross
+
+        uk_matches_df = pd.DataFrame(all_matches_uk)
+
+        # Add payment_method
+        uk_matches_df['payment_method'] = np.nan
+        non_cancelled_count = len(uk_non_cancelled)
+        if len(uk_matches_df) >= non_cancelled_count and not uk_non_cancelled.empty:
+            uk_matches_df.iloc[:non_cancelled_count, uk_matches_df.columns.get_loc('payment_method')] = uk_non_cancelled['payment_method'].values
+
+        # Desired columns
+        desired_columns = [
+            'crm_type', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
+            'payment_method',
+            'crm_processor_name',
+            'regulation',
+            'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency',
+            'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
+            'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
+            'payment_status', 'warning', 'comment'
+        ]
+        uk_matches_df = uk_matches_df[[c for c in desired_columns if c in uk_matches_df.columns]]
+
+        # Append cancellations
+        cancelled_uk = engine_uk_local.make_cancelled_rows(uk_crm)
+        if cancelled_uk:
+            cancelled_df = pd.DataFrame(cancelled_uk)
+            if not cancelled_df.empty:
+                cancelled_df['payment_method'] = np.nan
+                cancelled_crm_mask = uk_crm['crm_type'].str.lower() == 'withdrawal cancelled'
+                cancelled_crm_df = uk_crm[cancelled_crm_mask].copy()
+                if len(cancelled_df) == len(cancelled_crm_df):
+                    cancelled_df['payment_method'] = cancelled_crm_df['payment_method'].values
+                cancelled_df = cancelled_df[[c for c in desired_columns if c in cancelled_df.columns]]
+                uk_matches_df = pd.concat([uk_matches_df, cancelled_df], ignore_index=True)
+
+        # Fix regulation if missing
+        if 'crm_index' in uk_matches_df.columns and 'regulation' not in uk_matches_df.columns:
+            uk_matches_df = uk_matches_df.merge(uk_crm[['regulation']], left_on='crm_index', right_index=True, how='left')
+
+        uk_matches_df = drop_cols(uk_matches_df, ['matched_proc_indices'])
+
+        # Add crm_type
+        uk_matches_df['crm_type'] = ''
+        uk_matches_df.loc[uk_matches_df['crm_email'].notna(), 'crm_type'] = 'Withdrawal'
+        uk_matches_df.loc[uk_matches_df['comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
+        columns = list(uk_matches_df.columns)
+        columns.insert(0, columns.pop(columns.index('crm_type')))
+        uk_matches_df = uk_matches_df[columns]
+
+        # Filter out any unmatched proc not belonging to UK
+        uk_processors_lower = [p.lower() for p in ['safechargeuk', 'barclays', 'barclaycard']]
+        unmatched_proc_mask = (uk_matches_df['match_status'] == 0) & uk_matches_df['crm_date'].isna()
+        uk_matches_df = uk_matches_df[~unmatched_proc_mask | uk_matches_df['proc_processor_name'].str.lower().isin(uk_processors_lower)]
+
+        # Save UK withdrawals matching
+        uk_report_dir = uk_dirs['lists_dir'] / date_str
+        uk_report_dir.mkdir(parents=True, exist_ok=True)
+        uk_path = uk_report_dir / "uk_withdrawals_matching.xlsx"
+        uk_matches_df.to_excel(uk_path, index=False)
+        print(f"UK withdrawals matching report saved to {uk_path}")
+
+    if row_crm.empty or row_proc.empty:
+        print(f"Skipping ROW withdrawals matching: Missing combined files for {date_str}")
+        row_matches_df = pd.DataFrame()
+    else:
+        # Available ROW proc excluding those matched to UK CRM
+        available_row_proc = row_proc[~row_proc.index.isin(matched_row_proc_ids_from_uk)]
+
+        engine_row_local = ReconciliationEngine(exchange_rate_map, {'enable_cross_processor': True, 'enable_warning_flag': True})
+        row_non_cancelled = row_crm[row_crm['crm_type'].str.lower() != 'withdrawal cancelled']
+        matches_row_local = engine_row_local.match_withdrawals(row_non_cancelled, available_row_proc, add_unmatched_proc=True, add_unmatched_crm=True)
+
+        # Extract matched ROW proc indices local
+        matched_row_proc_ids_local = set()
+        for m in matches_row_local:
+            if m['match_status'] == 1:
+                matched_row_proc_ids_local.update(m.get('matched_proc_indices', []))
+
+        # Unmatched ROW CRM from local
+        row_local_df = pd.DataFrame(matches_row_local)
+        unmatched_row_crm_local_mask = (row_local_df['match_status'] == 0) & row_local_df['crm_date'].notna()
+        unmatched_row_crm_local = row_local_df[unmatched_row_crm_local_mask].copy()
+        unmatched_row_crm_local = row_non_cancelled.iloc[unmatched_row_crm_local_mask.values[:len(row_non_cancelled)]].copy() if not unmatched_row_crm_local.empty else pd.DataFrame()
+
+        # Available UK proc excluding those matched to UK CRM local (note: matched_uk_proc_ids_local from uk_proc)
+        available_uk_proc = uk_proc[~uk_proc.index.isin(matched_uk_proc_ids_local)]
+
+        # Cross match unmatched ROW CRM with available UK proc
+        engine_row_cross = ReconciliationEngine(exchange_rate_map, {'enable_cross_processor': True, 'enable_warning_flag': True})
+        matches_row_cross_full = engine_row_cross.match_withdrawals(unmatched_row_crm_local, available_uk_proc, add_unmatched_proc=False, add_unmatched_crm=False)
+        # Filter only matched from cross (exclude unmatched CRM from cross)
+        matches_row_cross = [m for m in matches_row_cross_full if m['match_status'] == 1]
+
+        # Extract matched UK proc indices from ROW cross
+        matched_uk_proc_ids_from_row = set()
+        for m in matches_row_cross:
+            matched_uk_proc_ids_from_row.update(m.get('matched_proc_indices', []))
+
+        # Combine matches for ROW
+        all_matches_row = matches_row_local + matches_row_cross
+        row_matches_df = pd.DataFrame(all_matches_row)
+
+        # Add payment_method
+        row_matches_df['payment_method'] = np.nan
+        non_cancelled_count = len(row_non_cancelled)
+        if len(row_matches_df) >= non_cancelled_count and not row_non_cancelled.empty:
+            row_matches_df.iloc[:non_cancelled_count, row_matches_df.columns.get_loc('payment_method')] = row_non_cancelled['payment_method'].values
+
+        # Desired columns
+        row_matches_df = row_matches_df[[c for c in desired_columns if c in row_matches_df.columns]]
+
+        # Append cancellations
+        cancelled_row = engine_row_local.make_cancelled_rows(row_crm)
+        if cancelled_row:
+            cancelled_df = pd.DataFrame(cancelled_row)
+            if not cancelled_df.empty:
+                cancelled_df['payment_method'] = np.nan
+                cancelled_crm_mask = row_crm['crm_type'].str.lower() == 'withdrawal cancelled'
+                cancelled_crm_df = row_crm[cancelled_crm_mask].copy()
+                if len(cancelled_df) == len(cancelled_crm_df):
+                    cancelled_df['payment_method'] = cancelled_crm_df['payment_method'].values
+                cancelled_df = cancelled_df[[c for c in desired_columns if c in cancelled_df.columns]]
+                row_matches_df = pd.concat([row_matches_df, cancelled_df], ignore_index=True)
+
+        # Fix regulation if missing
+        if 'crm_index' in row_matches_df.columns and 'regulation' not in row_matches_df.columns:
+            row_matches_df = row_matches_df.merge(row_crm[['regulation']], left_on='crm_index', right_index=True, how='left')
+
+        row_matches_df = drop_cols(row_matches_df, ['matched_proc_indices'])
+
+        # Add crm_type
+        row_matches_df['crm_type'] = ''
+        row_matches_df.loc[row_matches_df['crm_email'].notna(), 'crm_type'] = 'Withdrawal'
+        row_matches_df.loc[row_matches_df['comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
+        columns = list(row_matches_df.columns)
+        columns.insert(0, columns.pop(columns.index('crm_type')))
+        row_matches_df = row_matches_df[columns]
+
+        # Filter out any unmatched proc belonging to UK
+        uk_processors_lower = [p.lower() for p in ['safechargeuk', 'barclays', 'barclaycard']]
+        unmatched_proc_mask = (row_matches_df['match_status'] == 0) & row_matches_df['crm_date'].isna()
+        row_matches_df = row_matches_df[~unmatched_proc_mask | ~row_matches_df['proc_processor_name'].str.lower().isin(uk_processors_lower)]
+
+        # Save ROW withdrawals matching
+        row_report_dir = row_dirs['lists_dir'] / date_str
+        row_report_dir.mkdir(parents=True, exist_ok=True)
+        row_path = row_report_dir / "row_withdrawals_matching.xlsx"
+        row_matches_df.to_excel(row_path, index=False)
+        print(f"ROW withdrawals matching report saved to {row_path}")

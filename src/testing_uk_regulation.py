@@ -1,4 +1,6 @@
-# testing_uk_regulation.py (my main basically):
+# testing_uk_regulation.py (updated)
+
+# testing_uk_regulation.py (basically my main right now, should immitate reports_creator):
 
 # testing_regulation.py (Updated copy logic for selective processor files)
 
@@ -13,6 +15,7 @@ import time  # Added for timing
 from src.utils import categorize_regulation  # Added import for categorize_regulation
 from src.deposits_matcher_test import match_deposits_for_date  # Import the matching function
 from src.shifts_handler_test import main as handle_shifts  # Import the shifts handler
+from src.withdrawals_matcher_test import match_withdrawals_for_date  # New import for withdrawals matching
 
 def setup_regulation_structure(regulation, processors):
     start_time = time.time()  # Timing start
@@ -166,3 +169,20 @@ if __name__ == "__main__":
             print(f"{reg.upper()}:")
             for currency, amount in sums.items():
                 print(f"  {currency}: {amount}")
+
+    # Load exchange rates (assuming shared rates file)
+    rates_path = BASE_DIR / "data" / "rates" / f"rates_{date_str}.csv"
+    if rates_path.exists():
+        rates_df = pd.read_csv(rates_path)
+        rates_df['from_currency'] = rates_df['from_currency'].str.strip()
+        rates_df['to_currency'] = rates_df['to_currency'].str.strip()
+        exchange_rate_map = {
+            (row['from_currency'], row['to_currency']): row['rate']
+            for _, row in rates_df.iterrows()
+        }
+    else:
+        exchange_rate_map = {}
+        print("No rates file found; using empty exchange rate map.")
+
+    # Run withdrawals matching
+    match_withdrawals_for_date(date_str, exchange_rate_map)

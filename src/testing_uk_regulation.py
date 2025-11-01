@@ -29,6 +29,16 @@ def setup_regulation_structure(regulation, processors):
                 target_file = dirs['processor_dir'] / proc_file.name
                 if not target_file.exists():
                     shutil.copy(proc_file, target_file)
+    if regulation == 'uk':
+        shared_processors = ['paypal', 'powercash', 'shift4', 'skrill', 'neteller', 'trustpayments']
+        for proc in shared_processors:
+            for ext in ['xlsx', 'csv', 'xls']:
+                proc_file = shared_processor_dir / f"{proc}_{date_str}.{ext}"
+                if proc_file.exists():
+                    target_file = dirs['processor_dir'] / proc_file.name
+                    if not target_file.exists():
+                        shutil.copy(proc_file, target_file)
+                    break
     end_time = time.time()
     print(f"Setup for {regulation.upper()} took {end_time - start_time:.2f} seconds")
     return {
@@ -69,6 +79,15 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
         additional_psps = [p for p in row_processors if p not in ['safecharge'] and p in unique_psps]
         filtered_processors += additional_psps
     filtered_processors = list(set(filtered_processors))  # Dedup
+    potential_processors = processors
+    if regulation == 'uk':
+        potential_processors += [p for p in row_processors if p not in ['safecharge']]
+    for proc in potential_processors:
+        for ext in ['xlsx', 'csv', 'xls']:
+            proc_file = dirs['processor_dir'] / f"{proc}_{date_str}.{ext}"
+            if proc_file.exists() and proc not in filtered_processors:
+                filtered_processors.append(proc)
+                break
     if transaction_type == "deposit":
         previous_date_str = get_previous_business_day(date_str)
         previous_unmatched_path = dirs['lists_dir'] / previous_date_str / "unmatched_shifted_deposits.xlsx"

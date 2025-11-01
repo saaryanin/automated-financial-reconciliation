@@ -56,7 +56,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         ]
         df = df[keep_cols]
         allowed_types = ["Express Checkout Payment"]
-        df = df[(df["Status"] == "Completed") & (df["Type"].isin(allowed_types)) & (df["Currency"] != "GBP")]
+        df = df[(df["Status"] == "Completed") & (df["Type"].isin(allowed_types))]
         df = df.rename(columns={"Transaction ID": "transaction_id", "Net": "amount", "From Email Address": "email",
                                 "Currency": "currency"})
         df['amount'] = abs(
@@ -85,8 +85,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df = df.drop(columns=['Transaction Type', 'Transaction Result', 'PAN',
                               'Email Address']) # Clean up, added 'Email Address' to drop
     elif processor == "powercash":
-        df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (
-            ~df["Currency"].str.upper().isin(["CAD", "GBP"]))]
+        df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (~df["Currency"].str.upper().isin(["CAD"]))]
         df = df[["Tx-Id", "Date", "Time", "Currency", "Amount", "Firstname", "Lastname", "EMail", "Custom 3",
                  "Credit Card Number"]]
         df = df.rename(
@@ -140,7 +139,6 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df = df.drop(columns=['Transaction Details'])
     elif processor == "trustpayments":
         df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
-        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR"])].copy()
         df = df.rename(columns={
             "transactionreference": "transaction_id",
             "transactionstartedtimestamp": "date",
@@ -335,8 +333,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         allowed_status = ["Completed", "Unclaimed"]
         df = df[
             df["Type"].isin(allowed_types) &
-            df["Status"].isin(allowed_status) &
-            (df["Currency"] != "GBP")
+            df["Status"].isin(allowed_status)
             ].copy()
         if df.empty:
             return pd.DataFrame()
@@ -478,8 +475,8 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df = df[
             df["Tx-Type"].str.lower().isin(["refund", "cft"]) &
             (df["Status"].str.lower() == "successful") &
-            (df["Currency"].str.upper().isin(["EUR", "USD"]))
-        ]
+            (df["Currency"].str.upper().isin(["EUR", "USD", "GBP"]))
+            ]
         if df.empty:
             return pd.DataFrame()
         # — rename to the common schema
@@ -1056,6 +1053,7 @@ def get_previous_business_day(current_date_str):
 # ----------------------------
 # Parallel Batch Processor
 # ----------------------------
+
 def process_files_in_parallel(file_paths, processor_names=None, is_crm=False, save_clean=True,
                               transaction_type="deposit", regulation=None, lists_dir=None, processed_unmatched_shifted_deposits_dir=None, processed_crm_dir=None, processed_processor_dir=None):
     if isinstance(processor_names, str):
@@ -1077,14 +1075,14 @@ def process_files_in_parallel(file_paths, processor_names=None, is_crm=False, sa
                 futures.append(
                     executor.submit(load_crm_file, str(path), p_name, regulation, save_clean, transaction_type, lists_dir=lists_dir, processed_unmatched_shifted_deposits_dir=processed_unmatched_shifted_deposits_dir, processed_crm_dir=processed_crm_dir))
             else:
-                futures.append(executor.submit(load_processor_file, str(path), p_name, save_clean, transaction_type=transaction_type, processed_processor_dir=processed_processor_dir))
+                futures.append(executor.submit(load_processor_file, str(path), p_name, save_clean, transaction_type=transaction_type, processed_processor_dir=processed_processor_dir, regulation=regulation))
         results = [f.result() for f in futures]
     return results
 # ----------------------------
 # Processor File Loader
 # ----------------------------
 def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit",
-                        processed_processor_dir=None) -> pd.DataFrame:
+                        processed_processor_dir=None, regulation: str = None) -> pd.DataFrame:
     processed_processor_dir = processed_processor_dir or config.PROCESSED_PROCESSOR_DIR
     print(f"Using processed_processor_dir for load_processor_file: {processed_processor_dir}")
     # Check if file exists before processing
@@ -1110,8 +1108,18 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
     print(f"Loaded raw file for {processor_name} {transaction_type}: shape {df.shape}, columns {df.columns.tolist()}")
     if transaction_type == "deposit":
         df_clean = standardize_processor_columns_deposits(df, processor_name)
+        if 'currency' in df_clean.columns:
+            df_clean['currency'] = df_clean['currency'].astype(str).str.upper()
     else:
         df_clean = standardize_processor_columns_withdrawals(df, processor_name)
+        if 'currency' in df_clean.columns:
+            df_clean['currency'] = df_clean['currency'].astype(str).str.upper()
+    shared_processors = ['trustpayments', 'shift4', 'skrill', 'powercash', 'paypal', 'neteller']
+    if processor_name.lower() in shared_processors:
+        if regulation == 'row':
+            df_clean = df_clean[df_clean['currency'] != 'GBP']
+        elif regulation == 'uk':
+            df_clean = df_clean[df_clean['currency'] == 'GBP']
     if df_clean is None or df_clean.empty:
         print(f"Cleaned df for {processor_name} {transaction_type} is empty or None")
         return None

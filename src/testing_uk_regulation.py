@@ -3,11 +3,11 @@ import pandas as pd
 from pathlib import Path
 import shutil
 import src.config as config
-from src.preprocess_test import load_crm_file, load_processor_file, combine_processed_files, process_files_in_parallel, PSP_NAME_MAP
+from src.preprocess_test import load_crm_file, load_processor_file, combine_processed_files, process_files_in_parallel, PSP_NAME_MAP, process_crm_subset, extract_crm_transaction_id
 from concurrent.futures import ThreadPoolExecutor
 from src.config import BASE_DIR, TEMP_DIR
 import time
-from src.utils import categorize_regulation
+from src.utils import categorize_regulation, get_previous_business_day
 from src.deposits_matcher_test import match_deposits_for_date
 from src.shifts_handler_test import main as handle_shifts
 from src.withdrawals_matcher_test import match_withdrawals_for_date
@@ -64,11 +64,70 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
         crm_df["PSP name"] = crm_df["PSP name"].replace({'safecharge': 'safechargeuk'})
     name_mask = crm_df["Name"].str.lower() == transaction_type
     unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
-    filtered_processors = processors  # Changed to always process all processors
+    filtered_processors = [p for p in processors if p in unique_psps]
+    if regulation == 'uk':
+        additional_psps = [p for p in row_processors if p not in ['safecharge'] and p in unique_psps]
+        filtered_processors += additional_psps
+    filtered_processors = list(set(filtered_processors))  # Dedup
+    if transaction_type == "deposit":
+        previous_date_str = get_previous_business_day(date_str)
+        previous_unmatched_path = dirs['lists_dir'] / previous_date_str / "unmatched_shifted_deposits.xlsx"
+        if previous_unmatched_path.exists():
+            unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
+            mapping = {
+                'Name': 'crm_type',
+                'Created On': 'crm_date',
+                'First Name (Account) (Account)': 'crm_firstname',
+                'Last Name (Account) (Account)': 'crm_lastname',
+                'Email (Account) (Account)': 'crm_email',
+                'Amount': 'crm_amount',
+                'Currency': 'crm_currency',
+                'Approved': 'crm_approved',
+                'Approved On': 'crm_approved_on',
+                'TP Account': 'crm_tp',
+                'Internal Comment': 'internal_comment',
+                'Method of Payment': 'payment_method',
+                'Internal Type': 'internal_type',
+                'Site (Account) (Account)': 'regulation',
+                'Country Of Residence (Account) (Account)': 'country_of_residence',
+                'PSP name': 'crm_processor_name',
+                'CC Last 4 Digits': 'crm_last4'
+            }
+            unmatched_mapped = unmatched_df.rename(columns=mapping, errors='ignore')
+            unmatched_mapped['crm_processor_name'] = unmatched_mapped.get('crm_processor_name', 'unknown').astype(str).str.strip().str.lower().replace(PSP_NAME_MAP)
+            unmatched_mapped['crm_transaction_id'] = unmatched_mapped.apply(
+                lambda row: extract_crm_transaction_id(row.get('internal_comment'), row['crm_processor_name']) if pd.notna(row.get('internal_comment')) else None,
+                axis=1
+            ).astype(str).fillna('UNKNOWN')
+            required_columns = ['crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount',
+                                'crm_currency', 'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4',
+                                'regulation', 'crm_transaction_id', 'crm_type']
+            unmatched_mapped = unmatched_mapped.reindex(columns=required_columns, fill_value=pd.NA)
+            unmatched_mapped['crm_date'] = pd.to_datetime(unmatched_mapped['crm_date'], errors='coerce').dt.strftime('%m/%d/%Y %I:%M:%S %p')
+            unmatched_mapped['crm_amount'] = pd.to_numeric(unmatched_mapped['crm_amount'], errors='coerce').fillna(0)
+            unmatched_mapped['crm_last4'] = pd.to_numeric(unmatched_mapped['crm_last4'], errors='coerce').fillna(0)
+            unmatched_mapped['crm_currency'] = unmatched_mapped['crm_currency'].replace({'US Dollar': 'USD', 'Euro': 'EUR'})
+            unmatched_mapped['crm_approved'] = unmatched_mapped['crm_approved'].str.strip().str.lower().map({'yes': 'Yes', 'no': 'No'}).fillna(0)
+            unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
+            existing_transaction_ids = set(crm_df['Internal Comment'].apply(lambda x: extract_crm_transaction_id(x, 'default') if pd.notna(x) else None).dropna().unique())
+            new_deposits = unmatched_mapped[~unmatched_mapped['crm_transaction_id'].isin(existing_transaction_ids)]
+            if not new_deposits.empty:
+                crm_df = pd.concat([crm_df, new_deposits], ignore_index=True)
+                print(f"Added {len(new_deposits)} new unmatched deposits")
+            unmatched_out_path = dirs['processed_unmatched_shifted_deposits_dir'] / date_str / "unmatched_shifted_deposits.xlsx"
+            unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
+            unmatched_mapped.to_excel(unmatched_out_path, index=False)
     crm_start = time.time()
-    crm_file_paths = [dirs['crm_filepath']] * len(filtered_processors)
-    processed_crm_dfs = process_files_in_parallel(crm_file_paths, processor_names=filtered_processors, is_crm=True, save_clean=True, transaction_type=transaction_type, regulation=regulation,
-                                                  lists_dir=dirs['lists_dir'], processed_unmatched_shifted_deposits_dir=dirs['processed_unmatched_shifted_deposits_dir'], processed_crm_dir=dirs['processed_crm_dir'])
+    processed_crm_dfs = []
+    for proc in filtered_processors:
+        mask = crm_df["Name"].str.lower() == transaction_type
+        psp_mask = crm_df["PSP name"] == proc
+        subset = crm_df[mask & psp_mask].copy()
+        if regulation == 'uk' and proc == 'safechargeuk':
+            subset["PSP name"] = 'safecharge'
+        processed_subset = process_crm_subset(subset, proc, regulation, transaction_type, True, dirs['processed_crm_dir'], date_str)
+        if processed_subset is not None:
+            processed_crm_dfs.append(processed_subset)
     crm_end = time.time()
     print(f"CRM processing for {regulation.upper()} {transaction_type} took {crm_end - crm_start:.2f} seconds")
     proc_start = time.time()

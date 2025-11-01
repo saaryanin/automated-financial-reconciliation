@@ -915,10 +915,12 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
             lambda c: extract_crm_transaction_id(c, normalized_processor))
     df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
     if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
-        name_col_match = df["Name"].str.lower() == "withdrawal"
-        psp_match = df["PSP name"].str.contains("pamy|zotapay|paymentasia|payment asia|zotapay_paymentasia|wire", case=False, na=False)
-        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|pa-my", case=False, na=False)
-        full_mask = name_col_match & (psp_match | method_match)
+        name_col_match = df["Name"].str.lower() == transaction_type
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|pa-my", case=False,
+                                                                        na=False)
+        psp_match = df["PSP name"].str.contains("zotapay_paymentasia", case=False, na=False)
+        wire_match = df["PSP name"].str.contains("wire ?transfer", case=False, regex=True, na=False)
+        full_mask = name_col_match & (psp_match | (wire_match & method_match))
         df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
@@ -984,6 +986,48 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
         folder = f"{folder_name}_{transaction_type}s.xlsx"
         out_path = processed_crm_dir / folder_name / date_str / folder
         print(f"Calculated out_path: {out_path}")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+            if "transaction_id" in df.columns and transaction_type == "deposit":
+                worksheet = writer.sheets['Sheet1']
+                trans_col = df.columns.get_loc('transaction_id') + 1
+                for row in range(2, len(df) + 2):
+                    worksheet.cell(row=row, column=trans_col).number_format = '@'
+    return df.reset_index(drop=True)
+
+def process_crm_subset(df: pd.DataFrame, processor: str, regulation: str, transaction_type: str, save_clean: bool, processed_crm_dir: Path, date_str: str):
+    normalized_processor = processor.lower()
+    if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"] and transaction_type == "withdrawal":
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|pa-my", case=False, na=False)
+        psp_match = df["PSP name"].str.contains("zotapay_paymentasia", case=False, na=False)
+        wire_match = df["PSP name"].str.contains("wire ?transfer", case=False, regex=True, na=False)
+        full_mask = method_match | psp_match | (wire_match & method_match)  # Adjusted to your last fix
+        df = df[full_mask].reset_index(drop=True)
+    if df.empty:
+        return None
+    df["tp"] = df.get("TP Account", "")
+    if normalized_processor == 'bridgerpay':
+        df['transaction_id'] = df.get('Internal Comment', pd.Series(index=df.index, dtype=str)).astype(str).str.strip()
+    else:
+        df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor) if pd.notna(c) else 'UNKNOWN')
+    df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
+    if "Currency" in df.columns:
+        df["Currency"] = df["Currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
+    if transaction_type == "withdrawal":
+        needed_columns = ["Created On", "First Name (Account) (Account)", "Last Name (Account) (Account)", "Email (Account) (Account)", "tp", "Amount", "Currency", "Method of Payment", "PSP name", "CC Last 4 Digits", "Name", "Site (Account) (Account)"]
+        df = df[[col for col in needed_columns if col in df.columns]]
+        if "transaction_id" in df.columns:
+            df = df.drop(columns=["transaction_id"])
+    elif transaction_type == "deposit":
+        needed_columns = ["Created On", "First Name (Account) (Account)", "Last Name (Account) (Account)", "Email (Account) (Account)", "tp", "Amount", "Currency", "Method of Payment", "PSP name", "CC Last 4 Digits", "transaction_id", "Approved", "Name", "Site (Account) (Account)"]
+        df = df[[col for col in needed_columns if col in df.columns]]
+        df['crm_approved'] = df.get('Approved', 0).str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0)
+        df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')
+    if save_clean:
+        folder_name = 'safecharge' if regulation == 'uk' and normalized_processor == 'safechargeuk' else ("zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"] else normalized_processor)
+        out_filename = f"{folder_name}_{transaction_type}s.xlsx"
+        out_path = processed_crm_dir / folder_name / date_str / out_filename
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')

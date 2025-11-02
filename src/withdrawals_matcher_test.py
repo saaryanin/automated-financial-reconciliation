@@ -118,6 +118,14 @@ PROCESSOR_CONFIGS = {
         tolerance=0.1,
         matching_logic="trustpayments"
     ),
+    'barclays': ProcessorConfig(
+        email_threshold=0.0,
+        require_last4=True,
+        require_email=False,
+        enable_name_fallback=False,
+        tolerance=0.1,
+        matching_logic="barclays"
+    ),
 }
 
 def load_(csv_path):
@@ -484,6 +492,9 @@ class ReconciliationEngine:
             for crm_idx in candidate_crm_indices:
                 crm_row = crm_dict[crm_idx]
                 crm_group = get_group(crm_row['crm_processor_name'])
+                if proc_row['proc_processor_name'].lower() in ['barclays'] and crm_row[
+                    'regulation'].lower() != 'uk':
+                    continue
 
                 if crm_group != proc_group:
                     continue  # Skip if different groups
@@ -852,8 +863,11 @@ class ReconciliationEngine:
         """
         proc = (crm_row.get('crm_processor_name') or '').strip().lower()
 
-        if proc in ['barclays', 'barclaycard']:
-            return None, {'failure_reason': 'Skipping barclays/barclaycard as per instructions'}
+        if proc in ('barclays'):
+            return self._match_barclays_row(
+                crm_row, proc_dict, last4_map, used,
+                self.get_processor_config(proc)
+            )
 
         # alias PowerCash → SafeCharge
         if proc == 'powercash':
@@ -1898,6 +1912,111 @@ class ReconciliationEngine:
                     'amount_difference': round(amount_diff, 2)
                 }, {'trustpayments_candidate': best_candidate}
         return None, {'failure_reason': 'No TrustPayments match'}
+
+    def _match_barclays_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        crm_last4_raw = str(crm_row.get('crm_last4', '')).strip()
+        crm_last4 = normalize_string(crm_last4_raw, is_last4=True)
+        crm_tp_raw = str(crm_row.get('crm_tp', '')).strip()
+        crm_tp = normalize_string(crm_tp_raw)
+        crm_cur = crm_row['crm_currency']
+        crm_amt = abs(crm_row['crm_amount'])
+        crm_proc_name = crm_row.get('crm_processor_name', '').lower()
+
+        valid_last4 = crm_last4 not in ("", "0", "0000")
+
+        if not valid_last4 or not crm_tp:
+            return None, {'failure_reason': 'Missing valid last4 or TP for Barclays match'}
+
+        candidates = []
+        indices = [i for i in proc_dict if
+                   i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
+
+        abs_tol = 0.1
+        rel_tol = proc_config.tolerance * crm_amt
+        tol = max(abs_tol, rel_tol)
+
+        for i in indices:
+            row = proc_dict[i]
+
+            proc_amt_raw = row.get('proc_amount')
+            proc_cur = row.get('proc_currency')
+            if proc_amt_raw is None or proc_cur is None:
+                continue
+
+            proc_amt_crm, rate = self.convert_amount(proc_amt_raw, proc_cur, crm_cur)
+            if proc_amt_crm is None:
+                continue
+
+            proc_last4_raw = str(row.get('proc_last4', '')).strip()
+            proc_last4 = normalize_string(proc_last4_raw, is_last4=True)
+            if proc_last4 != crm_last4:
+                continue
+
+            proc_tp_raw = str(row.get('proc_tp', '')).strip()
+            proc_tp = normalize_string(proc_tp_raw)
+            if proc_tp != crm_tp:
+                continue
+
+            amount_diff = abs(proc_amt_crm - crm_amt)
+
+            candidates.append({
+                'index': i,
+                'proc_amount_crm_currency': proc_amt_crm,
+                'rate': rate,
+                'row_data': row,
+                'amount_diff': amount_diff
+            })
+
+        if not candidates:
+            return None, {'failure_reason': 'No matching Barclays row found'}
+
+        # Sort by amount difference
+        candidates.sort(key=lambda c: c['amount_diff'])
+        best = candidates[0]
+
+        payment_status = 1 if best['amount_diff'] <= tol else 0
+        comment = ""
+        if payment_status == 0:
+            diff = best['proc_amount_crm_currency'] - crm_amt
+            if diff > 0:
+                comment = f"Overpaid by {round(diff, 2)} {crm_cur}"
+            elif diff < 0:
+                comment = f"Underpaid by {round(-diff, 2)} {crm_cur}"
+            else:
+                comment = "Amount mismatch"
+
+        match = {
+            'crm_date': crm_row.get('crm_date'),
+            'crm_email': crm_row.get('crm_email', ''),
+            'crm_firstname': crm_row.get('crm_firstname', ''),
+            'crm_lastname': crm_row.get('crm_lastname', ''),
+            'crm_last4': crm_last4_raw,
+            'crm_currency': crm_cur,
+            'crm_amount': crm_amt,
+            'crm_processor_name': crm_row.get('crm_processor_name'),
+            'regulation': crm_row.get('regulation', ''),
+            'proc_date': best['row_data'].get('proc_date'),
+            'proc_email': best['row_data'].get('proc_email', ''),
+            'proc_firstname': best['row_data'].get('proc_firstname', ''),
+            'proc_lastname': best['row_data'].get('proc_lastname', ''),
+            'proc_last4': best['row_data'].get('proc_last4'),
+            'proc_currency': best['row_data'].get('proc_currency'),
+            'proc_amount': best['row_data'].get('proc_amount'),
+            'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
+            'proc_processor_name': best['row_data'].get('proc_processor_name'),
+            'email_similarity_avg': None,
+            'last4_match': True,
+            'name_fallback_used': False,
+            'exact_match_used': payment_status == 1,
+            'converted': best['rate'] != 1.0,
+            'proc_combo_len': 1,
+            'crm_combo_len': 1,
+            'match_status': 1,
+            'payment_status': payment_status,
+            'comment': comment,
+            'matched_proc_indices': [best['index']]
+        }
+        return match, {}
 
     def _create_unmatched_crm_record(self, crm_row):
         return {

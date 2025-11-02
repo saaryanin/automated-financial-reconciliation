@@ -788,8 +788,8 @@ class ReconciliationEngine:
                 continue
 
         # last-chance cross-processor matching
-        if self.config.get('enable_cross_processor', False):
-            self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
+        # if self.config.get('enable_cross_processor', False):
+        #     self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
 
         # Add unmatched CRM rows after all matching (moved outside if)
         for idx in crm_df.index:
@@ -1994,6 +1994,19 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
     row_crm = pd.read_excel(row_crm_path) if row_crm_path.exists() else pd.DataFrame()
     row_proc = pd.read_excel(row_proc_path) if row_proc_path.exists() else pd.DataFrame()
 
+    uk_processors_lower = [p.lower() for p in ['safechargeuk', 'barclays', 'barclaycard']]
+
+    desired_columns = [
+        'crm_type', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
+        'payment_method',
+        'crm_processor_name',
+        'regulation',
+        'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency',
+        'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
+        'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
+        'payment_status', 'warning', 'comment'
+    ]
+
     if uk_crm.empty or uk_proc.empty:
         print(f"Skipping UK withdrawals matching: Missing combined files for {date_str}")
         uk_matches_df = pd.DataFrame()
@@ -2033,22 +2046,10 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
 
         # Add payment_method
         uk_matches_df['payment_method'] = np.nan
+        uk_matches_df['payment_method'] = uk_matches_df['payment_method'].astype('object')
         non_cancelled_count = len(uk_non_cancelled)
         if len(uk_matches_df) >= non_cancelled_count and not uk_non_cancelled.empty:
             uk_matches_df.iloc[:non_cancelled_count, uk_matches_df.columns.get_loc('payment_method')] = uk_non_cancelled['payment_method'].values
-
-        # Desired columns
-        desired_columns = [
-            'crm_type', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
-            'payment_method',
-            'crm_processor_name',
-            'regulation',
-            'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency',
-            'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
-            'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
-            'payment_status', 'warning', 'comment'
-        ]
-        uk_matches_df = uk_matches_df[[c for c in desired_columns if c in uk_matches_df.columns]]
 
         # Append cancellations
         cancelled_uk = engine_uk_local.make_cancelled_rows(uk_crm)
@@ -2056,38 +2057,16 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
             cancelled_df = pd.DataFrame(cancelled_uk)
             if not cancelled_df.empty:
                 cancelled_df['payment_method'] = np.nan
+                cancelled_df['payment_method'] = cancelled_df['payment_method'].astype('object')
                 cancelled_crm_mask = uk_crm['crm_type'].str.lower() == 'withdrawal cancelled'
                 cancelled_crm_df = uk_crm[cancelled_crm_mask].copy()
                 if len(cancelled_df) == len(cancelled_crm_df):
                     cancelled_df['payment_method'] = cancelled_crm_df['payment_method'].values
-                cancelled_df = cancelled_df[[c for c in desired_columns if c in cancelled_df.columns]]
                 uk_matches_df = pd.concat([uk_matches_df, cancelled_df], ignore_index=True)
 
         # Fix regulation if missing
         if 'crm_index' in uk_matches_df.columns and 'regulation' not in uk_matches_df.columns:
             uk_matches_df = uk_matches_df.merge(uk_crm[['regulation']], left_on='crm_index', right_index=True, how='left')
-
-        uk_matches_df = drop_cols(uk_matches_df, ['matched_proc_indices'])
-
-        # Add crm_type
-        uk_matches_df['crm_type'] = ''
-        uk_matches_df.loc[uk_matches_df['crm_email'].notna(), 'crm_type'] = 'Withdrawal'
-        uk_matches_df.loc[uk_matches_df['comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
-        columns = list(uk_matches_df.columns)
-        columns.insert(0, columns.pop(columns.index('crm_type')))
-        uk_matches_df = uk_matches_df[columns]
-
-        # Filter out any unmatched proc not belonging to UK
-        uk_processors_lower = [p.lower() for p in ['safechargeuk', 'barclays', 'barclaycard']]
-        unmatched_proc_mask = (uk_matches_df['match_status'] == 0) & uk_matches_df['crm_date'].isna()
-        uk_matches_df = uk_matches_df[~unmatched_proc_mask | uk_matches_df['proc_processor_name'].str.lower().isin(uk_processors_lower)]
-
-        # Save UK withdrawals matching
-        uk_report_dir = uk_dirs['lists_dir'] / date_str
-        uk_report_dir.mkdir(parents=True, exist_ok=True)
-        uk_path = uk_report_dir / "uk_withdrawals_matching.xlsx"
-        uk_matches_df.to_excel(uk_path, index=False)
-        print(f"UK withdrawals matching report saved to {uk_path}")
 
     if row_crm.empty or row_proc.empty:
         print(f"Skipping ROW withdrawals matching: Missing combined files for {date_str}")
@@ -2132,12 +2111,10 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
 
         # Add payment_method
         row_matches_df['payment_method'] = np.nan
+        row_matches_df['payment_method'] = row_matches_df['payment_method'].astype('object')
         non_cancelled_count = len(row_non_cancelled)
         if len(row_matches_df) >= non_cancelled_count and not row_non_cancelled.empty:
             row_matches_df.iloc[:non_cancelled_count, row_matches_df.columns.get_loc('payment_method')] = row_non_cancelled['payment_method'].values
-
-        # Desired columns
-        row_matches_df = row_matches_df[[c for c in desired_columns if c in row_matches_df.columns]]
 
         # Append cancellations
         cancelled_row = engine_row_local.make_cancelled_rows(row_crm)
@@ -2145,20 +2122,27 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
             cancelled_df = pd.DataFrame(cancelled_row)
             if not cancelled_df.empty:
                 cancelled_df['payment_method'] = np.nan
+                cancelled_df['payment_method'] = cancelled_df['payment_method'].astype('object')
                 cancelled_crm_mask = row_crm['crm_type'].str.lower() == 'withdrawal cancelled'
                 cancelled_crm_df = row_crm[cancelled_crm_mask].copy()
                 if len(cancelled_df) == len(cancelled_crm_df):
                     cancelled_df['payment_method'] = cancelled_crm_df['payment_method'].values
-                cancelled_df = cancelled_df[[c for c in desired_columns if c in cancelled_df.columns]]
                 row_matches_df = pd.concat([row_matches_df, cancelled_df], ignore_index=True)
 
         # Fix regulation if missing
         if 'crm_index' in row_matches_df.columns and 'regulation' not in row_matches_df.columns:
             row_matches_df = row_matches_df.merge(row_crm[['regulation']], left_on='crm_index', right_index=True, how='left')
 
-        row_matches_df = drop_cols(row_matches_df, ['matched_proc_indices'])
+        row_matches_df = row_matches_df[ ~((row_matches_df['match_status'] == 0) &
+                                           row_matches_df['crm_date'].isna() &
+                                           row_matches_df['matched_proc_indices'].apply(lambda x: bool(set(x) & matched_row_proc_ids_from_uk if 'matched_row_proc_ids_from_uk' in locals() else set()))) ]
 
-        # Add crm_type
+        # Keep filter to exclude any UK-specific processors from row unmatched proc
+        unmatched_proc_mask = (row_matches_df['match_status'] == 0) & row_matches_df['crm_date'].isna()
+        row_matches_df = row_matches_df[~unmatched_proc_mask | ~row_matches_df['proc_processor_name'].str.lower().isin(uk_processors_lower)]
+
+        row_matches_df = row_matches_df[[c for c in desired_columns if c in row_matches_df.columns]]
+
         row_matches_df['crm_type'] = ''
         row_matches_df.loc[row_matches_df['crm_email'].notna(), 'crm_type'] = 'Withdrawal'
         row_matches_df.loc[row_matches_df['comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
@@ -2166,14 +2150,27 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
         columns.insert(0, columns.pop(columns.index('crm_type')))
         row_matches_df = row_matches_df[columns]
 
-        # Filter out any unmatched proc belonging to UK
-        uk_processors_lower = [p.lower() for p in ['safechargeuk', 'barclays', 'barclaycard']]
-        unmatched_proc_mask = (row_matches_df['match_status'] == 0) & row_matches_df['crm_date'].isna()
-        row_matches_df = row_matches_df[~unmatched_proc_mask | ~row_matches_df['proc_processor_name'].str.lower().isin(uk_processors_lower)]
-
         # Save ROW withdrawals matching
         row_report_dir = row_dirs['lists_dir'] / date_str
         row_report_dir.mkdir(parents=True, exist_ok=True)
         row_path = row_report_dir / "row_withdrawals_matching.xlsx"
         row_matches_df.to_excel(row_path, index=False)
         print(f"ROW withdrawals matching report saved to {row_path}")
+
+    # Finalize and save UK
+    if not uk_matches_df.empty:
+        unmatched_proc_mask_uk = (uk_matches_df['match_status'] == 0) & uk_matches_df['crm_date'].isna()
+        cross_matched_uk_proc = uk_matches_df['matched_proc_indices'].apply(lambda x: bool(set(x) & (matched_uk_proc_ids_from_row if 'matched_uk_proc_ids_from_row' in locals() else set())))
+        uk_matches_df = uk_matches_df[~(unmatched_proc_mask_uk & cross_matched_uk_proc)]
+        uk_matches_df = uk_matches_df[[c for c in desired_columns if c in uk_matches_df.columns]]
+        uk_matches_df['crm_type'] = ''
+        uk_matches_df.loc[uk_matches_df['crm_email'].notna(), 'crm_type'] = 'Withdrawal'
+        uk_matches_df.loc[uk_matches_df['comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
+        columns = list(uk_matches_df.columns)
+        columns.insert(0, columns.pop(columns.index('crm_type')))
+        uk_matches_df = uk_matches_df[columns]
+        uk_report_dir = uk_dirs['lists_dir'] / date_str
+        uk_report_dir.mkdir(parents=True, exist_ok=True)
+        uk_path = uk_report_dir / "uk_withdrawals_matching.xlsx"
+        uk_matches_df.to_excel(uk_path, index=False)
+        print(f"UK withdrawals matching report saved to {uk_path}")

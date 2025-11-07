@@ -11,6 +11,7 @@ from src.utils import categorize_regulation, get_previous_business_day
 from src.deposits_matcher_test import match_deposits_for_date
 from src.shifts_handler_test import main as handle_shifts
 from src.withdrawals_matcher_test import match_withdrawals_for_date
+from src.cross_regulation_matcher import run_cross_regulation_matching
 def setup_regulation_structure(regulation, processors):
     start_time = time.time()
     dirs = config.setup_dirs_for_reg(regulation, create=True)
@@ -225,3 +226,4 @@ if __name__ == "__main__":
         exchange_rate_map = {}
         print("No rates file found; using empty exchange rate map.")
     match_withdrawals_for_date(date_str, exchange_rate_map)
+    run_cross_regulation_matching(date_str, exchange_rate_map)

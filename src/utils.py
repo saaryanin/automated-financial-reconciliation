@@ -7,6 +7,24 @@ import re
 import requests
 import json
 from datetime import datetime, timedelta
+import numpy as np
+import ast
+
+def clean_field(s):
+    if isinstance(s, list):
+        if not s:
+            return None
+        s = s[0]  # Take first item if list
+    if not isinstance(s, str):
+        return s
+    s = s.strip()
+    if s.startswith('[') and s.endswith(']'):
+        s = s[1:-1].strip()
+    if s.startswith("'") and s.endswith("'"):
+        s = s[1:-1]
+    elif s.startswith('"') and s.endswith('"'):
+        s = s[1:-1]
+    return s
 
 def setup_logger(name, level=logging.INFO):
     """Create and return a logger with the specified name and level."""
@@ -104,11 +122,17 @@ def clean_amount(val):
         return None
 
 def clean_last4(v):
+    if v is None:
+        return ''
+    if isinstance(v, (list, np.ndarray)):
+        if len(v) == 0:
+            return ''
+        v = v[0]
     if pd.isna(v):
         return ''
     try:
         return str(int(float(v))).zfill(4)
-    except ValueError:
+    except (ValueError, TypeError):
         return str(v).strip()
 
 

@@ -15,7 +15,7 @@ from src.cross_regulation_matcher import run_cross_regulation_matching
 def setup_regulation_structure(regulation, processors):
     start_time = time.time()
     dirs = config.setup_dirs_for_reg(regulation, create=True)
-    shared_crm_filepath = BASE_DIR / "data" / "crm_reports" / "crm_2025-10-20.xlsx"
+    shared_crm_filepath = BASE_DIR / "data" / "crm_reports" / f"crm_{date_str}.xlsx"
     reg_crm_filepath = dirs['crm_dir'] / shared_crm_filepath.name
     if shared_crm_filepath.exists() and not reg_crm_filepath.exists():
         shutil.copy(shared_crm_filepath, reg_crm_filepath)
@@ -46,7 +46,7 @@ def setup_regulation_structure(regulation, processors):
         **dirs,
         'crm_filepath': reg_crm_filepath
     }
-date_str = '2025-10-20'
+date_str = '2025-10-21'
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
     'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'

@@ -1114,12 +1114,13 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         df_clean = standardize_processor_columns_withdrawals(df, processor_name)
         if 'currency' in df_clean.columns:
             df_clean['currency'] = df_clean['currency'].astype(str).str.upper()
-    shared_processors = ['trustpayments', 'shift4', 'skrill', 'powercash', 'paypal', 'neteller']
-    if processor_name.lower() in shared_processors:
-        if regulation == 'row':
-            df_clean = df_clean[df_clean['currency'] != 'GBP']
-        elif regulation == 'uk':
-            df_clean = df_clean[df_clean['currency'] == 'GBP']
+    if not df_clean.empty and 'currency' in df_clean.columns:
+        shared_processors = ['trustpayments', 'shift4', 'skrill', 'powercash', 'paypal', 'neteller']
+        if processor_name.lower() in shared_processors:
+            if regulation == 'row':
+                df_clean = df_clean[df_clean['currency'] != 'GBP']
+            elif regulation == 'uk':
+                df_clean = df_clean[df_clean['currency'] == 'GBP']
     if df_clean is None or df_clean.empty:
         print(f"Cleaned df for {processor_name} {transaction_type} is empty or None")
         return None

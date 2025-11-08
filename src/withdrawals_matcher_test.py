@@ -844,6 +844,7 @@ class ReconciliationEngine:
             out['warning'] = False # Explicitly set for cancelled rows
             cancelled.append(out)
         return cancelled
+
     def match_withdrawals(self, crm_df, processor_df, add_unmatched_proc=True, add_unmatched_crm=True):
         """
         Main reconciliation loop: matches CRM withdrawals to processor withdrawals,
@@ -865,7 +866,7 @@ class ReconciliationEngine:
                 break
             proc_name = str(row.get('crm_processor_name', '')).strip().lower()
             try:
-                result = self._match_crm_row(row, proc_dict, last4_map, used_proc)
+                result = self._match_crm_row(row, proc_dict, last4_map, used_proc, crm_idx=idx)
                 if result is None or not isinstance(result, tuple) or len(result) != 2:
                     raise ValueError(f"_match_crm_row() returned invalid result: {result}")
                 match, diag = result
@@ -904,7 +905,7 @@ class ReconciliationEngine:
         self._cross_regulation_matching(crm_df, processor_df, used_crm, used_proc, matches)
         # last-chance cross-processor matching
         # if self.config.get('enable_cross_processor', False):
-        # self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
+        #     self._cross_processor_last_chance(crm_df, processor_df, used_crm, used_proc, matches)
         # Add unmatched CRM rows after all matching (moved outside if)
         for idx in crm_df.index:
             if idx not in used_crm:
@@ -926,7 +927,7 @@ class ReconciliationEngine:
                     base = {
                         'crm_date': None, 'crm_email': None, 'crm_firstname': None, 'crm_lastname': None,
                         'crm_tp': None, 'crm_last4': None, 'crm_currency': None, 'crm_amount': None,
-                        'crm_processor_name': None, 'regulation': '','proc_date': [prow.get('proc_date')],
+                        'crm_processor_name': None, 'regulation': '', 'proc_date': [prow.get('proc_date')],
                         'proc_email': [prow.get('proc_email')], 'proc_last4': [prow.get('proc_last4')],
                         'proc_currency': [prow.get('proc_currency')], 'proc_amount': [prow.get('proc_amount')],
                         'proc_processor_name': prow.get('proc_processor_name'),
@@ -950,7 +951,8 @@ class ReconciliationEngine:
             for m in matches:
                 m['warning'] = ''
         return matches
-    def _match_crm_row(self, crm_row, proc_dict, last4_map, used):
+
+    def _match_crm_row(self, crm_row, proc_dict, last4_map, used, crm_idx=None):
         """
         Route each CRM row to its processor-specific matcher:
           • SafeCharge / PowerCash: standard logic
@@ -962,14 +964,12 @@ class ReconciliationEngine:
         """
         proc = (crm_row.get('crm_processor_name') or '').strip().lower()
         if proc in ('barclays'):
-            return self._match_barclays_row(
-                crm_row, proc_dict, last4_map, used,
-                self.get_processor_config(proc)
-            )
+            return self._match_barclays_row(crm_row, proc_dict, last4_map, used,
+                                            self.get_processor_config(proc), crm_idx=crm_idx)
         if proc == 'safecharge' and crm_row.get('regulation', '').lower() == 'uk':
             return self._match_safechargeuk_row(
                 crm_row, proc_dict, last4_map, used,
-                self.get_processor_config('safechargeuk')
+                self.get_processor_config('safechargeuk'), crm_idx=crm_idx
             )
         # alias PowerCash → SafeCharge
         if proc == 'powercash':
@@ -977,38 +977,38 @@ class ReconciliationEngine:
         if proc == 'paypal':
             return self._match_paypal_row(
                 crm_row, proc_dict, last4_map, used,
-                self.get_processor_config('paypal')
+                self.get_processor_config('paypal'), crm_idx=crm_idx
             )
         if proc == 'shift4':
             return self._match_shift4_row(
                 crm_row, proc_dict, last4_map, used,
-                self.get_processor_config('shift4')
+                self.get_processor_config('shift4'), crm_idx=crm_idx
             )
         if proc in ('skrill', 'neteller'):
             return self._match_skrill_neteller_row(
                 crm_row, proc_dict, last4_map, used,
                 self.get_processor_config(proc),
-                processor_name=proc
+                processor_name=proc, crm_idx=crm_idx
             )
         if proc == 'bitpay':
             return self._match_bitpay_row(
                 crm_row, proc_dict, last4_map, used,
-                self.get_processor_config('bitpay')
+                self.get_processor_config('bitpay'), crm_idx=crm_idx
             )
         if proc == "zotapay_paymentasia":
             return self._match_zotapay_paymentasia_row(crm_row, proc_dict, last4_map, used,
-                                                       self.get_processor_config(proc))
+                                                       self.get_processor_config(proc), crm_idx=crm_idx)
         if proc == "trustpayments":
             return self._match_trustpayments_row(
                 crm_row, proc_dict, last4_map, used,
-                self.get_processor_config("trustpayments")
+                self.get_processor_config("trustpayments"), crm_idx=crm_idx
             )
         # Fallback to default standard matcher
         return self._match_standard_row(
             crm_row, proc_dict, last4_map, used,
-            self.get_processor_config(proc)
+            self.get_processor_config(proc), crm_idx=crm_idx
         )
-    # In _match_standard_row, replace the entire function with this updated version
+
     def _match_standard_row(self, crm_row, proc_dict, last4_map, used, proc_config, skip_proc_check=False,
                             cross_reg=False, crm_idx=None):
         crm_last4 = str(crm_row['crm_last4']) if not pd.isna(crm_row['crm_last4']) else ''
@@ -1168,52 +1168,53 @@ class ReconciliationEngine:
                 proc_date_ts = None
             else:
                 proc_date_ts = proc_date_ts.normalize()
-            match = {
-                'crm_date': crm_row.get('crm_date'),
-                'crm_email': crm_email,
-                'crm_firstname': crm_first,
-                'crm_lastname': crm_last,
-                'crm_last4': crm_last4,
-                'crm_currency': crm_cur,
-                'crm_amount': crm_amt,
-                'crm_processor_name': crm_row.get('crm_processor_name'),
-                'regulation': crm_row.get('regulation', ''),
-                'proc_date': proc_date_ts,
-                'proc_email': clean_field(best['row_data'].get('proc_email')),
-                'proc_firstname': clean_field(best['row_data'].get('proc_firstname', '')),
-                'proc_lastname': clean_field(best['row_data'].get('proc_lastname', '')),
-                'proc_last4': clean_field(best['row_data'].get('proc_last4')),
-                'proc_currency': clean_field(best['row_data'].get('proc_currency')),
-                'proc_amount': clean_field(best['row_data'].get('proc_amount')),
-                'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
-                'proc_processor_name': best['row_data'].get('proc_processor_name'),
-                'email_similarity_avg': round(best['email_score'], 4),
-                'last4_match': best['last4_match'],
-                'name_fallback_used': best['name_fallback'],
-                'exact_match_used': False,
-                'converted': (best['proc_rate'] != 1.0),
-                'proc_combo_len': 1,
-                'crm_combo_len': 1,
-                'match_status': 1,
-                'payment_status': payment_status,
-                'comment': comment,
-                'matched_proc_indices': [best['index']]
-            }
-            if crm_idx is not None:
-                match['crm_row_index'] = crm_idx
-            print("Returning match for crm_email: " + str(crm_email))
+            # Wrap the match dict building in try-except as:
+            try:
+                match = {
+                    'crm_date': crm_row.get('crm_date'),
+                    'crm_email': crm_email,
+                    'crm_firstname': crm_first,
+                    'crm_lastname': crm_last,
+                    'crm_last4': crm_last4,
+                    'crm_currency': crm_cur,
+                    'crm_amount': crm_amt,
+                    'crm_processor_name': crm_row.get('crm_processor_name'),
+                    'regulation': crm_row.get('regulation', ''),
+                    'proc_date': proc_date_ts,
+                    'proc_email': clean_field(best['row_data'].get('proc_email')),
+                    'proc_firstname': clean_field(best['row_data'].get('proc_firstname', '')),
+                    'proc_lastname': clean_field(best['row_data'].get('proc_lastname', '')),
+                    'proc_last4': clean_field(best['row_data'].get('proc_last4')),
+                    'proc_currency': clean_field(best['row_data'].get('proc_currency')),
+                    'proc_amount': clean_field(best['row_data'].get('proc_amount')),
+                    'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
+                    'proc_processor_name': best['row_data'].get('proc_processor_name'),
+                    'email_similarity_avg': round(best['email_score'], 4),
+                    'last4_match': best['last4_match'],
+                    'name_fallback_used': best['name_fallback'],
+                    'exact_match_used': False,
+                    'converted': (best['proc_rate'] != 1.0),
+                    'proc_combo_len': 1,
+                    'crm_combo_len': 1,
+                    'match_status': 1,
+                    'payment_status': payment_status,
+                    'comment': comment,
+                    'matched_proc_indices': [best['index']]
+                }
+                if crm_idx is not None:
+                    match['crm_row_index'] = crm_idx
+                print("Returning match for crm_email: " + str(crm_email))
+            except Exception as e:
+                print(f"Error building match for crm_email {crm_email}: {str(e)}")
+                print("Not returning match for crm_email: " + str(crm_email) + " - reason: " + str(e))
+                return None, {'failure_reason': str(e)}
             return match, {}
         except Exception as e:
             print(f"Error building match for crm_email {crm_email}: {str(e)}")
             print("Not returning match for crm_email: " + str(crm_email) + " - reason: " + str(e))
             return None, {'failure_reason': str(e)}
 
-
-        except Exception as e:
-            print(f"Error building match for crm_email {crm_email}: {str(e)}")
-            print("Not returning match for crm_email: " + str(crm_email) + " - reason: " + str(e))
-            return None, {'failure_reason': str(e)}
-    def _match_zotapay_paymentasia_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+    def _match_zotapay_paymentasia_row(self, crm_row, proc_dict, last4_map, used, proc_config,crm_idx=None):
         crm_tp = str(crm_row.get('crm_tp', '')).strip()
         crm_amt = abs(crm_row['crm_amount'])
         crm_cur = str(crm_row['crm_currency']).strip().upper()
@@ -1306,41 +1307,46 @@ class ReconciliationEngine:
             else:
                 comment = "Amount mismatch"
         name_fallback_used = best_candidate['name_fallback']
-        match = {
-            'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_email,
-            'crm_firstname': crm_row.get('crm_firstname', ''),
-            'crm_lastname': crm_row.get('crm_lastname', ''),
-            'crm_last4': crm_last4,
-            'crm_currency': crm_cur,
-            'crm_amount': crm_amt,
-            'crm_processor_name': crm_row.get('crm_processor_name', 'zotapay_paymentasia'),
-            'regulation': crm_row.get('regulation', ''),
-            'proc_date': best_candidate['proc_date'],
-            'proc_email': best_candidate['proc_email'],
-            'proc_firstname': best_candidate['proc_firstname'],
-            'proc_lastname': best_candidate['proc_lastname'],
-            'proc_last4': best_candidate['proc_last4'],
-            'proc_currency': best_candidate['proc_currency'],
-            'proc_amount': best_candidate['proc_amount'],
-            'proc_amount_crm_currency': best_candidate['proc_amount_crm_currency'],
-            'proc_processor_name': proc_dict[best_candidate['index']].get('proc_processor_name'),
-            'exchange_rate': best_candidate['rate'],
-            'email_similarity_avg': round(best_candidate['email_similarity'], 4),
-            'last4_match': best_candidate['last4_match'],
-            'name_fallback_used': name_fallback_used,
-            'exact_match_used': best_candidate['exact_match'],
-            'converted': best_candidate['proc_currency'] != crm_cur,
-            'proc_combo_len': 1,
-            'crm_combo_len': 1,
-            'match_status': 1,
-            'payment_status': payment_status,
-            'comment': comment,
-            'matched_proc_indices': [best_candidate['index']],
-            'amount_difference': round(amount_diff, 2)
-        }
-        return match, {}
-    def _match_bitpay_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        try:
+            match = {
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': crm_email,
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': crm_last4,
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': crm_row.get('crm_processor_name', 'zotapay_paymentasia'),
+                'regulation': crm_row.get('regulation', ''),
+                'proc_date': best_candidate['proc_date'],
+                'proc_email': best_candidate['proc_email'],
+                'proc_firstname': best_candidate['proc_firstname'],
+                'proc_lastname': best_candidate['proc_lastname'],
+                'proc_last4': best_candidate['proc_last4'],
+                'proc_currency': best_candidate['proc_currency'],
+                'proc_amount': best_candidate['proc_amount'],
+                'proc_amount_crm_currency': best_candidate['proc_amount_crm_currency'],
+                'proc_processor_name': proc_dict[best_candidate['index']].get('proc_processor_name'),
+                'email_similarity_avg': round(best_candidate['email_similarity'], 4),
+                'last4_match': best_candidate['last4_match'],
+                'name_fallback_used': name_fallback_used,
+                'exact_match_used': best_candidate['exact_match'],
+                'converted': best_candidate['proc_currency'] != crm_cur,
+                'proc_combo_len': 1,
+                'crm_combo_len': 1,
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [best_candidate['index']],
+                'amount_difference': round(amount_diff, 2)
+            }
+            if crm_idx is not None:
+                match['crm_row_index'] = crm_idx
+            return match, {}
+        except Exception as e:
+            print(f"Error building zotapay_paymentasia match for crm_email {crm_email}: {str(e)}")
+            return None, {'failure_reason': str(e)}
+    def _match_bitpay_row(self, crm_row, proc_dict, last4_map, used, proc_config,crm_idx=None):
         crm_cur = crm_row['crm_currency']
         crm_amt = abs(crm_row['crm_amount'])
         crm_email = (crm_row.get('crm_email') or '').lower().strip()
@@ -1417,38 +1423,44 @@ class ReconciliationEngine:
                 comment = f"Underpaid by {round(-amount_diff, 2)} {crm_cur}"
             else:
                 comment = "Amount mismatch"
-        match = {
-            'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_email,
-            'crm_firstname': crm_row.get('crm_firstname', ''),
-            'crm_lastname': crm_row.get('crm_lastname', ''),
-            'crm_last4': crm_last4,
-            'crm_currency': crm_cur,
-            'crm_amount': crm_amt,
-            'crm_processor_name': crm_row.get('crm_processor_name'),
-            'regulation': crm_row.get('regulation', ''),
-            'proc_date': best['row_data'].get('proc_date'),
-            'proc_email': best['row_data'].get('proc_email'),
-            'proc_firstname': best['row_data'].get('proc_firstname', ''),
-            'proc_lastname': best['row_data'].get('proc_lastname', ''),
-            'proc_last4': best['row_data'].get('proc_last4'),
-            'proc_currency': best['row_data'].get('proc_currency'),
-            'proc_amount': best['row_data'].get('proc_amount'),
-            'proc_amount_crm_currency': best['proc_amount_crm_currency'],
-            'proc_processor_name': best['row_data'].get('proc_processor_name'),
-            'exchange_rate': best['row_data'].get('exchange_rate', 1.0),
-            'email_similarity_avg': round(best['email_score'], 4),
-            'last4_match': best['last4_match'],
-            'name_fallback_used': best['name_fallback'],
-            'exact_match_used': best['exact_match'],
-            'match_status': 1,
-            'payment_status': payment_status,
-            'comment': comment,
-            'matched_proc_indices': [best['index']],
-            'amount_difference': round(amount_diff, 2)
-        }
-        return match, {}
-    def _match_shift4_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        try:
+            match = {
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': crm_email,
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': crm_last4,
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': crm_row.get('crm_processor_name'),
+                'regulation': crm_row.get('regulation', ''),
+                'proc_date': best['row_data'].get('proc_date'),
+                'proc_email': best['row_data'].get('proc_email'),
+                'proc_firstname': best['row_data'].get('proc_firstname', ''),
+                'proc_lastname': best['row_data'].get('proc_lastname', ''),
+                'proc_last4': best['row_data'].get('proc_last4'),
+                'proc_currency': best['row_data'].get('proc_currency'),
+                'proc_amount': best['row_data'].get('proc_amount'),
+                'proc_amount_crm_currency': best['proc_amount_crm_currency'],
+                'proc_processor_name': best['row_data'].get('proc_processor_name'),
+                'exchange_rate': best['row_data'].get('exchange_rate', 1.0),
+                'email_similarity_avg': round(best['email_score'], 4),
+                'last4_match': best['last4_match'],
+                'name_fallback_used': best['name_fallback'],
+                'exact_match_used': best['exact_match'],
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [best['index']],
+                'amount_difference': round(amount_diff, 2)
+            }
+            if crm_idx is not None:
+                match['crm_row_index'] = crm_idx
+            return match, {}
+        except Exception as e:
+            print(f"Error building bitpay match for crm_email {crm_email}: {str(e)}")
+            return None, {'failure_reason': str(e)}
+    def _match_shift4_row(self, crm_row, proc_dict, last4_map, used, proc_config,crm_idx=None):
         crm_last4_raw = str(crm_row.get('crm_last4', '')).strip()
         crm_last4 = normalize_string(crm_last4_raw)
         crm_cur = crm_row['crm_currency']
@@ -1529,56 +1541,67 @@ class ReconciliationEngine:
                 comment = f"Client Underpaid by {round(-amount_diff, 2)} {crm_cur}"
             else:
                 comment = "Amount mismatch"
-        match = {
-            'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_email,
-            'crm_firstname': crm_row.get('crm_firstname', ''),
-            'crm_lastname': crm_row.get('crm_lastname', ''),
-            'crm_last4': crm_last4_raw,
-            'crm_currency': crm_cur,
-            'crm_amount': crm_amt,
-            'crm_processor_name': crm_row.get('crm_processor_name'),
-            'regulation': crm_row.get('regulation', ''),
-            'proc_date': best['row'].get('proc_date'),
-            'proc_email': best['row'].get('proc_email'),
-            'proc_firstname': best['row'].get('proc_firstname', ''),
-            'proc_lastname': best['row'].get('proc_lastname', ''),
-            'proc_last4': best['row'].get('proc_last4'),
-            'proc_currency': best['row'].get('proc_currency'),
-            'proc_amount': best['row'].get('proc_amount'),
-            'proc_amount_crm_currency': best['proc_amount_crm_currency'],
-            'proc_processor_name': best['row'].get('proc_processor_name'),
-            'exchange_rate': best['row'].get('exchange_rate', 1.0),
-            'email_similarity_avg': best['email_score'],
-            'last4_match': True,
-            'name_fallback_used': False,
-            'exact_match_used': True,
-            'match_status': 1,
-            'payment_status': payment_status,
-            'comment': comment,
-            'matched_proc_indices': [best['index']],
-            'amount_difference': round(amount_diff, 2)
-        }
-        return match, {}
-    def _match_paypal_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        try:
+            match = {
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': crm_email,
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': crm_last4_raw,
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': crm_row.get('crm_processor_name'),
+                'regulation': crm_row.get('regulation', ''),
+                'proc_date': best['row'].get('proc_date'),
+                'proc_email': best['row'].get('proc_email'),
+                'proc_firstname': best['row'].get('proc_firstname', ''),
+                'proc_lastname': best['row'].get('proc_lastname', ''),
+                'proc_last4': best['row'].get('proc_last4'),
+                'proc_currency': best['row'].get('proc_currency'),
+                'proc_amount': best['row'].get('proc_amount'),
+                'proc_amount_crm_currency': best['proc_amount_crm_currency'],
+                'proc_processor_name': best['row'].get('proc_processor_name'),
+                'exchange_rate': best['row'].get('exchange_rate', 1.0),
+                'email_similarity_avg': best['email_score'],
+                'last4_match': True,
+                'name_fallback_used': False,
+                'exact_match_used': True,
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [best['index']],
+                'amount_difference': round(amount_diff, 2)
+            }
+            if crm_idx is not None:
+                match['crm_row_index'] = crm_idx
+            return match, {}
+        except Exception as e:
+            print(f"Error building shift4 match for crm_email {crm_email}: {str(e)}")
+            return None, {'failure_reason': str(e)}
+
+    def _match_paypal_row(self, crm_row, proc_dict, last4_map, used, proc_config,crm_idx=None):
         crm_cur = crm_row['crm_currency']
         crm_amt = abs(crm_row['crm_amount'])
         crm_email = (crm_row.get('crm_email') or '').lower()
         crm_first = str(crm_row.get('crm_firstname', '')).lower().strip()
         crm_last = str(crm_row.get('crm_lastname', '')).lower().strip()
         crm_last4 = str(crm_row.get('crm_last4', '')).strip()
-        crm_proc_name = crm_row.get('crm_processor_name', '').lower() # Add this
+        crm_proc_name = crm_row.get('crm_processor_name', '').lower()  # Add this
+        crm_reg = crm_row.get('regulation', '').lower()
         candidates = []
         indices = [i for i in proc_dict if
                    i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
         abs_tol = 0.1
         rel_tol = proc_config.tolerance * crm_amt
-        tol = max(abs_tol, rel_tol) # Apply relative tolerance universally
+        tol = max(abs_tol, rel_tol)  # Apply relative tolerance universally
         for i in indices:
             row = proc_dict[i]
             proc_amt = row.get('proc_amount')
             proc_cur = row.get('proc_currency')
             if proc_amt is None or proc_cur is None:
+                continue
+            # Skip if UK regulation and proc_currency != 'GBP' (to treat as potential cross)
+            if crm_reg == 'uk' and proc_cur != 'GBP':
                 continue
             # Convert amount to CRM currency
             proc_amt_crm_currency, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
@@ -1638,37 +1661,44 @@ class ReconciliationEngine:
             comment += "Mixed currencies. "
         if best['name_fallback']:
             comment += "Matched by name fallback."
-        return {
-            'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_email,
-            'crm_firstname': crm_row.get('crm_firstname', ''),
-            'crm_lastname': crm_row.get('crm_lastname', ''),
-            'crm_last4': crm_last4,
-            'crm_currency': crm_cur,
-            'crm_amount': crm_amt,
-            'crm_processor_name': crm_row.get('crm_processor_name'),
-            'regulation': crm_row.get('regulation', ''),
-            'proc_date': best['row'].get('proc_date'),
-            'proc_email': best['row'].get('proc_email'),
-            'proc_firstname': best['row'].get('proc_firstname', ''),
-            'proc_lastname': best['row'].get('proc_lastname', ''),
-            'proc_last4': best['row'].get('proc_last4'),
-            'proc_currency': best['currency'],
-            'proc_amount': best['row'].get('proc_amount'),
-            'proc_amount_crm_currency': best['proc_amount_crm_currency'],
-            'proc_processor_name': best['row'].get('proc_processor_name'),
-            'exchange_rate': best['rate'],
-            'email_similarity_avg': best['email_score'],
-            'last4_match': best['last4_match'],
-            'name_fallback_used': best['name_fallback'],
-            'exact_match_used': best['exact_match'],
-            'match_status': 1,
-            'payment_status': payment_status,
-            'comment': comment,
-            'matched_proc_indices': [best['index']],
-            'amount_difference': round(amount_diff, 2)
-        }, {}
-    def _match_skrill_neteller_row(self, crm_row, proc_dict, last4_map, used, proc_config, processor_name):
+        try:
+            match = {
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': crm_email,
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': crm_last4,
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': crm_row.get('crm_processor_name'),
+                'regulation': crm_row.get('regulation', ''),
+                'proc_date': best['row'].get('proc_date'),
+                'proc_email': best['row'].get('proc_email'),
+                'proc_firstname': best['row'].get('proc_firstname', ''),
+                'proc_lastname': best['row'].get('proc_lastname', ''),
+                'proc_last4': best['row'].get('proc_last4'),
+                'proc_currency': best['currency'],
+                'proc_amount': best['row'].get('proc_amount'),
+                'proc_amount_crm_currency': best['proc_amount_crm_currency'],
+                'proc_processor_name': best['row'].get('proc_processor_name'),
+                'exchange_rate': best['rate'],
+                'email_similarity_avg': best['email_score'],
+                'last4_match': best['last4_match'],
+                'name_fallback_used': best['name_fallback'],
+                'exact_match_used': best['exact_match'],
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [best['index']],
+                'amount_difference': round(amount_diff, 2)
+            }
+            if crm_idx is not None:
+                match['crm_row_index'] = crm_idx
+            return match, {}
+        except Exception as e:
+            print(f"Error building paypal match for crm_email {crm_email}: {str(e)}")
+            return None, {'failure_reason': str(e)}
+    def _match_skrill_neteller_row(self, crm_row, proc_dict, last4_map, used, proc_config, processor_name,crm_idx=None):
         crm_tp = str(crm_row.get('crm_tp', '')).strip()
         crm_amt = abs(crm_row['crm_amount'])
         crm_cur = str(crm_row['crm_currency']).strip().upper()
@@ -1692,38 +1722,45 @@ class ReconciliationEngine:
                     proc_email == crm_email and
                     proc_currency == crm_cur and
                     abs(proc_amount_crm_cur - crm_amt) < 0.01):
-                return {
-                    'crm_date': crm_row.get('crm_date'),
-                    'crm_email': crm_email,
-                    'crm_firstname': crm_row.get('crm_firstname', ''),
-                    'crm_lastname': crm_row.get('crm_lastname', ''),
-                    'crm_last4': crm_last4,
-                    'crm_currency': crm_cur,
-                    'crm_amount': crm_amt,
-                    'crm_processor_name': crm_row.get('crm_processor_name'),
-                    'regulation': crm_row.get('regulation', ''),
-                    'proc_date': row.get('proc_date'),
-                    'proc_email': proc_email,
-                    'proc_firstname': row.get('proc_firstname', ''),
-                    'proc_lastname': row.get('proc_lastname', ''),
-                    'proc_last4': row.get('proc_last4'),
-                    'proc_currency': proc_currency,
-                    'proc_amount': proc_amount_raw,
-                    'proc_amount_crm_currency': proc_amount_crm_cur,
-                    'proc_processor_name': row.get('proc_processor_name'),
-                    'exchange_rate': 1.0,
-                    'email_similarity_avg': 1.0,
-                    'last4_match': False,
-                    'name_fallback_used': False,
-                    'exact_match_used': True,
-                    'converted': False,
-                    'proc_combo_len': 1,
-                    'crm_combo_len': 1,
-                    'match_status': 1,
-                    'payment_status': 1,
-                    'comment': "",
-                    'matched_proc_indices': [idx]
-                }, {}
+                try:
+                    match = {
+                        'crm_date': crm_row.get('crm_date'),
+                        'crm_email': crm_email,
+                        'crm_firstname': crm_row.get('crm_firstname', ''),
+                        'crm_lastname': crm_row.get('crm_lastname', ''),
+                        'crm_last4': crm_last4,
+                        'crm_currency': crm_cur,
+                        'crm_amount': crm_amt,
+                        'crm_processor_name': crm_row.get('crm_processor_name'),
+                        'regulation': crm_row.get('regulation', ''),
+                        'proc_date': row.get('proc_date'),
+                        'proc_email': proc_email,
+                        'proc_firstname': row.get('proc_firstname', ''),
+                        'proc_lastname': row.get('proc_lastname', ''),
+                        'proc_last4': row.get('proc_last4'),
+                        'proc_currency': proc_currency,
+                        'proc_amount': proc_amount_raw,
+                        'proc_amount_crm_currency': proc_amount_crm_cur,
+                        'proc_processor_name': row.get('proc_processor_name'),
+                        'exchange_rate': 1.0,
+                        'email_similarity_avg': 1.0,
+                        'last4_match': False,
+                        'name_fallback_used': False,
+                        'exact_match_used': True,
+                        'converted': False,
+                        'proc_combo_len': 1,
+                        'crm_combo_len': 1,
+                        'match_status': 1,
+                        'payment_status': 1,
+                        'comment': "",
+                        'matched_proc_indices': [idx]
+                    }
+                    if crm_idx is not None:
+                        match['crm_row_index'] = crm_idx
+                    return match, {}
+                except Exception as e:
+                    print(f"Error building skrill/neteller exact match for crm_email {crm_email}: {str(e)}")
+                    return None, {'failure_reason': str(e)}
         best_candidate = None
         best_score = -1
         for idx, row in proc_dict.items():
@@ -1778,39 +1815,46 @@ class ReconciliationEngine:
         if proc['exact_match']:
             comment += ""
         row = proc['row']
-        return {
-            'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_email,
-            'crm_firstname': crm_row.get('crm_firstname', ''),
-            'crm_lastname': crm_row.get('crm_lastname', ''),
-            'crm_last4': crm_last4,
-            'crm_currency': crm_cur,
-            'crm_amount': crm_amt,
-            'crm_processor_name': crm_row.get('crm_processor_name'),
-            'regulation': crm_row.get('regulation', ''),
-            'proc_date': row.get('proc_date'),
-            'proc_email': row.get('proc_email'),
-            'proc_firstname': row.get('proc_firstname', ''),
-            'proc_lastname': row.get('proc_lastname', ''),
-            'proc_last4': row.get('proc_last4'),
-            'proc_currency': proc['currency'],
-            'proc_amount': proc_amount_raw,
-            'proc_amount_crm_currency': proc['proc_amount_crm_currency'],
-            'proc_processor_name': row.get('proc_processor_name'),
-            'exchange_rate': proc['rate'],
-            'email_similarity_avg': proc['email_score'],
-            'last4_match': proc['last4_match'],
-            'name_fallback_used': False,
-            'exact_match_used': proc['exact_match'],
-            'converted': not same_cur,
-            'proc_combo_len': 1,
-            'crm_combo_len': 1,
-            'match_status': 1,
-            'payment_status': payment_status,
-            'comment': comment,
-            'matched_proc_indices': [proc['index']]
-        }, {}
-    def _match_trustpayments_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+        try:
+            match = {
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': crm_email,
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': crm_last4,
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': crm_row.get('crm_processor_name'),
+                'regulation': crm_row.get('regulation', ''),
+                'proc_date': row.get('proc_date'),
+                'proc_email': row.get('proc_email'),
+                'proc_firstname': row.get('proc_firstname', ''),
+                'proc_lastname': row.get('proc_lastname', ''),
+                'proc_last4': row.get('proc_last4'),
+                'proc_currency': proc['currency'],
+                'proc_amount': proc_amount_raw,
+                'proc_amount_crm_currency': proc['proc_amount_crm_currency'],
+                'proc_processor_name': row.get('proc_processor_name'),
+                'exchange_rate': proc['rate'],
+                'email_similarity_avg': proc['email_score'],
+                'last4_match': proc['last4_match'],
+                'name_fallback_used': False,
+                'exact_match_used': proc['exact_match'],
+                'converted': not same_cur,
+                'proc_combo_len': 1,
+                'crm_combo_len': 1,
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [proc['index']]
+            }
+            if crm_idx is not None:
+                match['crm_row_index'] = crm_idx
+            return match, {}
+        except Exception as e:
+            print(f"Error building skrill/neteller fallback match for crm_email {crm_email}: {str(e)}")
+            return None, {'failure_reason': str(e)}
+    def _match_trustpayments_row(self, crm_row, proc_dict, last4_map, used, proc_config,crm_idx=None):
         def name_similarity(name1, name2):
             return SequenceMatcher(None, name1.lower(), name2.lower()).ratio() > 0.8
         crm_tp = normalize_string(crm_row.get("crm_tp", ""))
@@ -1895,40 +1939,46 @@ class ReconciliationEngine:
                     else:
                         comment = "Amount mismatch"
                 name_fallback_used = (tier in [4, 5, 6])
-                return {
-                    'crm_date': crm_row.get('crm_date'),
-                    'crm_email': crm_email,
-                    'crm_firstname': crm_first,
-                    'crm_lastname': crm_last,
-                    'crm_last4': crm_last4_raw,
-                    'crm_currency': crm_cur,
-                    'crm_amount': crm_amt,
-                    'crm_processor_name': "trustpayments",
-                    'regulation': crm_row.get('regulation', ''),
-                    'proc_date': proc_row.get('proc_date'),
-                    'proc_email': proc_row.get('proc_email'),
-                    'proc_firstname': proc_row.get('proc_firstname', ''),
-                    'proc_lastname': proc_row.get('proc_lastname', ''),
-                    'proc_last4': proc_row.get('proc_last4'),
-                    'proc_currency': proc_row.get('proc_currency'),
-                    'proc_amount': proc_row.get('proc_amount'),
-                    'proc_amount_crm_currency': proc_amt_crm_cur,
-                    'proc_processor_name': proc_row.get('proc_processor_name'),
-                    'exchange_rate': rate,
-                    'email_similarity_avg': round(email_sim, 4),
-                    'last4_match': tier in [1, 3, 4, 6],
-                    'name_fallback_used': name_fallback_used,
-                    'exact_match_used': (tier == 1),
-                    'proc_combo_len': 1,
-                    'crm_combo_len': 1,
-                    'match_status': 1,
-                    'payment_status': payment_status,
-                    'comment': comment,
-                    'matched_proc_indices': [idx],
-                    'amount_difference': round(amount_diff, 2)
-                }, {'trustpayments_candidate': best_candidate}
-        return None, {'failure_reason': 'No TrustPayments match'}
-    def _match_barclays_row(self, crm_row, proc_dict, last4_map, used, proc_config):
+                try:
+                    match = {
+                        'crm_date': crm_row.get('crm_date'),
+                        'crm_email': crm_email,
+                        'crm_firstname': crm_first,
+                        'crm_lastname': crm_last,
+                        'crm_last4': crm_last4_raw,
+                        'crm_currency': crm_cur,
+                        'crm_amount': crm_amt,
+                        'crm_processor_name': "trustpayments",
+                        'regulation': crm_row.get('regulation', ''),
+                        'proc_date': proc_row.get('proc_date'),
+                        'proc_email': proc_row.get('proc_email'),
+                        'proc_firstname': proc_row.get('proc_firstname', ''),
+                        'proc_lastname': proc_row.get('proc_lastname', ''),
+                        'proc_last4': proc_row.get('proc_last4'),
+                        'proc_currency': proc_row.get('proc_currency'),
+                        'proc_amount': proc_row.get('proc_amount'),
+                        'proc_amount_crm_currency': proc_amt_crm_cur,
+                        'proc_processor_name': proc_row.get('proc_processor_name'),
+                        'exchange_rate': rate,
+                        'email_similarity_avg': round(email_sim, 4),
+                        'last4_match': tier in [1, 3, 4, 6],
+                        'name_fallback_used': name_fallback_used,
+                        'exact_match_used': (tier == 1),
+                        'proc_combo_len': 1,
+                        'crm_combo_len': 1,
+                        'match_status': 1,
+                        'payment_status': payment_status,
+                        'comment': comment,
+                        'matched_proc_indices': [idx],
+                        'amount_difference': round(amount_diff, 2)
+                    }
+                    if crm_idx is not None:
+                        match['crm_row_index'] = crm_idx
+                    return match, {'trustpayments_candidate': best_candidate}
+                except Exception as e:
+                    print(f"Error building trustpayments match for crm_email {crm_email}: {str(e)}")
+                    return None, {'failure_reason': str(e)}
+    def _match_barclays_row(self, crm_row, proc_dict, last4_map, used, proc_config,crm_idx=None):
         crm_last4_raw = str(crm_row.get('crm_last4', '')).strip()
         crm_last4 = normalize_string(crm_last4_raw, is_last4=True)
         crm_tp_raw = str(crm_row.get('crm_tp', '')).strip()
@@ -1985,38 +2035,44 @@ class ReconciliationEngine:
                 comment = f"Underpaid by {round(-diff, 2)} {crm_cur}"
             else:
                 comment = "Amount mismatch"
-        match = {
-            'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_row.get('crm_email', ''),
-            'crm_firstname': crm_row.get('crm_firstname', ''),
-            'crm_lastname': crm_row.get('crm_lastname', ''),
-            'crm_last4': crm_last4_raw,
-            'crm_currency': crm_cur,
-            'crm_amount': crm_amt,
-            'crm_processor_name': crm_row.get('crm_processor_name'),
-            'regulation': crm_row.get('regulation', ''),
-            'proc_date': best['row_data'].get('proc_date'),
-            'proc_email': best['row_data'].get('proc_email', ''),
-            'proc_firstname': best['row_data'].get('proc_firstname', ''),
-            'proc_lastname': best['row_data'].get('proc_lastname', ''),
-            'proc_last4': best['row_data'].get('proc_last4'),
-            'proc_currency': best['row_data'].get('proc_currency'),
-            'proc_amount': best['row_data'].get('proc_amount'),
-            'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
-            'proc_processor_name': best['row_data'].get('proc_processor_name'),
-            'email_similarity_avg': None,
-            'last4_match': True,
-            'name_fallback_used': False,
-            'exact_match_used': payment_status == 1,
-            'converted': best['rate'] != 1.0,
-            'proc_combo_len': 1,
-            'crm_combo_len': 1,
-            'match_status': 1,
-            'payment_status': payment_status,
-            'comment': comment,
-            'matched_proc_indices': [best['index']]
-        }
-        return match, {}
+        try:
+            match = {
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': crm_row.get('crm_email', ''),
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': crm_last4_raw,
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': crm_row.get('crm_processor_name'),
+                'regulation': crm_row.get('regulation', ''),
+                'proc_date': best['row_data'].get('proc_date'),
+                'proc_email': best['row_data'].get('proc_email', ''),
+                'proc_firstname': best['row_data'].get('proc_firstname', ''),
+                'proc_lastname': best['row_data'].get('proc_lastname', ''),
+                'proc_last4': best['row_data'].get('proc_last4'),
+                'proc_currency': best['row_data'].get('proc_currency'),
+                'proc_amount': best['row_data'].get('proc_amount'),
+                'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
+                'proc_processor_name': best['row_data'].get('proc_processor_name'),
+                'email_similarity_avg': None,
+                'last4_match': True,
+                'name_fallback_used': False,
+                'exact_match_used': payment_status == 1,
+                'converted': best['rate'] != 1.0,
+                'proc_combo_len': 1,
+                'crm_combo_len': 1,
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [best['index']]
+            }
+            if crm_idx is not None:
+                match['crm_row_index'] = crm_idx
+            return match, {}
+        except Exception as e:
+            print(f"Error building barclays match for crm_email {crm_row.get('crm_email', '')}: {str(e)}")
+            return None, {'failure_reason': str(e)}
 
     def _match_safechargeuk_row(self, crm_row, proc_dict, last4_map, used, proc_config, skip_proc_check=False,
                                 cross_reg=False, crm_idx=None):
@@ -2178,41 +2234,47 @@ class ReconciliationEngine:
                 proc_date_ts = None
             else:
                 proc_date_ts = proc_date_ts.normalize()
-            match = {
-                'crm_date': crm_row.get('crm_date'),
-                'crm_email': crm_email,
-                'crm_firstname': crm_first,
-                'crm_lastname': crm_last,
-                'crm_last4': crm_last4,
-                'crm_currency': crm_cur,
-                'crm_amount': crm_amt,
-                'crm_processor_name': crm_row.get('crm_processor_name'),
-                'regulation': crm_row.get('regulation', ''),
-                'proc_date': proc_date_ts,
-                'proc_email': clean_field(best['row_data'].get('proc_email')),
-                'proc_firstname': clean_field(best['row_data'].get('proc_firstname', '')),
-                'proc_lastname': clean_field(best['row_data'].get('proc_lastname', '')),
-                'proc_last4': clean_field(best['row_data'].get('proc_last4')),
-                'proc_currency': clean_field(best['row_data'].get('proc_currency')),
-                'proc_amount': clean_field(best['row_data'].get('proc_amount')),
-                'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
-                'proc_processor_name': best['row_data'].get('proc_processor_name'),
-                'email_similarity_avg': round(best['email_score'], 4),
-                'last4_match': best['last4_match'],
-                'name_fallback_used': best['name_fallback'],
-                'exact_match_used': False,
-                'converted': (best['proc_rate'] != 1.0),
-                'proc_combo_len': 1,
-                'crm_combo_len': 1,
-                'match_status': 1,
-                'payment_status': payment_status,
-                'comment': comment,
-                'matched_proc_indices': [best['index']]
-            }
-            if crm_idx is not None:
-                match['crm_row_index'] = crm_idx
-            print("Returning match for crm_email: " + str(crm_email))
-            return match, {}
+            # Wrap the match dict building in try-except as:
+            try:
+                match = {
+                    'crm_date': crm_row.get('crm_date'),
+                    'crm_email': crm_email,
+                    'crm_firstname': crm_first,
+                    'crm_lastname': crm_last,
+                    'crm_last4': crm_last4,
+                    'crm_currency': crm_cur,
+                    'crm_amount': crm_amt,
+                    'crm_processor_name': crm_row.get('crm_processor_name'),
+                    'regulation': crm_row.get('regulation', ''),
+                    'proc_date': proc_date_ts,
+                    'proc_email': clean_field(best['row_data'].get('proc_email')),
+                    'proc_firstname': clean_field(best['row_data'].get('proc_firstname', '')),
+                    'proc_lastname': clean_field(best['row_data'].get('proc_lastname', '')),
+                    'proc_last4': clean_field(best['row_data'].get('proc_last4')),
+                    'proc_currency': clean_field(best['row_data'].get('proc_currency')),
+                    'proc_amount': clean_field(best['row_data'].get('proc_amount')),
+                    'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
+                    'proc_processor_name': best['row_data'].get('proc_processor_name'),
+                    'email_similarity_avg': round(best['email_score'], 4),
+                    'last4_match': best['last4_match'],
+                    'name_fallback_used': best['name_fallback'],
+                    'exact_match_used': False,
+                    'converted': (best['proc_rate'] != 1.0),
+                    'proc_combo_len': 1,
+                    'crm_combo_len': 1,
+                    'match_status': 1,
+                    'payment_status': payment_status,
+                    'comment': comment,
+                    'matched_proc_indices': [best['index']]
+                }
+                if crm_idx is not None:
+                    match['crm_row_index'] = crm_idx
+                print("Returning match for crm_email: " + str(crm_email))
+                return match, {}
+            except Exception as e:
+                print(f"Error building match for crm_email {crm_email}: {str(e)}")
+                print("Not returning match for crm_email: " + str(crm_email) + " - reason: " + str(e))
+                return None, {'failure_reason': str(e)}
         except Exception as e:
             print(f"Error building match for crm_email {crm_email}: {str(e)}")
             print("Not returning match for crm_email: " + str(crm_email) + " - reason: " + str(e))

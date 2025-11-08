@@ -93,12 +93,18 @@ def _cross_match_one_way(
     if proc_pool.empty:
         return []
 
+    # Preserve original indices before reset
+    crm_pool['original_crm_index'] = crm_pool.index
+    proc_pool['original_proc_index'] = proc_pool.index
+
     # Reset indices for engine processing
     crm_pool = crm_pool.reset_index(drop=True)
     proc_pool = proc_pool.reset_index(drop=True)
 
     # Prepare processor_df
     processor_df = proc_pool.copy()
+    processor_df['proc_amount'] = pd.to_numeric(processor_df['proc_amount'], errors='coerce')
+    processor_df = processor_df.dropna(subset=['proc_amount'])
     processor_df['proc_last4'] = processor_df['proc_last4'].apply(clean_last4)
     print("After clean, proc_last4 unique: " + str(processor_df['proc_last4'].unique()))
     print("Proc proc_last4 dtypes: " + str(processor_df['proc_last4'].dtype))
@@ -111,6 +117,8 @@ def _cross_match_one_way(
 
     # Prepare crm_df
     crm_df = crm_pool.copy()
+    crm_df['crm_amount'] = pd.to_numeric(crm_df['crm_amount'], errors='coerce')
+    crm_df = crm_df.dropna(subset=['crm_amount'])
     crm_df = crm_df.drop_duplicates(subset=['crm_email', 'crm_last4', 'crm_amount', 'crm_currency', 'crm_date'])
     print(f"After dedup, CRM rows: {len(crm_df)}")
     crm_df['crm_last4'] = crm_df['crm_last4'].apply(clean_last4)
@@ -169,13 +177,14 @@ def _cross_match_one_way(
         if m['match_status'] == 1:
             if proc_reg == 'uk' and m.get('proc_processor_name', '').lower() == 'safecharge':
                 m['proc_processor_name'] = 'safechargeuk'
-            # Set crm_row_index by looking up crm_email in crm_df (assuming unique)
-            email = m['crm_email']
-            matching_idxs = crm_df[crm_df['crm_email'] == email].index
-            if len(matching_idxs) == 1:
-                m['crm_row_index'] = matching_idxs[0]
+            # Map back to original crm_index using crm_row_index (reset) -> original
+            if 'crm_row_index' in m:
+                original_crm = crm_df.loc[m['crm_row_index'], 'original_crm_index']
+                m['original_crm_index'] = original_crm
             else:
-                print(f"Warning: Duplicate or missing email {email} in crm_df")
+                print(f"Warning: Missing crm_row_index for match with crm_email {m['crm_email']}")
+            # Map matched_proc_indices (reset) to original_proc_index
+            m['original_proc_indices'] = [processor_df.loc[p, 'original_proc_index'] for p in m['matched_proc_indices']]
             cross_matches.append(m)
 
     # Add a clear comment so the user knows it came from cross-regulation
@@ -235,37 +244,22 @@ def run_cross_regulation_matching(date_str: str, exchange_rate_map: dict) -> Non
             df['crm_last4'] = df['crm_last4'].apply(clean_last4)
 
     # ------------------------------------------------------------------- #
-    # 2. Normalise last-4 (the matcher expects the cleaned version)
-    # ------------------------------------------------------------------- #
-    for df in (row_df, uk_df):
-        if "proc_last4" in df.columns:
-            df["proc_last4"] = df["proc_last4"].apply(clean_last4)
-        if "crm_last4" in df.columns:
-            df["crm_last4"] = df["crm_last4"].apply(clean_last4)
-
-    # ------------------------------------------------------------------- #
     # 3. Extract *unmatched* CRM rows  (match_status == 0 AND crm_date NOT null)
-    #    Save their original indices in the df
     # ------------------------------------------------------------------- #
     unmatched_crm_row_mask = (row_df["match_status"] == 0) & row_df["crm_date"].notna()
     unmatched_crm_row = row_df[unmatched_crm_row_mask].copy()
-    unmatched_crm_row_indices = row_df[unmatched_crm_row_mask].index
 
     unmatched_crm_uk_mask = (uk_df["match_status"] == 0) & uk_df["crm_date"].notna()
     unmatched_crm_uk = uk_df[unmatched_crm_uk_mask].copy()
-    unmatched_crm_uk_indices = uk_df[unmatched_crm_uk_mask].index
 
     # ------------------------------------------------------------------- #
     # 4. Extract *unmatched* PROC rows  (match_status == 0 AND crm_date IS null)
-    #    Save their original indices in the df
     # ------------------------------------------------------------------- #
     unmatched_proc_row_mask = (row_df["match_status"] == 0) & row_df["crm_date"].isna()
     unmatched_proc_row = row_df[unmatched_proc_row_mask].copy()
-    unmatched_proc_row_indices = row_df[unmatched_proc_row_mask].index
 
     unmatched_proc_uk_mask = (uk_df["match_status"] == 0) & uk_df["crm_date"].isna()
     unmatched_proc_uk = uk_df[unmatched_proc_uk_mask].copy()
-    unmatched_proc_uk_indices = uk_df[unmatched_proc_uk_mask].index
 
     # ------------------------------------------------------------------- #
     # 5. Two directional cross-matches
@@ -292,20 +286,16 @@ def run_cross_regulation_matching(date_str: str, exchange_rate_map: dict) -> Non
     # ------------------------------------------------------------------- #
     # For UK→ROW
     if uk_to_row:
-        matched_crm_pool_idxs = [m.get('crm_row_index') for m in uk_to_row if 'crm_row_index' in m]
-        matched_original_crm_idxs = [unmatched_crm_uk_indices[i] for i in matched_crm_pool_idxs]
-        matched_proc_pool_idxs = [p for m in uk_to_row for p in m.get('matched_proc_indices', [])]
-        matched_original_proc_idxs = [unmatched_proc_row_indices[i] for i in matched_proc_pool_idxs]
+        matched_original_crm_idxs = [m['original_crm_index'] for m in uk_to_row]
+        matched_original_proc_idxs = [p for m in uk_to_row for p in m['original_proc_indices']]
 
         uk_df = uk_df.drop(matched_original_crm_idxs, errors='ignore')
         row_df = row_df.drop(matched_original_proc_idxs, errors='ignore')
 
     # For ROW→UK
     if row_to_uk:
-        matched_crm_pool_idxs = [m.get('crm_row_index') for m in row_to_uk if 'crm_row_index' in m]
-        matched_original_crm_idxs = [unmatched_crm_row_indices[i] for i in matched_crm_pool_idxs]
-        matched_proc_pool_idxs = [p for m in row_to_uk for p in m.get('matched_proc_indices', [])]
-        matched_original_proc_idxs = [unmatched_proc_uk_indices[i] for i in matched_proc_pool_idxs]
+        matched_original_crm_idxs = [m['original_crm_index'] for m in row_to_uk]
+        matched_original_proc_idxs = [p for m in row_to_uk for p in m['original_proc_indices']]
 
         row_df = row_df.drop(matched_original_crm_idxs, errors='ignore')
         uk_df = uk_df.drop(matched_original_proc_idxs, errors='ignore')

@@ -85,6 +85,14 @@ def _cross_match_one_way(
     if crm_pool.empty or proc_pool.empty:
         return []
 
+    # For ROW CRM -> UK PROC: Exclude UK-only processors like 'barclays' and 'barclaycard'
+    if crm_reg == 'row':
+        uk_only_processors = ['barclays', 'barclaycard']
+        proc_pool = proc_pool[~proc_pool['proc_processor_name'].str.lower().isin(uk_only_processors)]
+
+    if proc_pool.empty:
+        return []
+
     # Reset indices for engine processing
     crm_pool = crm_pool.reset_index(drop=True)
     proc_pool = proc_pool.reset_index(drop=True)
@@ -178,6 +186,17 @@ def _cross_match_one_way(
             f"Cross-regulation match – {crm_reg.upper()} CRM ({crm_proc}) "
             f"↔ {proc_reg.upper()} PROC ({proc_proc})"
         )
+        # If payment_status == 0, append Overpaid/Underpaid detail
+        if m['payment_status'] == 0:
+            diff = m['proc_amount_crm_currency'] - abs(m['crm_amount'])
+            crm_cur = m['crm_currency']
+            if diff > 0:
+                over_under = f"Overpaid by {round(diff, 2)} {crm_cur}"
+            elif diff < 0:
+                over_under = f"Underpaid by {round(-diff, 2)} {crm_cur}"
+            else:
+                over_under = "Amount mismatch"
+            m["comment"] += f"; {over_under}"
         # Force the regulation column to the CRM side (the file we will write to)
         m["regulation"] = crm_reg.upper()
 

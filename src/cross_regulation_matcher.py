@@ -85,6 +85,11 @@ def _cross_match_one_way(
     if crm_pool.empty or proc_pool.empty:
         return []
 
+    # Reset indices for engine processing
+    crm_pool = crm_pool.reset_index(drop=True)
+    proc_pool = proc_pool.reset_index(drop=True)
+
+    # Prepare processor_df
     processor_df = proc_pool.copy()
     processor_df['proc_last4'] = processor_df['proc_last4'].apply(clean_last4)
     print("After clean, proc_last4 unique: " + str(processor_df['proc_last4'].unique()))
@@ -96,11 +101,20 @@ def _cross_match_one_way(
     print("Last4 map has '0476': " + str('0476' in last4_map))
     print("Last4 map '0476' indices: " + str(last4_map.get('0476', [])))
 
+    # Prepare crm_df
     crm_df = crm_pool.copy()
     crm_df = crm_df.drop_duplicates(subset=['crm_email', 'crm_last4', 'crm_amount', 'crm_currency', 'crm_date'])
-    print(f"After dedup, CRM rows: {len(crm_df)}")  # For debugging
+    print(f"After dedup, CRM rows: {len(crm_df)}")
     crm_df['crm_last4'] = crm_df['crm_last4'].apply(clean_last4)
     print("After clean, crm_last4 unique: " + str(crm_df['crm_last4'].unique()))
+
+    print(f"Cross direction: {crm_reg.upper()} CRM to {proc_reg.upper()} PROC")
+    print("Proc pool proc_processor_name unique:", proc_pool['proc_processor_name'].unique())
+    print("Proc pool proc_last4 unique:", proc_pool['proc_last4'].unique())
+    print("Proc pool proc_email unique:", proc_pool['proc_email'].unique())
+    print("CRM pool crm_processor_name unique:", crm_pool['crm_processor_name'].unique())
+    print("CRM pool crm_last4 unique:", crm_pool['crm_last4'].unique())
+    print("CRM pool crm_email unique:", crm_pool['crm_email'].unique())
 
     # The engine expects the same column names it works with internally
     engine = ReconciliationEngine(
@@ -112,45 +126,24 @@ def _cross_match_one_way(
         },
     )
 
-    # Reset indices for engine processing
-    crm_pool = crm_pool.reset_index(drop=True)
-    proc_pool = proc_pool.reset_index(drop=True)
-    if crm_reg == "row":
-        processor_df['proc_processor_name'] = processor_df['proc_processor_name'].replace("safechargeuk", "safecharge")
-    processor_df = proc_pool.copy()
-    if crm_reg == "row":
-        processor_df['proc_processor_name'] = processor_df['proc_processor_name'].str.lower().replace("safechargeuk",
-                                                                                                      "safecharge")
-    processor_df['proc_last4'] = processor_df['proc_last4'].apply(clean_last4)
-    print("After clean, proc_last4 unique: " + str(processor_df['proc_last4'].unique()))
-    print("Proc proc_last4 dtypes: " + str(processor_df['proc_last4'].dtype))
-    last4_map = processor_df.groupby('proc_last4').indices
-    print("Last4 map keys: " + str(list(last4_map.keys())))
-    print("Last4 map has '0824': " + str('0824' in last4_map))
-    print("Last4 map '0824' indices: " + str(last4_map.get('0824', [])))
-    print("Last4 map has '0476': " + str('0476' in last4_map))
-    print("Last4 map '0476' indices: " + str(last4_map.get('0476', [])))
+    # Prepare copies for matching to handle safecharge/safechargeuk mismatches
+    crm_df_for_match = crm_df.copy()
+    processor_df_for_match = processor_df.copy()
 
-    crm_df = crm_pool.copy()
-    crm_df = crm_df.drop_duplicates(subset=['crm_email', 'crm_last4', 'crm_amount', 'crm_currency', 'crm_date'])
-    print(f"After dedup, CRM rows: {len(crm_df)}")  # For debugging
-    crm_df['crm_last4'] = crm_df['crm_last4'].apply(clean_last4)
-    print("After clean, crm_last4 unique: " + str(crm_df['crm_last4'].unique()))
-    print(f"Cross direction: {crm_reg.upper()} CRM to {proc_reg.upper()} PROC")
-    print("Proc pool proc_processor_name unique:", proc_pool['proc_processor_name'].unique())
-    print("Proc pool proc_last4 unique:", proc_pool['proc_last4'].unique())
-    print("Proc pool proc_email unique:", proc_pool['proc_email'].unique())
-    print("CRM pool crm_processor_name unique:", crm_pool['crm_processor_name'].unique())
-    print("CRM pool crm_last4 unique:", crm_pool['crm_last4'].unique())
-    print("CRM pool crm_email unique:", crm_pool['crm_email'].unique())
+    # For UK CRM -> ROW PROC: Temporarily set regulation to 'row' to bypass safechargeuk-specific routing
+    if crm_reg == 'uk':
+        crm_df_for_match['regulation'] = 'row'
 
-    # ------------------------------------------------------------------- #
-    # Run the *exact same* matching logic that the normal matcher uses   #
-    # (we only give it the two small pools, nothing else)               #
-    # ------------------------------------------------------------------- #
+    # For ROW CRM -> UK PROC: Temporarily rename 'safechargeuk' to 'safecharge' in PROC
+    if proc_reg == 'uk':
+        processor_df_for_match['proc_processor_name'] = processor_df_for_match['proc_processor_name'].str.replace(
+            'safechargeuk', 'safecharge', case=False
+        )
+
+    # Run matching on the prepared copies
     raw_matches = engine.match_withdrawals(
-        crm_df,
-        processor_df,
+        crm_df_for_match,
+        processor_df_for_match,
         add_unmatched_proc=False,
         add_unmatched_crm=False,
     )
@@ -162,12 +155,15 @@ def _cross_match_one_way(
             print(
                 f"Matched CRM email: {m['crm_email']}, PROC email: {m['proc_email']}, last4_match: {m['last4_match']}, email_sim: {m['email_similarity_avg']}")
 
-    # Keep only the *real* matches
-    cross_matches = [m for m in raw_matches if m["match_status"] == 1]
+    # Keep only the *real* matches, restore original proc_processor_name if renamed
+    cross_matches = []
+    for m in raw_matches:
+        if m['match_status'] == 1:
+            if proc_reg == 'uk' and m.get('proc_processor_name', '').lower() == 'safecharge':
+                m['proc_processor_name'] = 'safechargeuk'
+            cross_matches.append(m)
 
-    # ------------------------------------------------------------------- #
     # Add a clear comment so the user knows it came from cross-regulation
-    # ------------------------------------------------------------------- #
     for m in cross_matches:
         crm_proc = m.get("crm_processor_name", "???")
         proc_proc = m.get("proc_processor_name", "???")
@@ -179,6 +175,10 @@ def _cross_match_one_way(
         m["regulation"] = crm_reg.upper()
 
     return cross_matches
+
+    # ------------------------------------------------------------------- #
+    # Add a clear comment so the user knows it came from cross-regulation
+    # ------------------------------------------------------------------- #
 
 
 # --------------------------------------------------------------------------- #

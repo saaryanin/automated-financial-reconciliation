@@ -161,6 +161,13 @@ def _cross_match_one_way(
         if m['match_status'] == 1:
             if proc_reg == 'uk' and m.get('proc_processor_name', '').lower() == 'safecharge':
                 m['proc_processor_name'] = 'safechargeuk'
+            # Set crm_row_index by looking up crm_email in crm_df (assuming unique)
+            email = m['crm_email']
+            matching_idxs = crm_df[crm_df['crm_email'] == email].index
+            if len(matching_idxs) == 1:
+                m['crm_row_index'] = matching_idxs[0]
+            else:
+                print(f"Warning: Duplicate or missing email {email} in crm_df")
             cross_matches.append(m)
 
     # Add a clear comment so the user knows it came from cross-regulation
@@ -175,10 +182,6 @@ def _cross_match_one_way(
         m["regulation"] = crm_reg.upper()
 
     return cross_matches
-
-    # ------------------------------------------------------------------- #
-    # Add a clear comment so the user knows it came from cross-regulation
-    # ------------------------------------------------------------------- #
 
 
 # --------------------------------------------------------------------------- #

@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 import shutil
 import warnings
+import re
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 from src.shifts_handler_test import main as handle_shifts, get_cutoff_time
@@ -9,7 +10,6 @@ from collections import OrderedDict
 import ast
 from datetime import datetime
 import numpy as np
-import re
 import pandas as pd
 import src.config as config
 
@@ -168,6 +168,9 @@ def generate_unapproved_crm_deposits(date_str, lists_dir, output_dir, regulation
         'crm_transaction_id': 'Transaction ID'
     }
     unapproved_crm.rename(columns=rename_dict, inplace=True)
+    if 'Regulation' in unapproved_crm.columns:
+        unapproved_crm['Regulation'] = unapproved_crm['Regulation'].apply(
+            lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # Save to output/dated/unapproved_crm_deposits.xlsx
     output_path = output_dir / f"{regulation.upper()} Unapproved Deposits.xlsx"
     save_excel(unapproved_crm, output_path, text_columns=['Last 4 Digits', 'Transaction ID'])
@@ -458,6 +461,8 @@ def generate_warning_withdrawals(date_str, lists_dir, output_dir, regulation):
         'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name', 'comment'
     ]
     warnings_df = warnings_df[[c for c in columns if c in warnings_df.columns]]
+    if 'regulation' in warnings_df.columns:
+        warnings_df['regulation'] = warnings_df['regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # Save to output/dated/warnings_withdrawals.xlsx
     output_path = output_dir / f"{regulation.upper()} warnings_withdrawals.xlsx"
     save_excel(warnings_df, output_path, text_columns=['crm_last4', 'proc_last4', 'orig_index', 'payment_method'])
@@ -498,6 +503,34 @@ def load_matching_df(date_str, lists_dir, output_dir, regulation):
             df[col] = df[col].apply(lambda x: clean_value(x, join_list=join))
     return df
 
+def format_amount(amt):
+    if pd.isna(amt):
+        return ''
+    if float(amt).is_integer():
+        return int(amt)
+    return amt
+
+def parse_adjustment(row):
+    comment = str(row['comment'])
+    match = re.search(r'(Underpaid|Overpaid) by ([\d.]+) (\w+)', comment)
+    if not match:
+        return row['crm_amount'], comment
+    paid_type = match.group(1)
+    amt_str = match.group(2)
+    curr = match.group(3)
+    amt = float(amt_str)
+    sign = -1 if paid_type == 'Underpaid' else 1
+    new_amount = sign * amt
+    under_over_part = match.group(0)
+    prefix = comment.replace(under_over_part, '').strip(' .;')
+    if prefix:
+        prefix = prefix + '; '
+    orig_crm = format_amount(abs(row['crm_amount']))
+    proc_crm = format_amount(abs(row['proc_amount_crm_currency']))
+    crm_curr = row['crm_currency']
+    new_comment = f"Client requested {orig_crm} {crm_curr} and received {proc_crm} {crm_curr}; {prefix}".rstrip('; ')
+    return new_amount, new_comment
+
 def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulation, matching_df=None):
     if matching_df is None:
         matching_df = load_matching_df(date_str, lists_dir, output_dir, regulation)
@@ -527,6 +560,52 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
         return None
     # Process comments for unmatched (strips prefixes for warnings, sets non-warning to empty)
     unmatched_proc.loc[:, 'comment'] = unmatched_proc['comment'].apply(process_unmatched_comment)
+    # Now add overpaid/underpaid rows from same regulation
+    group_over_under = df[(df['match_status'] == 1) & (df['payment_status'] == 0) & (df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
+    if not group_over_under.empty:
+        group_over_under['comment'] = group_over_under['comment'].apply(process_comment)
+        group_over_under['proc_amount'] = group_over_under['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+    # Load opposite cross-regulation for proc side (where PROC is current reg, CRM is opposite)
+    opposite_reg = 'row' if regulation == 'uk' else 'uk'
+    opposite_dirs = config.setup_dirs_for_reg(opposite_reg)
+    opposite_cross_path = opposite_dirs['lists_dir'] / date_str / f"{opposite_reg}_cross_regulation.xlsx"
+    group_cross_over_under = pd.DataFrame()
+    if opposite_cross_path.exists():
+        cross_df = pd.read_excel(opposite_cross_path, dtype={'crm_last4': str, 'proc_last4': str})
+        cross_df['crm_amount'] = cross_df['crm_amount'].apply(clean_value)
+        cross_df['proc_amount'] = cross_df['proc_amount'].apply(clean_value)
+        cross_df['crm_amount'] = pd.to_numeric(cross_df['crm_amount'], errors='coerce')
+        cross_df['proc_amount'] = pd.to_numeric(cross_df['proc_amount'], errors='coerce')
+        cross_df = cross_df[cross_df['warning'] == False]
+        group_cross_over_under = cross_df[(cross_df['match_status'] == 1) & (cross_df['payment_status'] == 0) & (cross_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
+        if not group_cross_over_under.empty:
+            group_cross_over_under['proc_amount'] = group_cross_over_under['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+            group_cross_over_under['comment'] = group_cross_over_under['comment'].apply(process_comment)
+            print(f"Added {len(group_cross_over_under)} cross-regulation over/underpaid rows to unmatched proc for {regulation}")
+    # Load opposite cross-processor for proc side
+    opposite_cross_processor_path = opposite_dirs['lists_dir'] / date_str / f"{opposite_reg}_cross_processor.xlsx"
+    group_cross_processor_over_under = pd.DataFrame()
+    if opposite_cross_processor_path.exists():
+        cross_proc_df = pd.read_excel(opposite_cross_processor_path, dtype={'crm_last4': str, 'proc_last4': str})
+        cross_proc_df['crm_amount'] = cross_proc_df['crm_amount'].apply(clean_value)
+        cross_proc_df['proc_amount'] = cross_proc_df['proc_amount'].apply(clean_value)
+        cross_proc_df['crm_amount'] = pd.to_numeric(cross_proc_df['crm_amount'], errors='coerce')
+        cross_proc_df['proc_amount'] = pd.to_numeric(cross_proc_df['proc_amount'], errors='coerce')
+        cross_proc_df = cross_proc_df[cross_proc_df['warning'] == False]
+        group_cross_processor_over_under = cross_proc_df[(cross_proc_df['match_status'] == 1) & (cross_proc_df['payment_status'] == 0) & (cross_proc_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
+        if not group_cross_processor_over_under.empty:
+            group_cross_processor_over_under['proc_amount'] = group_cross_processor_over_under['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+            group_cross_processor_over_under['comment'] = group_cross_processor_over_under['comment'].apply(process_comment)
+            print(f"Added {len(group_cross_processor_over_under)} cross-processor over/underpaid rows to unmatched proc for {regulation}")
+    # Concat over/under groups to unmatched_proc
+    additional_dfs = [group_over_under, group_cross_over_under, group_cross_processor_over_under]
+    filtered_additional = [d for d in additional_dfs if not d.empty]
+    if filtered_additional:
+        additional = pd.concat(filtered_additional, ignore_index=True)
+    else:
+        additional = pd.DataFrame()
+    if not additional.empty:
+        unmatched_proc = pd.concat([unmatched_proc, additional], ignore_index=True)
     # Clean processor columns
     columns_to_clean = [
         'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname',
@@ -672,42 +751,12 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         group3['comment'] = "Withdrawal cancellation"
         # Make crm_amount positive
         group3['crm_amount'] = group3['crm_amount'].apply(lambda x: abs(x) if pd.notna(x) else x)
-    # Process Group 2: Parse comment for underpaid/overpaid amount and update crm_amount and comment
+    # Process Group 2
     if not group2.empty:
         group2['crm_amount'] = group2['crm_amount'].apply(clean_value)
         group2['proc_amount'] = group2['proc_amount'].apply(clean_value)
         group2['crm_amount'] = pd.to_numeric(group2['crm_amount'], errors='coerce')
         group2['proc_amount'] = pd.to_numeric(group2['proc_amount'], errors='coerce')
-        def format_amount(amt):
-            if pd.isna(amt):
-                return ''
-            if float(amt).is_integer():
-                return int(amt)
-            return amt
-        def parse_adjustment(row):
-            comment = row['comment']
-            if "Underpaid by" in comment:
-                # Extract amount after "Underpaid by "
-                amount_str = comment.split("Underpaid by ")[1].split(" ")[0]
-                amount = float(amount_str)
-                sign = -1 # Negative for underpaid
-            elif "Overpaid by" in comment:
-                # Extract amount after "Overpaid by "
-                amount_str = comment.split("Overpaid by ")[1].split(" ")[0]
-                amount = float(amount_str)
-                sign = 1 # Positive for overpaid
-            else:
-                return row['crm_amount'], row['comment'] # No change if parse fails
-            # Update crm_amount
-            new_amount = sign * amount
-            # Update comment to "Client requested {original crm_amount} {crm_currency} and received {original proc_amount} {proc_currency}."
-            orig_crm_amount = format_amount(row['crm_amount'])
-            orig_proc_amount = format_amount(row['proc_amount'])
-            crm_curr = row['crm_currency']
-            proc_curr = row['proc_currency']
-            new_comment = f"Client requested {orig_crm_amount} {crm_curr} and received {orig_proc_amount} {proc_curr}."
-            return new_amount, new_comment
-        # Apply parsing
         group2[['crm_amount', 'comment']] = group2.apply(parse_adjustment, axis=1, result_type='expand')
     # Process Group 4: Keep as is, crm_amount negative, but process comment to strip prefix
     if not group4.empty:
@@ -715,8 +764,43 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         group4['crm_amount'] = pd.to_numeric(group4['crm_amount'], errors='coerce')
         group4['crm_amount'] = group4['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
         group4['comment'] = group4['comment'].apply(process_unmatched_comment)
+    # Load cross-regulation for crm side (where CRM is current reg, PROC is opposite)
+    cross_path = lists_dir / date_str / f"{regulation}_cross_regulation.xlsx"
+    group_cross_over_under = pd.DataFrame()
+    if cross_path.exists():
+        cross_df = pd.read_excel(cross_path, dtype={'crm_last4': str, 'proc_last4': str})
+        cross_df['crm_amount'] = cross_df['crm_amount'].apply(clean_value)
+        cross_df['proc_amount'] = cross_df['proc_amount'].apply(clean_value)
+        cross_df['crm_amount'] = pd.to_numeric(cross_df['crm_amount'], errors='coerce')
+        cross_df['proc_amount'] = pd.to_numeric(cross_df['proc_amount'], errors='coerce')
+        cross_df = cross_df[cross_df['warning'] == False]
+        group_cross_over_under = cross_df[(cross_df['match_status'] == 1) & (cross_df['payment_status'] == 0) & (cross_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
+        if not group_cross_over_under.empty:
+            group_cross_over_under['comment'] = group_cross_over_under['comment'].apply(process_comment)
+            group_cross_over_under[['crm_amount', 'comment']] = group_cross_over_under.apply(parse_adjustment, axis=1, result_type='expand')
+            print(f"Added {len(group_cross_over_under)} cross-regulation over/underpaid rows to unmatched crm for {regulation}")
+    # Load cross-processor for crm side
+    cross_processor_path = lists_dir / date_str / f"{regulation}_cross_processor.xlsx"
+    group_cross_processor_over_under = pd.DataFrame()
+    if cross_processor_path.exists():
+        cross_proc_df = pd.read_excel(cross_processor_path, dtype={'crm_last4': str, 'proc_last4': str})
+        cross_proc_df['crm_amount'] = cross_proc_df['crm_amount'].apply(clean_value)
+        cross_proc_df['proc_amount'] = cross_proc_df['proc_amount'].apply(clean_value)
+        cross_proc_df['crm_amount'] = pd.to_numeric(cross_proc_df['crm_amount'], errors='coerce')
+        cross_proc_df['proc_amount'] = pd.to_numeric(cross_proc_df['proc_amount'], errors='coerce')
+        cross_proc_df = cross_proc_df[cross_proc_df['warning'] == False]
+        group_cross_processor_over_under = cross_proc_df[(cross_proc_df['match_status'] == 1) & (cross_proc_df['payment_status'] == 0) & (cross_proc_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
+        if not group_cross_processor_over_under.empty:
+            group_cross_processor_over_under['comment'] = group_cross_processor_over_under['comment'].apply(process_comment)
+            group_cross_processor_over_under[['crm_amount', 'comment']] = group_cross_processor_over_under.apply(parse_adjustment, axis=1, result_type='expand')
+            print(f"Added {len(group_cross_processor_over_under)} cross-processor over/underpaid rows to unmatched crm for {regulation}")
     # Combine all groups
-    unmatched_crm = pd.concat([group1, group2, group3, group4], ignore_index=True)
+    groups = [group1, group2, group3, group4, group_cross_over_under, group_cross_processor_over_under]
+    filtered_groups = [g for g in groups if not g.empty]
+    if filtered_groups:
+        unmatched_crm = pd.concat(filtered_groups, ignore_index=True)
+    else:
+        unmatched_crm = pd.DataFrame()
     if unmatched_crm.empty:
         print(f"No unmatched CRM withdrawals found for {date_str}, skipping file creation.")
         return None
@@ -928,6 +1012,42 @@ def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, co
             print(f"Added {len(cross_df)} cross-regulation rows to matched withdrawals for {regulation}")
     else:
         print(f"Cross-regulation file NOT found: {cross_path}")
+    # Load cross-processor
+    cross_processor_path = cross_lists_dir / date_str / f"{regulation}_cross_processor.xlsx"
+    print(f"Checking for cross-processor file: {cross_processor_path}")
+    if cross_processor_path.exists():
+        print(f"Found cross-processor file: {cross_processor_path} (size: {cross_processor_path.stat().st_size} bytes)")
+        cross_proc_df = pd.read_excel(cross_processor_path, dtype={'crm_last4': str, 'proc_last4': str})
+        if cross_proc_df.empty:
+            print("Cross-processor file is empty, skipping.")
+        else:
+            cross_proc_df['crm_amount'] = cross_proc_df['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+            cross_proc_df['proc_amount'] = cross_proc_df['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+            if 'comment' in cross_proc_df.columns:
+                cross_proc_df['comment'] = cross_proc_df['comment'].apply(process_comment)
+            available_cols = [col for col in columns_map if col in cross_proc_df.columns]
+            cross_proc_df = cross_proc_df[available_cols]
+            cross_proc_df.rename(columns={k: v for k, v in columns_map.items() if k in available_cols}, inplace=True)
+            if 'comment' in cross_proc_df.columns and 'Comment' not in cross_proc_df.columns:
+                cross_proc_df.rename(columns={'comment': 'Comment'}, inplace=True)
+            cross_proc_df['Comment'] = cross_proc_df['Comment'].fillna('')
+            cross_proc_df['Match'] = 'Yes'
+            if 'Comment' in cross_proc_df.columns and 'Match' in cross_proc_df.columns:
+                columns = list(cross_proc_df.columns)
+                columns.remove('Match')
+                comment_idx = columns.index('Comment')
+                columns.insert(comment_idx, 'Match')
+                cross_proc_df = cross_proc_df[columns]
+            pad_last4(cross_proc_df, 'CRM Last 4 Digits')
+            pad_last4(cross_proc_df, 'PSP Last 4 Digits')
+            cross_proc_df['Date'] = cross_proc_df['Date'].apply(format_date)
+            cross_proc_df['Date'] = pd.to_datetime(cross_proc_df['Date'], errors='coerce')
+            if 'Regulation' in cross_proc_df.columns:
+                cross_proc_df['Regulation'] = cross_proc_df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
+            matched_df = pd.concat([matched_df, cross_proc_df], ignore_index=True)
+            print(f"Added {len(cross_proc_df)} cross-processor rows to matched withdrawals for {regulation}")
+    else:
+        print(f"Cross-processor file NOT found: {cross_processor_path}")
     # Handle compensated withdrawals (cancellations) if provided
     compensated_formatted = pd.DataFrame(columns=matched_df.columns)
     if compensated_wds is not None and not compensated_wds.empty:
@@ -971,6 +1091,7 @@ def save_matched_to_excel(date_str, regulation, deps_df, wds_df, output_dir):
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         if deps_df is not None and not deps_df.empty:
             deps_df.to_excel(writer, index=False, sheet_name='Deps')
+
             worksheet = writer.sheets['Deps']
             # Set text format for specified columns
             text_columns = ['CRM Last 4 Digits', 'PSP Last 4 Digits', 'CRM Transaction ID', 'PSP Transaction ID']
@@ -1011,6 +1132,50 @@ def save_matched_to_excel(date_str, regulation, deps_df, wds_df, output_dir):
                 worksheet.column_dimensions[column_letter].width = adjusted_width
     print(f"Matched data saved to {output_path} with sheets: Deps, WDs")
 
+
+def save_unmatched_to_excel(date_str, regulation, crm_deps_df, proc_deps_df, crm_wds_df, proc_wds_df, output_dir):
+    output_path = output_dir / f"{regulation.upper()} Unmatched.xlsx"
+    dfs = {
+        'CRM Deps': crm_deps_df,
+        'PSP Deps': proc_deps_df,
+        'CRM WDs': crm_wds_df,
+        'PSP WDs': proc_wds_df
+    }
+    non_empty_dfs = {k: v for k, v in dfs.items() if v is not None and not v.empty}
+    if not non_empty_dfs:
+        print(f"No unmatched data for {date_str} in {regulation}, skipping Unmatched.xlsx")
+        return
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        for sheet, df in non_empty_dfs.items():
+            if sheet.startswith('CRM') and 'Regulation' in df.columns:
+                df['Regulation'] = df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
+            df.to_excel(writer, index=False, sheet_name=sheet)
+            worksheet = writer.sheets[sheet]
+            # Set text format for specified columns based on sheet
+            if sheet in ['CRM Deps', 'CRM WDs']:
+                text_columns = ['Last 4 Digits']
+                if sheet == 'CRM Deps':
+                    text_columns += ['Transaction ID']
+            else:  # PSP Deps or WDs
+                text_columns = ['Last 4 Digits']
+                if sheet == 'PSP Deps':
+                    text_columns += ['Transaction ID']
+            for col in text_columns:
+                if col in df.columns:
+                    col_idx = df.columns.get_loc(col) + 1
+                    for row_idx in range(2, len(df) + 2):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.number_format = '@'
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+    print(f"Unmatched data saved to {output_path} with sheets: {', '.join(non_empty_dfs.keys())}")
 def main(date_str):
     matched_sums = handle_shifts(date_str)
     for regulation in ['row', 'uk']:
@@ -1048,22 +1213,7 @@ def main(date_str):
         deps_df = generate_matched_deposits(date_str, lists_dir=LISTS_DIR, regulation=regulation, compensated_deps=compensated_deps)
         wds_df = generate_matched_withdrawals(date_str, regulation, lists_dir=LISTS_DIR, output_dir=output_dir, compensated_wds=compensated_wds)
         save_matched_to_excel(date_str, regulation, deps_df, wds_df, output_dir=output_dir)
-        if crm_deps_df is not None and not crm_deps_df.empty:
-            path = output_dir / f"{regulation.upper()} Unmatched CRM Deposits.xlsx"
-            save_excel(crm_deps_df, path, text_columns=['Last 4 Digits', 'Transaction ID'])
-            print(f"Saved {path}")
-        if proc_deps_df is not None and not proc_deps_df.empty:
-            path = output_dir / f"{regulation.upper()} Unmatched Processors Deposits.xlsx"
-            save_excel(proc_deps_df, path, text_columns=['Last 4 Digits', 'Transaction ID'])
-            print(f"Saved {path}")
-        if crm_wds_df is not None and not crm_wds_df.empty:
-            path = output_dir / f"{regulation.upper()} Unmatched CRM Withdrawals.xlsx"
-            save_excel(crm_wds_df, path, text_columns=['Last 4 Digits'])
-            print(f"Saved {path}")
-        if proc_wds_df is not None and not proc_wds_df.empty:
-            path = output_dir / f"{regulation.upper()} Unmatched Processors Withdrawals.xlsx"
-            save_excel(proc_wds_df, path, text_columns=['Last 4 Digits'])
-            print(f"Saved {path}")
+        save_unmatched_to_excel(date_str, regulation, crm_deps_df, proc_deps_df, crm_wds_df, proc_wds_df, output_dir)
 
 if __name__ == "__main__":
     DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-10-20"

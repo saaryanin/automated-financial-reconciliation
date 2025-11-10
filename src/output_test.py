@@ -112,6 +112,8 @@ def generate_unmatched_crm_deposits(date_str, lists_dir, regulation):
         'crm_transaction_id': 'Transaction ID'
     }
     unmatched_crm.rename(columns=rename_dict, inplace=True)
+    if 'Regulation' in df.columns:  # Replace 'df' with the actual DF name, e.g., matched_df, all_withdrawals, unmatched_crm, etc.
+        df['Regulation'] = df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     print(f"Unmatched CRM deposits DataFrame prepared for {date_str}")
     return unmatched_crm
 
@@ -359,6 +361,8 @@ def process_comment(comment):
         elif p.startswith('Cross-processor fallback match'):
             new_parts.append(p)
         elif p.startswith('Processor names differ'):
+            new_parts.append(p)
+        else:
             new_parts.append(p)
         # ignore other parts
     # Add similar email
@@ -744,6 +748,8 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         'comment': 'Comment'
     }
     unmatched_crm.rename(columns=rename_dict, inplace=True)
+    if 'Regulation' in df.columns:  # Replace 'df' with the actual DF name, e.g., matched_df, all_withdrawals, unmatched_crm, etc.
+        df['Regulation'] = df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # Sort by Date from newest to oldest
     unmatched_crm['Date'] = pd.to_datetime(unmatched_crm['Date'], errors='coerce')
     unmatched_crm = unmatched_crm.sort_values(by='Date', ascending=False)
@@ -798,6 +804,8 @@ def generate_matched_deposits(date_str, lists_dir, regulation, compensated_deps=
     # Sort matched_df by Date descending
     matched_df['Date'] = pd.to_datetime(matched_df['Date'], errors='coerce')
     matched_df = matched_df.sort_values(by='Date', ascending=False)
+    if 'Regulation' in df.columns:  # Replace 'df' with the actual DF name, e.g., matched_df, all_withdrawals, unmatched_crm, etc.
+        df['Regulation'] = df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # Handle compensated deposits (cancellations) if provided
     compensated_formatted = pd.DataFrame(columns=matched_df.columns)
     if compensated_deps is not None and not compensated_deps.empty:
@@ -881,6 +889,8 @@ def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, co
     # Sort matched_df by Date descending
     matched_df['Date'] = pd.to_datetime(matched_df['Date'], errors='coerce')
     matched_df = matched_df.sort_values(by='Date', ascending=False)
+    if 'Regulation' in matched_df.columns:
+        matched_df['Regulation'] = matched_df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # *** SYMMETRIC CROSS-REGULATION LOADING (fixed for full ROW <-> UK separation) ***
     cross_lists_dir = config.setup_dirs_for_reg(regulation)['lists_dir']  # Load from *current* reg's lists_dir
     cross_path = cross_lists_dir / date_str / f"{regulation}_cross_regulation.xlsx"
@@ -898,6 +908,9 @@ def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, co
             available_cols = [col for col in columns_map if col in cross_df.columns]
             cross_df = cross_df[available_cols]
             cross_df.rename(columns={k: v for k, v in columns_map.items() if k in available_cols}, inplace=True)
+            if 'comment' in cross_df.columns and 'Comment' not in cross_df.columns:
+                cross_df.rename(columns={'comment': 'Comment'}, inplace=True)  # Fallback direct rename if missed
+            cross_df['Comment'] = cross_df['Comment'].fillna('')  # Ensure no NaN, show empty string
             cross_df['Match'] = 'Yes'
             if 'Comment' in cross_df.columns and 'Match' in cross_df.columns:
                 columns = list(cross_df.columns)
@@ -909,6 +922,8 @@ def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, co
             pad_last4(cross_df, 'PSP Last 4 Digits')
             cross_df['Date'] = cross_df['Date'].apply(format_date)
             cross_df['Date'] = pd.to_datetime(cross_df['Date'], errors='coerce')
+            if 'Regulation' in cross_df.columns:
+                cross_df['Regulation'] = cross_df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
             matched_df = pd.concat([matched_df, cross_df], ignore_index=True)
             print(f"Added {len(cross_df)} cross-regulation rows to matched withdrawals for {regulation}")
     else:
@@ -932,6 +947,8 @@ def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, co
         compensated_formatted['Type'] = 'Deposit Cancellation'
         compensated_formatted['Comment'] = "Deposit cancellation within the same day"
         compensated_formatted['Match'] = 'No'
+        if 'Regulation' in compensated_formatted.columns:
+            compensated_formatted['Regulation'] = compensated_formatted['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # Concat and sort: compensated first, then by Date descending (avoid FutureWarning by checking empty)
     all_withdrawals = matched_df.copy()
     if not compensated_formatted.empty:

@@ -1,3 +1,4 @@
+# testing_uk_regulation.py (updated to append previous unmatched shifted deposits to raw CRM for deposits)
 # testing_uk_regulation.py (updated)
 import pandas as pd
 from pathlib import Path
@@ -61,6 +62,14 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
         dirs = setup_regulation_structure(regulation, processors)
     crm_df = pd.read_excel(dirs['crm_filepath'], engine="openpyxl")
     crm_df.columns = crm_df.columns.str.strip()
+    if transaction_type == 'deposit':
+        previous_date_str = get_previous_business_day(date_str)
+        prev_unmatched_path = dirs['lists_dir'] / previous_date_str / f"{regulation}_unmatched_shifted_deposits.xlsx"
+        if prev_unmatched_path.exists():
+            prev_df = pd.read_excel(prev_unmatched_path, engine="openpyxl")
+            prev_df.columns = prev_df.columns.str.strip()
+            crm_df = pd.concat([crm_df, prev_df], ignore_index=True)
+            print(f"Appended {len(prev_df)} rows from previous unmatched shifted deposits for {regulation}")
     crm_df['regulation'] = crm_df['Site (Account) (Account)'].apply(categorize_regulation)
     if regulation == 'row':
         row_regs = ['mauritius', 'cyprus', 'australia']
@@ -79,7 +88,7 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
     if regulation == 'uk':
         additional_psps = [p for p in row_processors if p not in ['safecharge'] and p in unique_psps]
         filtered_processors += additional_psps
-    filtered_processors = list(set(filtered_processors))  # Dedup
+    filtered_processors = list(set(filtered_processors)) # Dedup
     potential_processors = processors
     if regulation == 'uk':
         potential_processors += [p for p in row_processors if p not in ['safecharge']]
@@ -89,54 +98,6 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
             if proc_file.exists() and proc not in filtered_processors:
                 filtered_processors.append(proc)
                 break
-    if transaction_type == "deposit":
-        previous_date_str = get_previous_business_day(date_str)
-        previous_unmatched_path = dirs['lists_dir'] / previous_date_str / "unmatched_shifted_deposits.xlsx"
-        if previous_unmatched_path.exists():
-            unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
-            mapping = {
-                'Name': 'crm_type',
-                'Created On': 'crm_date',
-                'First Name (Account) (Account)': 'crm_firstname',
-                'Last Name (Account) (Account)': 'crm_lastname',
-                'Email (Account) (Account)': 'crm_email',
-                'Amount': 'crm_amount',
-                'Currency': 'crm_currency',
-                'Approved': 'crm_approved',
-                'Approved On': 'crm_approved_on',
-                'TP Account': 'crm_tp',
-                'Internal Comment': 'internal_comment',
-                'Method of Payment': 'payment_method',
-                'Internal Type': 'internal_type',
-                'Site (Account) (Account)': 'regulation',
-                'Country Of Residence (Account) (Account)': 'country_of_residence',
-                'PSP name': 'crm_processor_name',
-                'CC Last 4 Digits': 'crm_last4'
-            }
-            unmatched_mapped = unmatched_df.rename(columns=mapping, errors='ignore')
-            unmatched_mapped['crm_processor_name'] = unmatched_mapped.get('crm_processor_name', 'unknown').astype(str).str.strip().str.lower().replace(PSP_NAME_MAP)
-            unmatched_mapped['crm_transaction_id'] = unmatched_mapped.apply(
-                lambda row: extract_crm_transaction_id(row.get('internal_comment'), row['crm_processor_name']) if pd.notna(row.get('internal_comment')) else None,
-                axis=1
-            ).astype(str).fillna('UNKNOWN')
-            required_columns = ['crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount',
-                                'crm_currency', 'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4',
-                                'regulation', 'crm_transaction_id', 'crm_type']
-            unmatched_mapped = unmatched_mapped.reindex(columns=required_columns, fill_value=pd.NA)
-            unmatched_mapped['crm_date'] = pd.to_datetime(unmatched_mapped['crm_date'], errors='coerce').dt.strftime('%m/%d/%Y %I:%M:%S %p')
-            unmatched_mapped['crm_amount'] = pd.to_numeric(unmatched_mapped['crm_amount'], errors='coerce').fillna(0)
-            unmatched_mapped['crm_last4'] = pd.to_numeric(unmatched_mapped['crm_last4'], errors='coerce').fillna(0)
-            unmatched_mapped['crm_currency'] = unmatched_mapped['crm_currency'].replace({'US Dollar': 'USD', 'Euro': 'EUR'})
-            unmatched_mapped['crm_approved'] = unmatched_mapped['crm_approved'].str.strip().str.lower().map({'yes': 'Yes', 'no': 'No'}).fillna(0)
-            unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
-            existing_transaction_ids = set(crm_df['Internal Comment'].apply(lambda x: extract_crm_transaction_id(x, 'default') if pd.notna(x) else None).dropna().unique())
-            new_deposits = unmatched_mapped[~unmatched_mapped['crm_transaction_id'].isin(existing_transaction_ids)]
-            if not new_deposits.empty:
-                crm_df = pd.concat([crm_df, new_deposits], ignore_index=True)
-                print(f"Added {len(new_deposits)} new unmatched deposits")
-            unmatched_out_path = dirs['processed_unmatched_shifted_deposits_dir'] / date_str / "unmatched_shifted_deposits.xlsx"
-            unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
-            unmatched_mapped.to_excel(unmatched_out_path, index=False)
     crm_start = time.time()
     processed_crm_dfs = []
     for proc in filtered_processors:

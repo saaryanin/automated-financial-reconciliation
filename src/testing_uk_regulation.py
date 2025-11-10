@@ -11,7 +11,7 @@ import time
 from src.utils import categorize_regulation, get_previous_business_day
 from src.deposits_matcher_test import match_deposits_for_date
 from src.shifts_handler_test import main as handle_shifts
-from src.withdrawals_matcher_test import match_withdrawals_for_date
+from src.withdrawals_matcher_test import match_withdrawals_for_date,run_cross_processor_matching
 from src.cross_regulation_matcher import run_cross_regulation_matching
 def setup_regulation_structure(regulation, processors):
     start_time = time.time()
@@ -47,7 +47,7 @@ def setup_regulation_structure(regulation, processors):
         **dirs,
         'crm_filepath': reg_crm_filepath
     }
-date_str = '2025-10-21'
+date_str = '2025-10-20'
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
     'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
@@ -188,3 +188,4 @@ if __name__ == "__main__":
         print("No rates file found; using empty exchange rate map.")
     match_withdrawals_for_date(date_str, exchange_rate_map)
     run_cross_regulation_matching(date_str, exchange_rate_map)
+    run_cross_processor_matching(date_str, exchange_rate_map)

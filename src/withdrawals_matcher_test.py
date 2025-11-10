@@ -7,6 +7,7 @@ from src.utils import create_cancelled_row,normalize_string,clean_last4,clean_fi
 from difflib import SequenceMatcher
 from collections import defaultdict
 import re
+from src.config import setup_dirs_for_reg
 class ProcessorConfig:
     def __init__(self,
                  email_threshold=0.0,
@@ -487,14 +488,7 @@ class ReconciliationEngine:
                     continue
                 if crm_group != proc_group:
                     continue # Skip if different groups
-                if proc_row['proc_processor_name'].lower() == 'safechargeuk' and crm_row[
-                    'crm_processor_name'].lower() != 'safecharge':
-                    continue
-                if proc_row['proc_processor_name'].lower() == 'safecharge' and crm_row[
-                    'crm_processor_name'].lower() != 'safechargeuk':
-                    continue
-                if proc_row['proc_processor_name'].lower() == crm_row['crm_processor_name'].lower():
-                    continue # Skip same processor
+
                 # Skip cross for safechargeuk CRM with safecharge proc
                 if crm_row['crm_processor_name'].lower() == 'safechargeuk' and proc_row['proc_processor_name'].lower() == 'safecharge':
                     continue
@@ -515,6 +509,7 @@ class ReconciliationEngine:
                 fallback_comment = f"Cross-processor fallback match - {best_match.get('crm_processor_name', 'unknown')} matched {proc_row['proc_processor_name']}"
                 best_match['comment'] = fallback_comment # Override any existing comment to avoid duplication
                 best_match['cross_processor_fallback'] = True # Flag for Rule 3 to skip adding "differ" comment
+                match['warning'] = True
                 matches.append(best_match)
                 self.metrics['matched_fallback'] += 1
                 self.metrics['unmatched'] -= 1
@@ -2571,3 +2566,144 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
         uk_path = uk_report_dir / "uk_withdrawals_matching.xlsx"
         uk_matches_df.to_excel(uk_path, index=False)
         print(f"UK withdrawals matching report saved to {uk_path}")
+
+def run_cross_processor_matching(date_str: str, exchange_rate_map: dict) -> None:
+    """PROC-driven cross-processor matching across regulations on unmatched rows after cross-reg."""
+    row_dirs = setup_dirs_for_reg('row', create=False)
+    uk_dirs = setup_dirs_for_reg('uk', create=False)
+    row_file = row_dirs['lists_dir'] / date_str / "row_withdrawals_matching.xlsx"
+    uk_file = uk_dirs['lists_dir'] / date_str / "uk_withdrawals_matching.xlsx"
+    if not (row_file.exists() and uk_file.exists()):
+        print("[Cross-processor] One or more matching files missing – skipping.")
+        return
+    row_df = pd.read_excel(row_file)
+    uk_df = pd.read_excel(uk_file)
+    for df in [row_df, uk_df]:
+        list_cols = ['proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4',
+                     'proc_currency', 'proc_amount', 'proc_amount_crm_currency']
+        for col in list_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(clean_field)
+        if 'proc_last4' in df.columns:
+            df['proc_last4'] = df['proc_last4'].apply(clean_last4)
+        if 'crm_last4' in df.columns:
+            df['crm_last4'] = df['crm_last4'].apply(clean_last4)
+    # Extract unmatched CRM/PROC per reg
+    unmatched_crm_row_mask = (row_df['match_status'] == 0) & row_df['crm_date'].notna()
+    unmatched_crm_row = row_df[unmatched_crm_row_mask].copy()
+    unmatched_proc_row_mask = (row_df['match_status'] == 0) & row_df['crm_date'].isna()
+    unmatched_proc_row = row_df[unmatched_proc_row_mask].copy()
+    unmatched_crm_uk_mask = (uk_df['match_status'] == 0) & uk_df['crm_date'].notna()
+    unmatched_crm_uk = uk_df[unmatched_crm_uk_mask].copy()
+    unmatched_proc_uk_mask = (uk_df['match_status'] == 0) & uk_df['crm_date'].isna()
+    unmatched_proc_uk = uk_df[unmatched_proc_uk_mask].copy()
+    if (unmatched_crm_row.empty and unmatched_crm_uk.empty) or (unmatched_proc_row.empty and unmatched_proc_uk.empty):
+        print("[Cross-processor] No unmatched CRM or PROC rows – skipping.")
+        return
+    # Assign original indices and reg labels
+    crm_pools = []
+    proc_pools = []
+    if not unmatched_crm_row.empty:
+        unmatched_crm_row = unmatched_crm_row.assign(orig_reg='row', orig_crm_index=unmatched_crm_row.index)
+        crm_pools.append(unmatched_crm_row)
+    if not unmatched_crm_uk.empty:
+        unmatched_crm_uk = unmatched_crm_uk.assign(orig_reg='uk', orig_crm_index=unmatched_crm_uk.index)
+        crm_pools.append(unmatched_crm_uk)
+    if not unmatched_proc_row.empty:
+        unmatched_proc_row = unmatched_proc_row.assign(orig_reg='row', orig_proc_index=unmatched_proc_row.index)
+        proc_pools.append(unmatched_proc_row)
+    if not unmatched_proc_uk.empty:
+        unmatched_proc_uk = unmatched_proc_uk.assign(orig_reg='uk', orig_proc_index=unmatched_proc_uk.index)
+        proc_pools.append(unmatched_proc_uk)
+    all_unmatched_crm = pd.concat(crm_pools, ignore_index=True) if crm_pools else pd.DataFrame()
+    all_unmatched_proc = pd.concat(proc_pools, ignore_index=True) if proc_pools else pd.DataFrame()
+    # Run global PROC-driven cross-processor matching
+    engine = ReconciliationEngine(exchange_rate_map, {'log_level': logging.WARNING, 'enable_diagnostics': False})
+    used_crm = set()
+    used_proc = set()
+    cross_matches = []
+    engine._cross_processor_last_chance(all_unmatched_crm, all_unmatched_proc, used_crm, used_proc, cross_matches)
+    if not cross_matches:
+        print("[Cross-processor] No additional matches found.")
+        return
+    print(f"[Cross-processor] Found {len(cross_matches)} cross-processor matches.")
+    # Collect removals and group matches by CRM reg and whether cross-reg or within
+    to_remove_row = set()
+    to_remove_uk = set()
+    row_cross_matches = []  # ROW CRM + other-reg PROC
+    uk_cross_matches = []   # UK CRM + other-reg PROC
+    row_within_matches = [] # ROW CRM + ROW PROC
+    uk_within_matches = []  # UK CRM + UK PROC
+    for match in cross_matches:
+        crm_idx = match['crm_row_index']
+        crm_reg = all_unmatched_crm.at[crm_idx, 'orig_reg']
+        crm_orig_idx = all_unmatched_crm.at[crm_idx, 'orig_crm_index']
+        proc_idxs = match['matched_proc_indices']
+        proc_reg = all_unmatched_proc.at[proc_idxs[0], 'orig_reg']
+        proc_orig_idxs = {all_unmatched_proc.at[p, 'orig_proc_index'] for p in proc_idxs}
+        # Update comment to reflect within or cross-reg
+        fallback_comment = f"Cross-processor fallback match - {match.get('crm_processor_name', 'unknown')} matched {match.get('proc_processor_name', 'unknown')}"
+        if crm_reg != proc_reg:
+            match['comment'] = fallback_comment + " (cross-regulation)"
+        else:
+            match['comment'] = fallback_comment  # No extra for within
+        match['cross_processor_fallback'] = True
+        # Route
+        if crm_reg == proc_reg:
+            if crm_reg == 'row':
+                row_within_matches.append(match)
+            else:
+                uk_within_matches.append(match)
+        else:
+            if crm_reg == 'row':
+                row_cross_matches.append(match)
+            else:
+                uk_cross_matches.append(match)
+        # Removals (always remove old unmatched rows)
+        if crm_reg == 'row':
+            to_remove_row.add(crm_orig_idx)
+        else:
+            to_remove_uk.add(crm_orig_idx)
+        if proc_reg == 'row':
+            to_remove_row.update(proc_orig_idxs)
+        else:
+            to_remove_uk.update(proc_orig_idxs)
+    # Remove old unmatched from originals
+    row_df = row_df.drop(list(to_remove_row), errors='ignore')
+    uk_df = uk_df.drop(list(to_remove_uk), errors='ignore')
+    row_df.to_excel(row_file, index=False)
+    uk_df.to_excel(uk_file, index=False)
+    print("[Cross-processor] Removed matched rows from original *_withdrawals_matching.xlsx files.")
+    # Helper to append list of matches to a file (original or cross)
+    def append_matches_to_file(file_path, matches_list, desired_order):
+        if not matches_list:
+            return
+        df_new = pd.DataFrame(matches_list)
+        df_new['crm_type'] = 'Withdrawal'
+        df_new = df_new.reindex(columns=[c for c in desired_order if c in df_new.columns or c == 'crm_type'])
+        if 'proc_last4' in df_new.columns:
+            df_new['proc_last4'] = df_new['proc_last4'].astype(str).str.replace(r'\.0$', '', regex=True)
+        if file_path.exists():
+            df_existing = pd.read_excel(file_path)
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+        df_combined.to_excel(file_path, index=False)
+        print(f"[Cross-processor] Appended {len(matches_list)} matches → {file_path.name}")
+    # Append within-reg to original matching files
+    desired_order = [
+        'crm_type', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4',
+        'crm_currency', 'crm_amount', 'payment_method', 'crm_processor_name', 'regulation',
+        'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4',
+        'proc_currency', 'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
+        'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used',
+        'match_status', 'payment_status', 'warning', 'comment', 'matched_proc_indices'
+    ]
+    append_matches_to_file(row_file, row_within_matches, desired_order)
+    append_matches_to_file(uk_file, uk_within_matches, desired_order)
+    # Append cross-reg to cross files
+    row_cross_path = row_dirs['lists_dir'] / date_str / "row_cross_regulation.xlsx"
+    uk_cross_path = uk_dirs['lists_dir'] / date_str / "uk_cross_regulation.xlsx"
+    append_matches_to_file(row_cross_path, row_cross_matches, desired_order)
+    append_matches_to_file(uk_cross_path, uk_cross_matches, desired_order)
+    print(f"[Cross-processor] Finished: {len(row_within_matches)} within ROW, {len(uk_within_matches)} within UK, {len(row_cross_matches)} cross to ROW cross file, {len(uk_cross_matches)} cross to UK cross file.")

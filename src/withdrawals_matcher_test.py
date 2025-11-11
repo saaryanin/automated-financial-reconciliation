@@ -271,25 +271,27 @@ class ReconciliationEngine:
             'estimated_time': self.estimated_time,
             'parameters_adjusted': self.parameter_adjusted
         }
+
     def _match_processor_to_crm_row(self, proc_row, crm_row, proc_config, crm_idx):
         def safe_lower_strip(value):
             if pd.isna(value):
                 return ''
             return str(value).lower().strip()
+
         """
         Try to match one processor row to one CRM row.
         Return (match_dict, diagnostics_dict) or None if no match.
         """
         # Extract relevant fields
-        proc_amount = abs(proc_row.get('proc_amount')) # Use abs for positive comparison
+        proc_amount = abs(proc_row.get('proc_amount'))  # Use abs for positive comparison
         proc_currency = proc_row.get('proc_currency')
         proc_email = safe_lower_strip(proc_row.get('proc_email'))
         proc_last4 = str(proc_row.get('proc_last4') or '').strip()
         proc_tp = str(proc_row.get('proc_tp') or '').strip()
-        crm_amount = abs(crm_row.get('crm_amount')) # Use abs for CRM too
+        crm_amount = abs(crm_row.get('crm_amount'))  # Use abs for CRM too
         crm_currency = crm_row.get('crm_currency')
-        crm_email_raw = safe_lower_strip(crm_row.get('crm_email')) # Raw for splitting
-        crm_emails = [safe_lower_strip(e) for e in crm_email_raw.split(',')] # Split multiple emails
+        crm_email_raw = safe_lower_strip(crm_row.get('crm_email'))  # Raw for splitting
+        crm_emails = [safe_lower_strip(e) for e in crm_email_raw.split(',')]  # Split multiple emails
         crm_last4 = str(crm_row.get('crm_last4') or '').strip()
         crm_tp = str(crm_row.get('crm_tp') or '').strip()
         # Convert processor amount to CRM currency
@@ -298,7 +300,7 @@ class ReconciliationEngine:
             return None
         # Loose tolerance for acceptance (to allow potential matches)
         accept_abs_tol = 0.1
-        accept_rel_tol = proc_config.tolerance * crm_amount * 2 # Looser rel tol
+        accept_rel_tol = proc_config.tolerance * crm_amount * 2  # Looser rel tol
         accept_tol = max(accept_abs_tol, 500) if proc_currency == crm_currency else max(accept_rel_tol, 500)
         diff = abs(proc_amount_conv - crm_amount)
         if diff > accept_tol:
@@ -327,7 +329,7 @@ class ReconciliationEngine:
             last_prefix = crm_last[:3] == proc_last[:3] if crm_last and proc_last else False
             if not (email_prefix or first_prefix or last_prefix):
                 return None
-            email_sim = 1 if email_prefix or first_prefix or last_prefix else 0 # Fake sim for consistency
+            email_sim = 1 if email_prefix or first_prefix or last_prefix else 0  # Fake sim for consistency
             name_fallback_used = first_prefix or last_prefix
         elif proc_name in ('safecharge', 'powercash'):
             # Use standard logic (assuming from _match_standard_row, similar to shift4 but full email or name)
@@ -344,7 +346,7 @@ class ReconciliationEngine:
             last_match = crm_last == proc_last if crm_last and proc_last else False
             if not (email_prefix or first_match or last_match):
                 return None
-            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email) # Use raw to let method handle split
+            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email)  # Use raw to let method handle split
             name_fallback_used = first_match or last_match
         elif proc_name == 'trustpayments':
             crm_tp_norm = normalize_string(crm_tp)
@@ -357,7 +359,7 @@ class ReconciliationEngine:
             proc_first = safe_lower_strip(proc_row.get('proc_firstname', ''))
             proc_last = safe_lower_strip(proc_row.get('proc_lastname', ''))
             proc_tokens = set(proc_first.split() + proc_last.split())
-            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email) # Use raw
+            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email)  # Use raw
             full_name_match = crm_tokens == proc_tokens
             first_or_last_name_match = bool(crm_tokens & proc_tokens)
             # Match tiers logic (adapted for single row comparison)
@@ -378,14 +380,14 @@ class ReconciliationEngine:
             name_fallback_used = tier in [4, 5]
         else:
             # Normal email_sim for other processors
-            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email) # Use raw
-        if proc_config.require_email and email_sim < 0.2 and not last4_match: # Lowered to 0.2
+            email_sim = self.enhanced_email_similarity(crm_email_raw, proc_email)  # Use raw
+        if proc_config.require_email and email_sim < 0.2 and not last4_match:  # Lowered to 0.2
             return None
         # Require minimum email sim regardless of last4
-        if email_sim < 0.3: # Enforce this to prevent last4-only matches
+        if email_sim < 0.3:  # Enforce this to prevent last4-only matches
             return None
         # If required last4 and no match, fail (but make optional for cross)
-        if proc_config.require_last4 and not last4_match and email_sim < 0.5: # Lowered from 0.75
+        if proc_config.require_last4 and not last4_match and email_sim < 0.5:  # Lowered from 0.75
             return None
         # If we reach here, it's a match!
         # Tight tolerance for payment_status
@@ -397,20 +399,22 @@ class ReconciliationEngine:
         abs_amount_diff = abs(amount_diff)
         if abs_amount_diff > status_tol:
             payment_status = 0
-            direction = "more" if amount_diff > 0 else "less"
-            comment = f"Client received {abs_amount_diff:.2f} {crm_currency} {direction}"
+            if amount_diff > 0:
+                comment = f"Overpaid by {abs_amount_diff:.2f} {crm_currency}"
+            else:
+                comment = f"Underpaid by {abs_amount_diff:.2f} {crm_currency}"
         else:
             payment_status = 1
-            comment = "Cross-processor fallback match"
+            comment = ""
         # Build match dict (similar to other match_*_row methods)
         match = {
             'crm_date': crm_row.get('crm_date'),
-            'crm_email': crm_email_raw, # Keep original raw for output
+            'crm_email': crm_email_raw,  # Keep original raw for output
             'crm_firstname': crm_row.get('crm_firstname', ''),
             'crm_lastname': crm_row.get('crm_lastname', ''),
             'crm_last4': crm_last4,
             'crm_currency': crm_currency,
-            'crm_amount': -crm_amount if crm_row.get('crm_amount', 0) < 0 else crm_amount, # Restore sign if negative
+            'crm_amount': -crm_amount if crm_row.get('crm_amount', 0) < 0 else crm_amount,  # Restore sign if negative
             'crm_processor_name': crm_row.get('crm_processor_name'),
             'regulation': crm_row.get('regulation', ''),
             'proc_date': proc_row.get('proc_date'),
@@ -434,7 +438,7 @@ class ReconciliationEngine:
             'match_status': 1,
             'payment_status': payment_status,
             'comment': comment,
-            'matched_proc_indices': [proc_row.name], # proc_row.name is index in DataFrame
+            'matched_proc_indices': [proc_row.name],  # proc_row.name is index in DataFrame
             'crm_row_index': crm_idx
         }
         return match, {}
@@ -459,6 +463,7 @@ class ReconciliationEngine:
         card_group = {"safecharge", "shift4", "powercash", "trustpayments", "safechargeuk"}
         ewallet_group = {"paypal", "skrill", "neteller"}
         other_group = set()
+
         def get_group(proc_name):
             proc_lower = proc_name.lower()
             if proc_lower in card_group:
@@ -467,6 +472,7 @@ class ReconciliationEngine:
                 return 'ewallet'
             else:
                 return 'other'
+
         unmatched_proc_rows = processor_df[
             (~processor_df.index.isin(used_proc))
         ]
@@ -487,10 +493,11 @@ class ReconciliationEngine:
                     'regulation'].lower() != 'uk':
                     continue
                 if crm_group != proc_group:
-                    continue # Skip if different groups
+                    continue  # Skip if different groups
 
                 # Skip cross for safechargeuk CRM with safecharge proc
-                if crm_row['crm_processor_name'].lower() == 'safechargeuk' and proc_row['proc_processor_name'].lower() == 'safecharge':
+                if crm_row['crm_processor_name'].lower() == 'safechargeuk' and proc_row[
+                    'proc_processor_name'].lower() == 'safecharge':
                     continue
                 proc_proc_name = proc_row['proc_processor_name'].lower()
                 proc_config = self.get_processor_config(proc_proc_name)
@@ -505,11 +512,8 @@ class ReconciliationEngine:
             if best_match:
                 used_proc.add(proc_idx)
                 used_crm.add(best_match['crm_row_index'])
-                # Fixed comment: Set directly to include processor names (CRM first, then PROC), no duplication or brackets
-                fallback_comment = f"Cross-processor fallback match - {best_match.get('crm_processor_name', 'unknown')} matched {proc_row['proc_processor_name']}"
-                best_match['comment'] = fallback_comment # Override any existing comment to avoid duplication
-                best_match['cross_processor_fallback'] = True # Flag for Rule 3 to skip adding "differ" comment
-                match['warning'] = True
+                best_match['cross_processor_fallback'] = True  # Flag for Rule 3 to skip adding "differ" comment
+                best_match['warning'] = True
                 matches.append(best_match)
                 self.metrics['matched_fallback'] += 1
                 self.metrics['unmatched'] -= 1
@@ -2644,9 +2648,12 @@ def run_cross_processor_matching(date_str: str, exchange_rate_map: dict) -> None
         # Update comment to reflect within or cross-reg
         fallback_comment = f"Cross-processor fallback match - {match.get('crm_processor_name', 'unknown')} matched {match.get('proc_processor_name', 'unknown')}"
         if crm_reg != proc_reg:
-            match['comment'] = fallback_comment + " (cross-regulation)"
+            fallback_comment += " (cross-regulation)"
+        current_comment = match.get('comment', '')
+        if current_comment:
+            match['comment'] = current_comment + ". " + fallback_comment
         else:
-            match['comment'] = fallback_comment  # No extra for within
+            match['comment'] = fallback_comment
         match['cross_processor_fallback'] = True
         # Route
         if crm_reg == proc_reg:

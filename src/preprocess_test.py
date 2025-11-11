@@ -790,6 +790,9 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
     )
     if regulation == 'uk':
         df["PSP name"] = df["PSP name"].replace({'safecharge': 'safechargeuk'})
+    # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
+    neteller_mask = df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+    df.loc[neteller_mask, "PSP name"] = "neteller"
     df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
     if normalized_processor == 'bridgerpay':
         df['transaction_id'] = df.get('Internal Comment', pd.Series(index=df.index, dtype=str)).astype(str).str.strip()

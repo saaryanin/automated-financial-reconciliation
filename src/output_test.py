@@ -1177,5 +1177,5 @@ def main(date_str):
         save_matched_to_excel(date_str, regulation, deps_df, wds_df, output_dir=output_dir)
         save_unmatched_to_excel(date_str, regulation, crm_deps_df, proc_deps_df, crm_wds_df, proc_wds_df, output_dir)
 if __name__ == "__main__":
-    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-10-20"
+    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-10-21"
     main(DATE)

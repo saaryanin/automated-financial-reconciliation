@@ -191,11 +191,7 @@ def _cross_match_one_way(
     for m in cross_matches:
         crm_proc = m.get("crm_processor_name", "???")
         proc_proc = m.get("proc_processor_name", "???")
-        m["comment"] = (
-            f"Cross-regulation match – {crm_reg.upper()} CRM ({crm_proc}) "
-            f"↔ {proc_reg.upper()} PROC ({proc_proc})"
-        )
-        # If payment_status == 0, append Overpaid/Underpaid detail
+        comment = ""
         if m['payment_status'] == 0:
             diff = m['proc_amount_crm_currency'] - abs(m['crm_amount'])
             crm_cur = m['crm_currency']
@@ -205,7 +201,13 @@ def _cross_match_one_way(
                 over_under = f"Underpaid by {round(-diff, 2)} {crm_cur}"
             else:
                 over_under = "Amount mismatch"
-            m["comment"] += f"; {over_under}"
+            comment = over_under
+        cross_part = f"Cross-regulation match – {crm_reg.upper()} CRM ({crm_proc}) ↔ {proc_reg.upper()} PROC ({proc_proc})"
+        if comment:
+            comment += f". {cross_part}"
+        else:
+            comment = cross_part
+        m["comment"] = comment
         # Force the regulation column to the CRM side (the file we will write to)
         m["regulation"] = crm_reg.upper()
 

@@ -101,6 +101,14 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
             if proc_file.exists() and proc not in filtered_processors:
                 filtered_processors.append(proc)
                 break
+    # Data validation: Check for missing 'Name' or 'PSP name'
+    invalid_rows = crm_df[crm_df['Name'].isna() | crm_df['PSP name'].isna()]
+    if not invalid_rows.empty:
+        print(
+            f"Warning: {len(invalid_rows)} CRM rows with missing 'Name' or 'PSP name' in {regulation.upper()} - dropping them.")
+        # Optionally save to a file for review:
+        # invalid_rows.to_excel(dirs['lists_dir'] / f"{regulation}_invalid_crm_rows.xlsx", index=False)
+    crm_df = crm_df.dropna(subset=['Name', 'PSP name'])
     crm_start = time.time()
     processed_crm_dfs = []
     for proc in filtered_processors:

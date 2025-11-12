@@ -465,7 +465,9 @@ class ReconciliationEngine:
         other_group = set()
 
         def get_group(proc_name):
-            proc_lower = proc_name.lower()
+            if pd.isna(proc_name):
+                return 'other'  # Fallback group if somehow NaN slips through
+            proc_lower = str(proc_name).lower()
             if proc_lower in card_group:
                 return 'card'
             elif proc_lower in ewallet_group:
@@ -483,11 +485,15 @@ class ReconciliationEngine:
         crm_last4_map = crm_df.groupby('crm_last4').indices
         for proc_idx, proc_row in unmatched_proc_rows.iterrows():
             candidate_crm_indices = [i for i in crm_df.index if i not in used_crm]
+            if pd.isna(proc_row.get('proc_processor_name')):
+                continue
             proc_group = get_group(proc_row['proc_processor_name'])
             best_match = None
             best_diag = None
             for crm_idx in candidate_crm_indices:
                 crm_row = crm_dict[crm_idx]
+                if pd.isna(crm_row.get('crm_processor_name')):
+                    continue
                 crm_group = get_group(crm_row['crm_processor_name'])
                 if proc_row['proc_processor_name'].lower() in ['barclays'] and crm_row[
                     'regulation'].lower() != 'uk':
@@ -533,7 +539,10 @@ class ReconciliationEngine:
         for crm_idx in unmatched_crm_indices:
             crm_row = crm_dict[crm_idx]
             crm_reg_lower = crm_row['regulation'].lower()
-            crm_proc_lower = crm_row['crm_processor_name'].lower()
+            crm_proc = crm_row.get('crm_processor_name')
+            if pd.isna(crm_proc):
+                continue  # Skip this CRM row if processor name is missing (cannot determine cross logic)
+            crm_proc_lower = str(crm_proc).lower()
             if crm_reg_lower == 'uk':
                 target_proc = 'safecharge'  # UK CRM → ROW safecharge
                 match_func = self._match_standard_row
@@ -961,7 +970,7 @@ class ReconciliationEngine:
           • Bitpay: bitpay logic
           • Zotapay/PaymentAsia combined: zotapay_paymentasia logic
         """
-        proc = (crm_row.get('crm_processor_name') or '').strip().lower()
+        proc = str(crm_row.get('crm_processor_name') or '').strip().lower()
         if proc in ('barclays'):
             return self._match_barclays_row(crm_row, proc_dict, last4_map, used,
                                             self.get_processor_config(proc), crm_idx=crm_idx)
@@ -1021,7 +1030,11 @@ class ReconciliationEngine:
                 f"DEBUG Match std: crm_last4_norm={crm_last4_normalized}, in_last4_map={crm_last4_normalized in last4_map}")
         crm_first = str(crm_row.get('crm_firstname', ''))
         crm_last = str(crm_row.get('crm_lastname', ''))
-        crm_proc_name = crm_row.get('crm_processor_name', '').lower()
+        crm_proc = crm_row.get('crm_processor_name')
+        crm_proc_str = str(crm_proc).strip()
+        if pd.isna(crm_proc) or not crm_proc_str or crm_proc_str.lower() == 'nan':
+            return None, {'failure_reason': 'Missing or invalid CRM processor name'}
+        crm_proc_name = str(crm_row.get('crm_processor_name')).lower()
         is_apple_pay = 'apple pay' in str(crm_row.get('payment_method', '')).lower() and crm_row.get('regulation',
                                                                                                      '').lower() == 'uk'
         candidates = []
@@ -2086,7 +2099,13 @@ class ReconciliationEngine:
                 f"DEBUG Match safechargeuk: crm_last4_norm={crm_last4_normalized}, in_last4_map={crm_last4_normalized in last4_map}")
         crm_first = str(crm_row.get('crm_firstname', ''))
         crm_last = str(crm_row.get('crm_lastname', ''))
-        crm_proc_name = crm_row.get('crm_processor_name', '').lower()
+        crm_proc = crm_row.get('crm_processor_name')
+        if pd.isna(crm_proc):
+            return None, {'failure_reason': 'Missing CRM processor name'}
+        crm_proc_str = str(crm_proc).strip()  # Converts to string, handles 'nan' from float NaN
+        if not crm_proc_str or crm_proc_str.lower() == 'nan':
+            return None, {'failure_reason': 'Invalid CRM processor name'}
+        crm_proc_name = crm_proc_str.lower()
         is_apple_pay = 'apple pay' in str(crm_row.get('payment_method', '')).lower() and crm_row.get('regulation',
                                                                                                      '').lower() == 'uk'
         candidates = []
@@ -2315,7 +2334,7 @@ class ReconciliationEngine:
         for _, row in samples:
             t0 = time.time()
             # Use the appropriate matching method based on processor
-            proc_name = row.get('crm_processor_name', '').lower()
+            proc_name = str(row.get('crm_processor_name', '')).lower()
             proc_config = self.get_processor_config(proc_name)
             if proc_config.matching_logic == "paypal":
                 self._match_paypal_row(row, proc_dict, last4_map, set(), proc_config)
@@ -2395,7 +2414,13 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
     else:
         engine_uk_local = ReconciliationEngine(exchange_rate_map,
                                                {'enable_cross_processor': True, 'enable_warning_flag': True})
-        uk_non_cancelled = uk_crm[uk_crm['crm_type'].str.lower() != 'withdrawal cancelled']
+        uk_non_cancelled = uk_crm[
+            (uk_crm['crm_type'].notna()) &
+            (uk_crm['crm_type'].str.lower() != 'withdrawal cancelled')
+            ]
+        invalid_uk_crm = uk_crm[uk_crm['crm_type'].isna()]
+        if not invalid_uk_crm.empty:
+            print(f"Warning: {len(invalid_uk_crm)} UK CRM rows with missing 'crm_type' - skipping.")
 
         # Prioritize CRM rows with valid crm_last4 for matching
         def has_valid_last4(row):
@@ -2463,8 +2488,13 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
         available_row_proc = row_proc[~row_proc.index.isin(matched_row_proc_ids_from_uk)]
         engine_row_local = ReconciliationEngine(exchange_rate_map,
                                                 {'enable_cross_processor': True, 'enable_warning_flag': True})
-        row_non_cancelled = row_crm[row_crm['crm_type'].str.lower() != 'withdrawal cancelled']
-
+        row_non_cancelled = row_crm[
+            (row_crm['crm_type'].notna()) &
+            (row_crm['crm_type'].str.lower() != 'withdrawal cancelled')
+            ]
+        invalid_row_crm = row_crm[row_crm['crm_type'].isna()]
+        if not invalid_row_crm.empty:
+            print(f"Warning: {len(invalid_row_crm)} ROW CRM rows with missing 'crm_type' - skipping.")
         # Prioritize CRM rows with valid crm_last4 for matching
         def has_valid_last4(row):
             last4 = str(row['crm_last4']).strip()

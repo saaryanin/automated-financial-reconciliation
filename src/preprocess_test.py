@@ -1074,6 +1074,7 @@ def combine_processed_files(
             return 'EUR'
         else:
             return Counter(currencies).most_common(1)[0][0]
+
     def group_crm_withdrawals(df, exchange_rate_map):
         df = df.copy()
         # Always clean
@@ -1085,6 +1086,10 @@ def combine_processed_files(
             df['Currency'] = 'USD'
         if 'Amount' not in df.columns:
             df['Amount'] = 0.0
+        # Clean Amount
+        df['Amount'] = df['Amount'].apply(clean_crm_amount)
+        # Add abs_amount for grouping
+        df['abs_amount'] = df['Amount'].abs()
         # Decide if last4 is available
         last4_nonblank = (df['CC Last 4 Digits'].astype(str).str.strip() != '').any()
         # Identify emails with cancellations
@@ -1101,7 +1106,7 @@ def combine_processed_files(
             else:
                 base_cols = ['First Name (Account) (Account)', 'Last Name (Account) (Account)']
             if has_canc:
-                group_cols = base_cols
+                group_cols = base_cols + ['Currency']  # FIXED: remove 'abs_amount' to net across amounts
             else:
                 group_cols = base_cols + ['PSP name']
             for keys, sub_group in group.groupby(group_cols):
@@ -1114,9 +1119,9 @@ def combine_processed_files(
                 for _, row in sub_group.iterrows():
                     amt = float(row['Amount'])
                     if row.get('Name', '') == 'withdrawal cancelled':
-                        amt = abs(amt) # Positive for cancellations
+                        amt = abs(amt)  # Positive for cancellations
                     else:
-                        amt = -abs(amt) # Negative for regular withdrawals
+                        amt = -abs(amt)  # Negative for regular withdrawals
                     src_cur = row['Currency']
                     if src_cur == tgt_cur:
                         converted = amt
@@ -1125,7 +1130,7 @@ def combine_processed_files(
                         if exchange_rate_map and key in exchange_rate_map:
                             converted = amt * exchange_rate_map[key]
                         else:
-                            converted = amt # Fallback if no rate
+                            converted = amt  # Fallback if no rate
                     converted_amounts.append(converted)
                 total_amt = sum(converted_amounts)
                 if abs(total_amt) < 1e-6:
@@ -1152,7 +1157,7 @@ def combine_processed_files(
                     else:
                         row0 = sub_group.iloc[0].copy()
                 # Set
-                row0['Amount'] = abs(total_amt)
+                row0['Amount'] = -total_amt  # FIXED: flip sign for expected convention (negative for net CANCEL)
                 row0['Currency'] = tgt_cur
                 row0['Name'] = target_type
                 grouped_rows.append(row0)
@@ -1292,7 +1297,10 @@ def combine_processed_files(
         crm_dfs = [df for df in crm_dfs if not df.empty]
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
         if transaction_type == "withdrawal":
-            raw_crm_path = crm_dir / f"crm_{date}.xlsx" # Use passed crm_dir
+            # In preprocess_test.py, update the df_cancels regulation filtering in combine_processed_files
+            # Find this section (around line where df_cancels is processed):
+
+            raw_crm_path = crm_dir / f"crm_{date}.xlsx"  # Use passed crm_dir
             if raw_crm_path.exists():
                 df_raw = pd.read_excel(raw_crm_path, engine="openpyxl")
                 df_raw.columns = df_raw.columns.str.strip()
@@ -1303,10 +1311,12 @@ def combine_processed_files(
                 # df_cancels = df_cancels[cancel_psp_na]
                 # Exclude cancellations with 'Wire Transfer' in Method of Payment
                 if 'Method of Payment' in df_cancels.columns:
-                    df_cancels = df_cancels[~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]
+                    df_cancels = df_cancels[
+                        ~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]
                 df_cancels['regulation'] = df_cancels['Site (Account) (Account)'].apply(categorize_regulation)
-                # Filter for current regulation
-                df_cancels = df_cancels[df_cancels['regulation'] == regulation]
+                # FIXED: Use isin for ROW regulation (mauritius/cyprus/australia), exact match for UK
+                row_regs = ['mauritius', 'cyprus', 'australia'] if regulation == 'row' else [regulation]
+                df_cancels = df_cancels[df_cancels['regulation'].isin(row_regs)]
                 mask_aus = df_cancels['regulation'] == 'australia'
                 mask_psp = df_cancels["PSP name"].str.lower().isin(['paypal', 'inpendium'])
                 df_cancels = df_cancels[~(mask_aus & mask_psp)]

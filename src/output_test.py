@@ -535,9 +535,8 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
         if not nan_proc_rows.empty:
             print("Sample NaN proc_email rows:")
             print(nan_proc_rows.head())
-    # Filter out rows with NaN proc_email
-    unmatched_proc = unmatched_proc[unmatched_proc['proc_email'].notna()].copy()
-    print(f"Rows after filtering NaN proc_email: {len(unmatched_proc)}")
+    # REMOVED: unmatched_proc = unmatched_proc[unmatched_proc['proc_email'].notna()].copy()  # Allow NaN emails
+    print(f"Rows after handling NaN proc_email (no filter): {len(unmatched_proc)}")
     if unmatched_proc.empty:
         print(f"No unmatched processor withdrawals found for {date_str}, skipping file creation.")
         return None
@@ -550,7 +549,8 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
     ]
     for col in columns_to_clean:
         if col in unmatched_proc.columns:
-            unmatched_proc.loc[:, col] = unmatched_proc[col].apply(clean_value)
+            is_email = 'email' in col.lower()  # Set is_email=True for email columns to convert NaN to ''
+            unmatched_proc.loc[:, col] = unmatched_proc[col].apply(lambda x: clean_value(x, is_email=is_email))
     unmatched_proc['proc_amount'] = pd.to_numeric(unmatched_proc['proc_amount'], errors='coerce')
     # Correct ambiguous date parses for powercash/shift4
     unmatched_proc['proc_date'] = unmatched_proc.apply(
@@ -1145,5 +1145,5 @@ def main(date_str):
         save_matched_to_excel(date_str, regulation, deps_df, wds_df, output_dir=output_dir)
         save_unmatched_to_excel(date_str, regulation, crm_deps_df, proc_deps_df, crm_wds_df, proc_wds_df, output_dir)
 if __name__ == "__main__":
-    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-10-21"
+    DATE = sys.argv[1] if len(sys.argv) > 1 else "2025-10-22"
     main(DATE)

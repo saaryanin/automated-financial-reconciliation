@@ -47,7 +47,7 @@ def setup_regulation_structure(regulation, processors):
         **dirs,
         'crm_filepath': reg_crm_filepath
     }
-date_str = '2025-10-21'
+date_str = '2025-10-22'
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
     'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'

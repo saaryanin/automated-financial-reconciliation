@@ -1535,9 +1535,9 @@ class ReconciliationEngine:
         else:
             payment_status = 0
             if amount_diff > 0:
-                comment = f"Client Overpaid by {round(amount_diff, 2)} {crm_cur}"
+                comment = f"Overpaid by {round(amount_diff, 2)} {crm_cur}"
             elif amount_diff < 0:
-                comment = f"Client Underpaid by {round(-amount_diff, 2)} {crm_cur}"
+                comment = f"Underpaid by {round(-amount_diff, 2)} {crm_cur}"
             else:
                 comment = "Amount mismatch"
         try:

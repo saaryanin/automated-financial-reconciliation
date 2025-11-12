@@ -489,6 +489,11 @@ def format_amount(amt):
         return int(amt)
     return amt
 def parse_adjustment(row):
+    def format_num(num):
+        rounded = round(num, 2)
+        formatted = f"{rounded:.2f}"
+        return formatted.rstrip('0').rstrip('.') if formatted.endswith('00') else formatted
+
     comment = str(row['comment'])
     match = re.search(r'(Underpaid|Overpaid) by ([\d.]+) (\w+)', comment)
     if not match:
@@ -498,8 +503,17 @@ def parse_adjustment(row):
     curr = match.group(3)
     amt = float(amt_str)
     sign = 1 if paid_type == 'Underpaid' else -1
-    new_amount = sign * amt
-    return new_amount, comment
+    abs_diff = round(amt, 2)
+    requested_amount = round(abs(row['crm_amount']), 2)
+    received_amount = round(abs(row['proc_amount_crm_currency']), 2)
+    # Recalculate type_ based on amounts for consistency
+    type_ = 'Underpaid' if received_amount < requested_amount else 'Overpaid'
+    requested_str = format_num(requested_amount)
+    received_str = format_num(received_amount)
+    diff_str = format_num(abs_diff)
+    new_comment = f"Client requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}"
+    new_amount = sign * abs_diff
+    return new_amount, new_comment
 def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulation, matching_df=None):
     if matching_df is None:
         matching_df = load_matching_df(date_str, lists_dir, output_dir, regulation)
@@ -529,52 +543,6 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
         return None
     # Process comments for unmatched (strips prefixes for warnings, sets non-warning to empty)
     unmatched_proc.loc[:, 'comment'] = unmatched_proc['comment'].apply(process_unmatched_comment)
-    # Now add overpaid/underpaid rows from same regulation
-    group_over_under = df[(df['match_status'] == 1) & (df['payment_status'] == 0) & (df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
-    if not group_over_under.empty:
-        group_over_under['comment'] = group_over_under['comment'].apply(process_comment)
-        group_over_under['proc_amount'] = group_over_under['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
-    # Load opposite cross-regulation for proc side (where PROC is current reg, CRM is opposite)
-    opposite_reg = 'row' if regulation == 'uk' else 'uk'
-    opposite_dirs = config.setup_dirs_for_reg(opposite_reg)
-    opposite_cross_path = opposite_dirs['lists_dir'] / date_str / f"{opposite_reg}_cross_regulation.xlsx"
-    group_cross_over_under = pd.DataFrame()
-    if opposite_cross_path.exists():
-        cross_df = pd.read_excel(opposite_cross_path, dtype={'crm_last4': str, 'proc_last4': str})
-        cross_df['crm_amount'] = cross_df['crm_amount'].apply(clean_value)
-        cross_df['proc_amount'] = cross_df['proc_amount'].apply(clean_value)
-        cross_df['crm_amount'] = pd.to_numeric(cross_df['crm_amount'], errors='coerce')
-        cross_df['proc_amount'] = pd.to_numeric(cross_df['proc_amount'], errors='coerce')
-        cross_df = cross_df[cross_df['warning'] == False]
-        group_cross_over_under = cross_df[(cross_df['match_status'] == 1) & (cross_df['payment_status'] == 0) & (cross_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
-        if not group_cross_over_under.empty:
-            group_cross_over_under['proc_amount'] = group_cross_over_under['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
-            group_cross_over_under['comment'] = group_cross_over_under['comment'].apply(process_comment)
-            print(f"Added {len(group_cross_over_under)} cross-regulation over/underpaid rows to unmatched proc for {regulation}")
-    # Load opposite cross-processor for proc side
-    opposite_cross_processor_path = opposite_dirs['lists_dir'] / date_str / f"{opposite_reg}_cross_processor.xlsx"
-    group_cross_processor_over_under = pd.DataFrame()
-    if opposite_cross_processor_path.exists():
-        cross_proc_df = pd.read_excel(opposite_cross_processor_path, dtype={'crm_last4': str, 'proc_last4': str})
-        cross_proc_df['crm_amount'] = cross_proc_df['crm_amount'].apply(clean_value)
-        cross_proc_df['proc_amount'] = cross_proc_df['proc_amount'].apply(clean_value)
-        cross_proc_df['crm_amount'] = pd.to_numeric(cross_proc_df['crm_amount'], errors='coerce')
-        cross_proc_df['proc_amount'] = pd.to_numeric(cross_proc_df['proc_amount'], errors='coerce')
-        cross_proc_df = cross_proc_df[cross_proc_df['warning'] == False]
-        group_cross_processor_over_under = cross_proc_df[(cross_proc_df['match_status'] == 1) & (cross_proc_df['payment_status'] == 0) & (cross_proc_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
-        if not group_cross_processor_over_under.empty:
-            group_cross_processor_over_under['proc_amount'] = group_cross_processor_over_under['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
-            group_cross_processor_over_under['comment'] = group_cross_processor_over_under['comment'].apply(process_comment)
-            print(f"Added {len(group_cross_processor_over_under)} cross-processor over/underpaid rows to unmatched proc for {regulation}")
-    # Concat over/under groups to unmatched_proc
-    additional_dfs = [group_over_under, group_cross_over_under, group_cross_processor_over_under]
-    filtered_additional = [d for d in additional_dfs if not d.empty]
-    if filtered_additional:
-        additional = pd.concat(filtered_additional, ignore_index=True)
-    else:
-        additional = pd.DataFrame()
-    if not additional.empty:
-        unmatched_proc = pd.concat([unmatched_proc, additional], ignore_index=True)
     # Clean processor columns
     columns_to_clean = [
         'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname',
@@ -695,7 +663,7 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         if matching_df is None:
             return None
     # Removed warning==False filter to include warning==True rows in groups (e.g., for underpaid cross-processor fallbacks)
-    df = matching_df.copy()  # Changed from df = matching_df[matching_df['warning'] == False]
+    df = matching_df.copy() # Changed from df = matching_df[matching_df['warning'] == False]
     # Group 1: match_status == 0 and payment_status == 0 and comment == "No matching processor row found"
     group1 = df[(df['match_status'] == 0) & (df['payment_status'] == 0) & (df['comment'] == "No matching processor row found")].copy()
     # Group 2: match_status == 1 and payment_status == 0 and (comment contains "Overpaid" or "Underpaid")
@@ -741,7 +709,7 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         cross_df['crm_amount'] = pd.to_numeric(cross_df['crm_amount'], errors='coerce')
         cross_df['proc_amount'] = pd.to_numeric(cross_df['proc_amount'], errors='coerce')
         # Removed warning==False filter to include warning==True rows (e.g., for underpaid cross-processor fallbacks)
-        # cross_df = cross_df[cross_df['warning'] == False]  # Commented out
+        # cross_df = cross_df[cross_df['warning'] == False] # Commented out
         group_cross_over_under = cross_df[(cross_df['match_status'] == 1) & (cross_df['payment_status'] == 0) & (cross_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
         if not group_cross_over_under.empty:
             group_cross_over_under['comment'] = group_cross_over_under['comment'].apply(process_comment)
@@ -757,7 +725,7 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         cross_proc_df['crm_amount'] = pd.to_numeric(cross_proc_df['crm_amount'], errors='coerce')
         cross_proc_df['proc_amount'] = pd.to_numeric(cross_proc_df['proc_amount'], errors='coerce')
         # Removed warning==False filter to include warning==True rows (e.g., for underpaid cross-processor fallbacks)
-        # cross_proc_df = cross_proc_df[cross_proc_df['warning'] == False]  # Commented out
+        # cross_proc_df = cross_proc_df[cross_proc_df['warning'] == False] # Commented out
         group_cross_processor_over_under = cross_proc_df[(cross_proc_df['match_status'] == 1) & (cross_proc_df['payment_status'] == 0) & (cross_proc_df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
         if not group_cross_processor_over_under.empty:
             group_cross_processor_over_under['comment'] = group_cross_processor_over_under['comment'].apply(process_comment)

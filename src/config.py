@@ -18,6 +18,8 @@ RAW_ATTACHED_FILES = TEMP_DIR / "raw_attached_files"   # ← Global shared folde
 RAW_ATTACHED_FILES.mkdir(parents=True, exist_ok=True)
 CRM_DIR = BASE_DIR / "data" / "crm_reports"
 PROCESSOR_DIR = BASE_DIR / "data" / "processor_reports"
+RATES_DIR = BASE_DIR / "data" / "rates"
+RATES_DIR.mkdir(parents=True, exist_ok=True)
 
 def setup_dirs_for_reg(regulation, create=True):
     """Return a dict of directories for a given regulation and optionally create them."""

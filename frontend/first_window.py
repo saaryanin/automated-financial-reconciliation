@@ -9,8 +9,7 @@ from second_window import SecondWindow  # NEW: Import the new second window clas
 import pandas as pd
 import re
 from pathlib import Path
-from src.config import RATES_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
-from src.config import OUTPUT_DIR
+from src.config import RATES_DIR, RAW_ATTACHED_FILES, setup_dirs_for_reg
 from src.files_renamer import PROCESSOR_PATTERNS
 
 
@@ -91,8 +90,8 @@ class ReconciliationWindow(QWidget):
         if "transactionlog" in filename_lower:
             return "powercash"
         processors = [
-            "safecharge", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
-            "trustpayments", "paysafe", "skrill", "neteller", "shift4"
+            "safecharge", "safechargeuk", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
+            "trustpayments", "paysafe", "skrill", "neteller", "shift4", "barclays", "barclaycard"
         ]
         for processor in processors:
             if processor in filename_lower:
@@ -526,26 +525,18 @@ class ReconciliationWindow(QWidget):
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
             file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
-            output_date_dir = OUTPUT_DIR / selected_date
-            if output_date_dir.exists():
-                shutil.rmtree(output_date_dir)
-                print(f"Cleared output dir for {selected_date}")
+            for reg in ['row', 'uk']:
+                dirs = setup_dirs_for_reg(reg, create=True)
+                output_date_dir = dirs['output_dir'] / selected_date
+                if output_date_dir.exists():
+                    shutil.rmtree(output_date_dir)
+                    print(f"Cleared output dir for {selected_date} in {reg.upper()}")
+                reg_rates_path = dirs['rates_dir'] / f"rates_{selected_date}.csv"
+                shutil.copy(file_path, reg_rates_path)
             self.hide()
             self.open_second_window()
         else:
             self.show_warning("Error", "No valid rates entered.")
-
-    def rename_processor_files(self, file_paths):
-        selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
-        for source_path in file_paths:
-            file_name = os.path.basename(source_path)
-            dest_path = PROCESSOR_DIR / file_name
-            if not re.match(r"^[a-zA-Z]+_\d{4}-\d{2}-\d{2}\.(csv|xlsx|xls)$", file_name):
-                processor = self._detect_processor(file_name)
-                new_name = f"{processor}_{selected_date}{Path(source_path).suffix}"
-                dest_path = PROCESSOR_DIR / new_name
-            shutil.move(str(source_path), str(dest_path))
-        self.processor_files = [str(PROCESSOR_DIR / n) for n in [os.path.basename(p) for p in file_paths]]
 
     def reset_attachments(self):
         if self.crm_file and os.path.exists(self.crm_file):
@@ -608,3 +599,10 @@ class ReconciliationWindow(QWidget):
         self.second_window.show()
         print("Debug: SecondWindow shown")
         self.close()
+
+if __name__ == "__main__":
+    import sys
+    app = QApplication(sys.argv)
+    window = ReconciliationWindow()
+    window.show()
+    sys.exit(app.exec_())

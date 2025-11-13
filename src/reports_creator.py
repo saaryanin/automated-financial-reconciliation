@@ -1,3 +1,5 @@
+# reports_creator.py
+
 # testing_uk_regulation.py (updated to append previous unmatched shifted deposits to raw CRM for deposits)
 # testing_uk_regulation.py (updated)
 import pandas as pd
@@ -15,7 +17,7 @@ from src.withdrawals_matcher_test import match_withdrawals_for_date,run_cross_pr
 from src.cross_regulation_matcher import run_cross_regulation_matching
 from src.files_renamer import run_renamer  # Added import for files_renamer
 
-def setup_regulation_structure(regulation, processors):
+def setup_regulation_structure(regulation, processors, date_str):
     start_time = time.time()
     dirs = config.setup_dirs_for_reg(regulation, create=True)
     reg_crm_filepath = dirs['crm_dir'] / f"crm_{date_str}.xlsx"
@@ -28,7 +30,7 @@ def setup_regulation_structure(regulation, processors):
         **dirs,
         'crm_filepath': reg_crm_filepath
     }
-date_str = '2025-10-20'
+
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
     'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
@@ -36,11 +38,11 @@ row_processors = [
 uk_processors = [
     'safechargeuk', 'barclays', 'barclaycard'
 ]
-def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None):
+def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None, date_str=None):
     start_time = time.time()
     processors = row_processors if regulation == 'row' else uk_processors
     if dirs is None:
-        dirs = setup_regulation_structure(regulation, processors)
+        dirs = setup_regulation_structure(regulation, processors, date_str)
     crm_df = pd.read_excel(dirs['crm_filepath'], engine="openpyxl")
     crm_df.columns = crm_df.columns.str.strip()
     if transaction_type == 'deposit':
@@ -149,16 +151,17 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
     print(f"Combining for {regulation.upper()} {transaction_type} took {combine_end - combine_start:.2f} seconds")
     end_time = time.time()
     print(f"Preprocessed and combined {transaction_type}s for {regulation.upper()} regulation saved successfully. Total time: {end_time - start_time:.2f} seconds.")
-if __name__ == "__main__":
+
+def main(date_str):
     # Run the renamer first to process raw files into regulation-specific dirs
     run_renamer(forced_date=date_str)  # Optionally pass forced_date if needed for fallback
 
     overall_start = time.time()
     for reg in ['row', 'uk']:
         processors = row_processors if reg == 'row' else uk_processors
-        dirs = setup_regulation_structure(reg, processors)
-        preprocess_for_regulation(reg, 'deposit', dirs=dirs)
-        preprocess_for_regulation(reg, 'withdrawal', dirs=dirs)
+        dirs = setup_regulation_structure(reg, processors, date_str)
+        preprocess_for_regulation(reg, 'deposit', dirs=dirs, date_str=date_str)
+        preprocess_for_regulation(reg, 'withdrawal', dirs=dirs, date_str=date_str)
     overall_end = time.time()
     print(f"Overall processing time: {overall_end - overall_start:.2f} seconds")
     match_deposits_for_date(date_str)
@@ -184,3 +187,10 @@ if __name__ == "__main__":
     match_withdrawals_for_date(date_str, exchange_rate_map)
     run_cross_regulation_matching(date_str, exchange_rate_map)
     run_cross_processor_matching(date_str, exchange_rate_map)
+
+if __name__ == "__main__":
+    import sys
+    date_str = '2025-10-20'
+    if len(sys.argv) > 1:
+        date_str = sys.argv[1]
+    main(date_str)

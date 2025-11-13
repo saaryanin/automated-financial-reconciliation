@@ -13,41 +13,22 @@ from src.deposits_matcher_test import match_deposits_for_date
 from src.shifts_handler_test import main as handle_shifts
 from src.withdrawals_matcher_test import match_withdrawals_for_date,run_cross_processor_matching
 from src.cross_regulation_matcher import run_cross_regulation_matching
+from src.files_renamer import run_renamer  # Added import for files_renamer
+
 def setup_regulation_structure(regulation, processors):
     start_time = time.time()
     dirs = config.setup_dirs_for_reg(regulation, create=True)
-    shared_crm_filepath = BASE_DIR / "data" / "crm_reports" / f"crm_{date_str}.xlsx"
-    reg_crm_filepath = dirs['crm_dir'] / shared_crm_filepath.name
-    if shared_crm_filepath.exists() and not reg_crm_filepath.exists():
-        shutil.copy(shared_crm_filepath, reg_crm_filepath)
-    elif not shared_crm_filepath.exists():
-        print(f"CRM file not found at {shared_crm_filepath}")
+    reg_crm_filepath = dirs['crm_dir'] / f"crm_{date_str}.xlsx"
+    if not reg_crm_filepath.exists():
+        print(f"CRM file not found at {reg_crm_filepath}")
         exit(1)
-    shared_processor_dir = BASE_DIR / "data" / "processor_reports"
-    if shared_processor_dir.exists():
-        for proc_file in shared_processor_dir.glob("*"):
-            proc_name = proc_file.stem.split('_')[0].lower()
-            if proc_name in processors:
-                target_file = dirs['processor_dir'] / proc_file.name
-                if not target_file.exists():
-                    shutil.copy(proc_file, target_file)
-    if regulation == 'uk':
-        shared_processors = ['paypal', 'powercash', 'shift4', 'skrill', 'neteller', 'trustpayments']
-        for proc in shared_processors:
-            for ext in ['xlsx', 'csv', 'xls']:
-                proc_file = shared_processor_dir / f"{proc}_{date_str}.{ext}"
-                if proc_file.exists():
-                    target_file = dirs['processor_dir'] / proc_file.name
-                    if not target_file.exists():
-                        shutil.copy(proc_file, target_file)
-                    break
     end_time = time.time()
     print(f"Setup for {regulation.upper()} took {end_time - start_time:.2f} seconds")
     return {
         **dirs,
         'crm_filepath': reg_crm_filepath
     }
-date_str = '2025-10-22'
+date_str = '2025-10-20'
 row_processors = [
     'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
     'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
@@ -169,6 +150,9 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None)
     end_time = time.time()
     print(f"Preprocessed and combined {transaction_type}s for {regulation.upper()} regulation saved successfully. Total time: {end_time - start_time:.2f} seconds.")
 if __name__ == "__main__":
+    # Run the renamer first to process raw files into regulation-specific dirs
+    run_renamer(forced_date=date_str)  # Optionally pass forced_date if needed for fallback
+
     overall_start = time.time()
     for reg in ['row', 'uk']:
         processors = row_processors if reg == 'row' else uk_processors

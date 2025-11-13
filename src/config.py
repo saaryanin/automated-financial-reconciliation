@@ -14,6 +14,10 @@ else:
 # Read-only dirs stay under BASE_DIR
 MODEL_DIR = BASE_DIR / "model"
 FRONTEND_DIR = BASE_DIR / "frontend"
+RAW_ATTACHED_FILES = TEMP_DIR / "raw_attached_files"   # ← Global shared folder
+RAW_ATTACHED_FILES.mkdir(parents=True, exist_ok=True)
+CRM_DIR = BASE_DIR / "data" / "crm_reports"
+PROCESSOR_DIR = BASE_DIR / "data" / "processor_reports"
 
 def setup_dirs_for_reg(regulation, create=True):
     """Return a dict of directories for a given regulation and optionally create them."""
@@ -43,7 +47,6 @@ def setup_dirs_for_reg(regulation, create=True):
         'root': reg_root,
         'data_dir': reg_data_dir,
         'output_dir': reg_output_dir,
-        'raw_attached_files': reg_raw_attached_files,
         'crm_dir': reg_crm_dir,
         'processor_dir': reg_processor_dir,
         'raw_tracking_dir': reg_raw_tracking_dir,

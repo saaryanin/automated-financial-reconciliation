@@ -1,9 +1,11 @@
+# preprocess_test.py (updated: removed unused previous_date_str in load_crm_file; removed add previous shifted section in combine_processed_files)
+# preprocess_test.py (Corrected with proper print placements, fixed typos, and syntax; added optional path params for flexibility)
 import pandas as pd
 import re
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, COMBINED_CRM_DIR
+import src.config as config
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
@@ -11,7 +13,6 @@ from src.utils import clean_amount, clean_last4, load_uk_holidays, categorize_re
 import numpy as np
 from datetime import timedelta
 import logging
-
 PSP_NAME_MAP = {
     'netteler': 'neteller',
     'skrilll': 'skrill',
@@ -29,15 +30,13 @@ PSP_NAME_MAP = {
     'acquiring com': 'trustpayments',
     'trust payments': 'trustpayments',
     'paysafe': 'skrill',
+    'barclay card': 'barclays',
+    'barclays': 'barclays',
+    'bridgerpay': 'bridgerpay',
     # Add any other known aliases as needed
 }
-
-
-
 processed_unmatched_files = set()
-
 # ----------------------------
-
 def enhance_email_similarity(e1, e2):
     # Fallback if ReconciliationEngine isn't directly accessible
     from difflib import SequenceMatcher
@@ -46,13 +45,11 @@ def enhance_email_similarity(e1, e2):
     if not e1 or not e2:
         return 0.0
     return SequenceMatcher(None, e1.split('@')[0], e2.split('@')[0]).ratio()
-
 # Processor Handling
 # ----------------------------
 def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     processor = processor.lower()
     df.columns = df.columns.str.strip()
-
     if processor == "paypal":
         keep_cols = [
             "Date", "Time", "Time zone", "Name", "Type", "Status", "Currency",
@@ -60,12 +57,12 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         ]
         df = df[keep_cols]
         allowed_types = ["Express Checkout Payment"]
-        df = df[(df["Status"] == "Completed") & (df["Type"].isin(allowed_types)) & (df["Currency"] != "GBP")]
+        df = df[(df["Status"] == "Completed") & (df["Type"].isin(allowed_types))]
         df = df.rename(columns={"Transaction ID": "transaction_id", "Net": "amount", "From Email Address": "email",
                                 "Currency": "currency"})
         df['amount'] = abs(
             df['amount'].astype(str).str.replace(',', '', regex=False).apply(pd.to_numeric, errors='coerce').fillna(0))
-        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str)  # Combine date and time as string
+        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str) # Combine date and time as string
         # Split Name into first_name and last_name
         name_split = df['Name'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
@@ -74,39 +71,36 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         # Drop unneeded columns
         drop_cols = ["Time zone", "Status", "Fee", "Gross", "To Email Address", "Date", "Time", "Name", "Type"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
-
-    elif processor == "safecharge":
+    # In standardize_processor_columns_deposits, change the "safecharge" block to handle both:
+    elif processor in ["safecharge", "safechargeuk"]:
         df = df[(df["Transaction Type"].str.lower() == "sale") & (df["Transaction Result"].str.lower() == "approved")]
         keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result", "PAN",
-                     "Email Address"]  # Added "Email Address"
+                     "Email Address"] # Added "Email Address"
         df = df[keep_cols]
         df = df.rename(
             columns={"Transaction ID": "transaction_id", "Date": "date", "Amount": "amount", "Currency": "currency"})
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['last_4digits'] = df['PAN'].astype(str).str[-4:].str.zfill(4)  # Extract last 4, zfill handles leading zeros
-        df['email'] = df['Email Address'].astype(str).str.strip()  # Added email column
+        df['last_4digits'] = df['PAN'].astype(str).str[-4:].str.zfill(4) # Extract last 4, zfill handles leading zeros
+        df['email'] = df['Email Address'].astype(str).str.strip() # Added email column
         df['processor_name'] = processor
         df = df.drop(columns=['Transaction Type', 'Transaction Result', 'PAN',
-                              'Email Address'])  # Clean up, added 'Email Address' to drop
-
+                              'Email Address']) # Clean up, added 'Email Address' to drop
     elif processor == "powercash":
-        df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (
-            ~df["Currency"].str.upper().isin(["CAD", "GBP"]))]
+        df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (~df["Currency"].str.upper().isin(["CAD"]))]
         df = df[["Tx-Id", "Date", "Time", "Currency", "Amount", "Firstname", "Lastname", "EMail", "Custom 3",
                  "Credit Card Number"]]
         df = df.rename(
             columns={"Tx-Id": "transaction_id", "Amount": "amount", "Currency": "currency", "Firstname": "first_name",
                      "Lastname": "last_name", "EMail": "email"})
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str)  # Combine date and time
-        df['tp'] = df['Custom 3'].astype(str).str.split('-').str[0].str.strip()  # Extract tp before '-'
+        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str) # Combine date and time
+        df['tp'] = df['Custom 3'].astype(str).str.split('-').str[0].str.strip() # Extract tp before '-'
         df['last_4digits'] = df['Credit Card Number'].astype(str).str[-4:].str.zfill(
-            4)  # Extract last 4, zfill for leading zeros
+            4) # Extract last 4, zfill for leading zeros
         df['processor_name'] = processor
         # Drop unneeded columns (Date and Time after combining, Custom 3 and Credit Card Number after extraction)
         drop_cols = ["Date", "Time", "Custom 3", "Credit Card Number"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
-
     elif processor == "shift4":
         df = df[(df["Operation Type"].str.lower() == "sale") & (df["Response"].str.lower() == "completed successfully")]
         df = df[["Transaction Date", "Request ID (a1)", "Currency", "Amount", "Card Number", "Card Scheme",
@@ -115,9 +109,9 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
                                 "Currency": "currency", "Cardholder Email": "email"})
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime(
-            '%Y-%m-%d %H:%M:%S')  # Reformat date to numerical
+            '%Y-%m-%d %H:%M:%S') # Reformat date to numerical
         df['last_4digits'] = df['Card Number'].astype(str).str[-4:].str.zfill(
-            4)  # Extract last 4, zfill for leading zeros
+            4) # Extract last 4, zfill for leading zeros
         # Split Cardholder Name into first_name and last_name
         name_split = df['Cardholder Name'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
@@ -126,7 +120,6 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         # Drop unneeded columns
         drop_cols = ["Card Scheme", "Card Number", "Cardholder Name"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
-
     elif processor in ["skrill", "neteller"]:
         df = df.rename(columns={
             "Time (CET)": "date", "Time (UTC)": "date",
@@ -145,10 +138,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             lambda x: parser.parse(str(x)).strftime('%m/%d/%Y %I:%M:%S %p') if pd.notna(x) else '')
         df['processor_name'] = processor
         df = df.drop(columns=['Transaction Details'])
-
     elif processor == "trustpayments":
         df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
-        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR"])].copy()
         df = df.rename(columns={
             "transactionreference": "transaction_id",
             "transactionstartedtimestamp": "date",
@@ -156,20 +147,19 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "currencyiso3a": "currency"
         })
         df = df[["transaction_id", "billingfullname", "date", "currency", "amount", "maskedpan",
-                 "orderreference"]]  # Removed "paymenttypedescription"
+                 "orderreference"]] # Removed "paymenttypedescription"
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         # Split billingfullname into first_name and last_name
         name_split = df['billingfullname'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
         df['last_name'] = name_split[1].fillna('')
         df['last_4digits'] = df['maskedpan'].astype(str).str[-4:].str.zfill(
-            4)  # Extract last 4, zfill for leading zeros
-        df['tp'] = df['orderreference'].astype(str).str.split('-').str[0].str.strip()  # Extract tp before '-'
+            4) # Extract last 4, zfill for leading zeros
+        df['tp'] = df['orderreference'].astype(str).str.split('-').str[0].str.strip() # Extract tp before '-'
         df['processor_name'] = processor
         # Drop unneeded columns
         drop_cols = ["billingfullname", "maskedpan", "orderreference"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
-
     elif processor == "zotapay":
         df = df.copy()
         df.columns = df.iloc[0].str.strip()
@@ -179,24 +169,23 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "ID": "transaction_id",
             "Order Currency": "currency",
             "Order Amount": "amount",
-            "Created At": "date",  # Will be dropped later
-            "Ended At": "date",  # Renamed to date (overwrites if conflict, but since dropping old date)
+            "Created At": "date", # Will be dropped later
+            "Ended At": "date", # Renamed to date (overwrites if conflict, but since dropping old date)
             "Customer Email": "email",
             "Customer First Name": "first_name",
             "Customer Last Name": "last_name"
         })
         keep_cols = [
             "transaction_id", "currency", "amount", "Merchant Order Description",
-            "date", "email", "first_name", "last_name"  # Removed Type, Status, Payment Method; kept Ended At as date
+            "date", "email", "first_name", "last_name" # Removed Type, Status, Payment Method; kept Ended At as date
         ]
         df = df[keep_cols]
         df['amount'] = abs(pd.to_numeric(df['amount'].astype(str).str.replace(',', ''), errors='coerce').fillna(
-            0))  # Ensure numeric, handle strings/commas
+            0)) # Ensure numeric, handle strings/commas
         df['tp'] = df['Merchant Order Description'].astype(str).str.split('-').str[
-            0].str.strip()  # Extract tp before '-'
+            0].str.strip() # Extract tp before '-'
         df['processor_name'] = processor
-        df = df.drop(columns=['Merchant Order Description'])  # Drop after extraction
-
+        df = df.drop(columns=['Merchant Order Description']) # Drop after extraction
     elif processor == "bitpay":
         df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
         df = df[df["tx_type"].str.lower() == "sale"]
@@ -212,7 +201,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         ]
         df = df[keep_cols]
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['date'] = df['date'].astype(str) + ' ' + df['time'].astype(str)  # Combine date and time
+        df['date'] = df['date'].astype(str) + ' ' + df['time'].astype(str) # Combine date and time
         # Split buyername into first_name and last_name
         name_split = df['buyername'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
@@ -221,7 +210,6 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         # Drop unneeded columns
         drop_cols = ["time", "buyername"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
-
     elif processor == "ezeebill":
         df.columns = df.columns.str.replace(" ", "").str.strip()
         df = df[df["Action"].str.upper() == "SALE"]
@@ -231,13 +219,12 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "MerchantTxnID": "transaction_id",
             "OriginalAmount": "amount"
         })
-        df = df[["transaction_id", "amount"]]  # Time dropped
+        df = df[["transaction_id", "amount"]] # Time dropped
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         df['tp'] = df['transaction_id'].astype(str).str.split('-').str[
-            0].str.strip()  # Extract tp from transaction_id before '-'
-        df['currency'] = 'MYR'  # Always set to MYR
+            0].str.strip() # Extract tp from transaction_id before '-'
+        df['currency'] = 'MYR' # Always set to MYR
         df['processor_name'] = processor
-
     elif processor == "paymentasia":
         df = df[(df["Type"].str.upper() == "SALE") & (df["Status"].str.upper() == "SUCCESS")]
         df = df.rename(columns={
@@ -250,30 +237,35 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         df['tp'] = df['transaction_id'].astype(str).str.split('-').str[0].str.strip()
         df['processor_name'] = processor
-
+    elif processor in ["barclays", "barclaycard"]:
+        df = df[df["Current Status"].str.lower() == "captured"]
+        df = df[df["Trans Type Code"].str.lower() == "purchase"]
+        df["transaction_id"] = df["Audit Reference"]
+        df["currency"] = df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
+        df["amount"] = pd.to_numeric(df["Trans Amount(HUC)"], errors='coerce').abs()
+        df["date"] = df["Transaction Date"]
+        df["tp"] = df["Sales Details"].astype(str).apply(
+            lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
+        df['processor_name'] = processor
+        df['last_4digits'] = '' # Not available for deposits
+        keep_cols = ["transaction_id", "date", "amount", "currency", "tp", "processor_name"]
+        df = df[keep_cols]
     # Common cleanup for all processors
     if 'transaction_id' in df:
         df['transaction_id'] = df['transaction_id'].astype(str).str.strip().fillna('UNKNOWN')
-
     return df.reset_index(drop=True)
-
-
 def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
     processor_tag = processor.lower()
     df.columns = df.columns.str.strip().str.replace(u'\xa0', ' ', regex=False)
-
     # Handle Zotapay
     if processor.lower() == "zotapay":
         if df.columns[0].lower() not in ["type", "status", "order amount"]:
             df.columns = df.iloc[0].astype(str).str.strip()
             df = df.iloc[1:].copy()
-
         if "Type" not in df.columns or "Status" not in df.columns:
             return pd.DataFrame()
-
         df = df[(df["Type"].astype(str).str.upper() == "PAYOUT") &
                 (df["Status"].astype(str).str.upper() == "APPROVED")]
-
         df = df.rename(columns={
             "Order Amount": "amount",
             "Order Currency": "currency",
@@ -282,31 +274,24 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             "Customer Bank Account Name": "full_name",
             "Merchant Order ID": "tp"
         })
-
         # Robust TP extraction
         df["tp"] = df["tp"].astype(str).apply(lambda x: re.search(r'\d{7,8}', x).group(0)
         if re.search(r'\d{7,8}', x) else "")
-
         # Standardize date format
         df["date"] = pd.to_datetime(df["date"], errors='coerce', utc=True)
         df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
         df["full_name"] = df["full_name"].astype(str).str.strip()
         df["first_name"] = df["full_name"].str[:2]
         df["last_name"] = df["full_name"].str[2:]
         df["email"] = df["email"].fillna("")
-
     # Handle PaymentAsia
     elif processor.lower() == "paymentasia":
         required_cols = ["Status", "Order Amount", "Completed Time", "Beneficiary Name"]
         normalized_cols = [col.strip().replace(u'\xa0', ' ') for col in df.columns]
         missing_cols = [col for col in required_cols if col not in normalized_cols]
-
         if missing_cols:
             return pd.DataFrame()
-
         df = df[df["Status"].astype(str).str.upper() == "SUCCESS"]
-
         df = df.rename(columns={
             "Order Amount": "amount",
             "Order Currency": "currency",
@@ -314,21 +299,17 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             "Beneficiary Name": "full_name",
             "Request Reference": "tp"
         })
-
         # Robust TP extraction
         df["tp"] = df["tp"].astype(str).apply(lambda x: re.search(r'\d{7,8}', x).group(0)
         if re.search(r'\d{7,8}', x) else "")
-
         # Standardize date format
         df["date"] = pd.to_datetime(df["date"], errors='coerce', infer_datetime_format=True)
         df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
         df["full_name"] = df["full_name"].astype(str).str.strip()
         full_split = df["full_name"].str.split(n=2, expand=True)
         df["first_name"] = full_split[0].fillna("") + " " + full_split[1].fillna("")
         df["last_name"] = full_split[2].fillna("")
         df["email"] = ""
-
     # Final clean-up
     df["amount"] = pd.to_numeric(
         df["amount"].astype(str).str.replace(",", "", regex=False),
@@ -336,12 +317,10 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
     )
     df["last_4cc"] = ""
     df["processor_name"] = processor_tag
-
     return df[[
         "amount", "currency", "date", "last_4cc",
         "email", "first_name", "last_name", "processor_name", "tp"
     ]]
-
 def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) -> pd.DataFrame:
     if processor.lower() == "paypal":
         df.columns = df.columns.str.strip()
@@ -350,18 +329,15 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df["To Email Address"] = df["To Email Address"].astype(str).str.strip().str.lower()
         df["Gross"] = df["Gross"].astype(str).str.replace(",", "", regex=False)
         df["Currency"] = df["Currency"].astype(str).str.strip()
-
         # Pull all types: withdrawals, refunds, reversals
         allowed_types = ["Mass Payment", "Payment Refund", "Mass Pay Reversal"]
         allowed_status = ["Completed", "Unclaimed"]
         df = df[
             df["Type"].isin(allowed_types) &
-            df["Status"].isin(allowed_status) &
-            (df["Currency"] != "GBP")
+            df["Status"].isin(allowed_status)
             ].copy()
         if df.empty:
             return pd.DataFrame()
-
         # Remove both 'Mass Pay Reversal' and its matching 'Mass Payment' or 'Payment Refund'
         to_remove = set()
         mpr_rows = df[df["Type"] == "Mass Pay Reversal"]
@@ -383,16 +359,13 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             for idx_match in matches.index:
                 to_remove.add(idx_mpr)
                 to_remove.add(idx_match)
-                break  # Only remove first found
-
+                break # Only remove first found
         df = df.drop(index=list(to_remove))
-
         # Only keep real withdrawals (Mass Payment, Payment Refund)
         keep_mask = df["Type"].isin(["Mass Payment", "Payment Refund"])
         df = df[keep_mask]
         if df.empty:
             return pd.DataFrame()
-
         # Standardize schema
         df = df.rename(columns={
             "Date": "date",
@@ -417,20 +390,16 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "amount", "currency", "date", "last_4cc",
             "email", "first_name", "last_name", "processor_name"
         ]]
-
-
-    elif processor.lower() == "safecharge":
+    # In standardize_processor_columns_withdrawals, change the "safecharge" block to handle both:
+    elif processor in ["safecharge", "safechargeuk"]:
         df.columns = df.columns.str.strip()
         colmap = {col.lower().replace(" ", ""): col for col in df.columns}
-
         if 'transactiontype' not in colmap or 'transactionresult' not in colmap:
             return pd.DataFrame()
-
         credit_type = "Credit"
         void_type = "VoidCredit"
         email_col = colmap.get('emailaddress', None)
         pan_col = colmap.get('pan', None)
-
         # 1. Pull all Credit and VoidCredit rows, status Approved
         df = df[
             df[colmap['transactionresult']].str.strip().str.lower() == "approved"
@@ -438,21 +407,17 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df = df[
             df[colmap['transactiontype']].isin([credit_type, void_type])
         ].copy()
-
         if df.empty:
             return pd.DataFrame()
-
         # 2. Cancel both VoidCredit and its paired Credit row (search up and down)
         to_remove = set()
-        df = df.reset_index(drop=True)  # Ensures index is 0...N
+        df = df.reset_index(drop=True) # Ensures index is 0...N
         void_rows = df[df[colmap['transactiontype']] == "VoidCredit"]
-
         for void_idx, void_row in void_rows.iterrows():
             void_email = str(void_row[email_col]).strip().lower() if email_col else ""
             void_last4 = str(void_row[pan_col])[-4:] if pan_col else ""
             void_amount = float(void_row[colmap['amount']])
             void_currency = str(void_row[colmap['currency']]).upper()
-
             found = None
             # Search above first (older rows)
             for i in range(void_idx - 1, -1, -1):
@@ -484,12 +449,9 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             to_remove.add(void_idx)
             if found is not None:
                 to_remove.add(found)
-
         df = df.drop(index=list(to_remove))
-
         # 3. Now filter to just "Credit" for final withdrawals output
         df = df[df[colmap['transactiontype']] == credit_type]
-
         # --- Standardize columns as before ---
         df = df.rename(columns={
             colmap['amount']: "amount",
@@ -499,26 +461,25 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             pan_col: "last_4cc" if pan_col else "last_4cc"
         })
         df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$") if pan_col else ""
-        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
-        df["processor_name"] = "safecharge"
+        df["currency"] = df["currency"].replace(
+            {"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
+        df["processor_name"] = processor
         df["first_name"] = ""
         df["last_name"] = ""
         return df[[
             "amount", "currency", "date", "last_4cc", "email",
             "first_name", "last_name", "processor_name"
         ]]
-
     elif processor.lower() == "powercash":
         # — filter to only refunds or CFTs, successful EUR/USD rows
         df.columns = df.columns.str.strip()
         df = df[
             df["Tx-Type"].str.lower().isin(["refund", "cft"]) &
             (df["Status"].str.lower() == "successful") &
-            (df["Currency"].str.upper().isin(["EUR", "USD"]))
-        ]
+            (df["Currency"].str.upper().isin(["EUR", "USD", "GBP"]))
+            ]
         if df.empty:
             return pd.DataFrame()
-
         # — rename to the common schema
         df = df.rename(columns={
             "Date": "date",
@@ -526,20 +487,16 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "Currency": "currency",
             "EMail": "email",
         })
-
         # — last four of card
         df["last_4cc"] = (
             df["Credit Card Number"]
               .astype(str).str[-4:]
         )
-
         # — names
         df["first_name"] = df.get("Firstname", "").astype(str)
-        df["last_name"]  = df.get("Lastname",  "").astype(str)
-
+        df["last_name"] = df.get("Lastname", "").astype(str)
         # — tag processor
         df["processor_name"] = "powercash"
-
         # — enforce same column order as PayPal/SafeCharge
         df = df[[
             "amount", "currency", "date",
@@ -547,34 +504,27 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "first_name", "last_name",
             "processor_name"
         ]]
-
         return df
-
     elif processor.lower() == "shift4":
         df.columns = df.columns.str.strip()
         df["Operation Type"] = df["Operation Type"].astype(str).str.strip().str.lower()
         df["Response"] = df["Response"].astype(str).str.strip().str.lower()
         df["Cardholder Email"] = df["Cardholder Email"].astype(str).str.strip().str.lower()
         df["Card Number"] = df["Card Number"].astype(str).str.strip()
-
         # Pull all withdrawals and voids first
         relevant_mask = df["Operation Type"].isin(["referral credit", "sale void", "refund void"]) & (
                     df["Response"] == "completed successfully")
         df = df[relevant_mask].copy()
-
         if df.empty:
             return pd.DataFrame()
-
         # Remove both 'refund void' and its matching 'referral credit' (same email+amount+currency)
         to_remove = set()
         refund_voids = df[df["Operation Type"] == "refund void"]
-
         for idx_rv, refund_row in refund_voids.iterrows():
             email = refund_row["Cardholder Email"]
             amount = clean_amount(refund_row["Amount"])
             currency = refund_row["Currency"]
-
-            # Scan for matching referral credit rows (above/below), same email/amount/currency
+            # Scan for matching referral credit rows (above/below), same email/amount+currency
             mask = (
                     (df["Operation Type"] == "referral credit") &
                     (df["Cardholder Email"] == email) &
@@ -582,33 +532,27 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
                     (df["Amount"].apply(clean_amount) == amount)
             )
             possible_matches = df[mask]
-
             # Remove first match (if any)
             for idx_ref in possible_matches.index:
                 to_remove.add(idx_rv)
                 to_remove.add(idx_ref)
                 break
         df = df.drop(index=list(to_remove))
-
         # Only keep real withdrawals ("referral credit" or "sale void")
         keep_mask = df["Operation Type"].isin(["referral credit", "sale void"])
         df = df[keep_mask]
-
         if df.empty:
             return pd.DataFrame()
-
         # Standardize schema
         df = df[[
             "Transaction Date", "Card Number", "Currency", "Amount", "Cardholder Name", "Cardholder Email"
         ]].copy()
-
         df = df.rename(columns={
             "Transaction Date": "date",
             "Currency": "currency",
             "Amount": "amount",
             "Cardholder Email": "email"
         })
-
         df["amount"] = df["amount"].apply(clean_amount)
         df["last_4cc"] = df["Card Number"].astype(str).str.extract(r"(\d{4})$").fillna("")
         name_split = df["Cardholder Name"].astype(str).str.split(n=1, expand=True)
@@ -619,10 +563,8 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "amount", "currency", "date", "last_4cc", "email",
             "first_name", "last_name", "processor_name"
         ]]
-
     elif processor.lower() in ("skrill", "neteller"):
         df.columns = df.columns.str.strip()
-
         # both Skrill and Neteller withdrawals are "send money" + processed
         df = df.loc[
              (df["Type"].str.lower() == "send money") &
@@ -631,7 +573,6 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
              ]
         if df.empty:
             return pd.DataFrame()
-
         # pick whichever column holds the amount
         amt_col = "Amount Sent" if "Amount Sent" in df.columns else "[+]"
         df = df.loc[
@@ -640,7 +581,6 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
              ]
         if df.empty:
             return pd.DataFrame()
-
         # pull the numeric TP out of Reference
         df["tp"] = (
             df["Reference"]
@@ -648,7 +588,6 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             .str.extract(r"(\d+)")
             .fillna("")
         )
-
         # normalize date into a single "date" column
         if "Time (CET)" in df.columns:
             df["date"] = pd.to_datetime(df["Time (CET)"])
@@ -658,13 +597,11 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             df["date"] = pd.to_datetime(df["Date"])
         else:
             raise ValueError(f"Could not find a date column for {processor}")
-
         # rename amount & currency to your unified names
         df = df.rename(columns={
             amt_col: "amount",
             "Currency Sent": "currency"
         })
-
         # strip the leading "to " off the Transaction Details to get email
         df["email"] = (
             df["Transaction Details"]
@@ -672,26 +609,22 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             .str.replace(r"^\s*to\s*", "", regex=True)
             .str.strip()
         )
-
         # fill out the rest
         df["last_4cc"] = ""
         df["first_name"] = ""
         df["last_name"] = ""
         df["processor_name"] = processor.lower()
-
         # return exactly the columns you want
         return df[[
             "amount", "currency", "date", "last_4cc",
             "email", "first_name", "last_name",
             "processor_name", "tp"
         ]]
-
     elif processor == "bitpay":
         df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
         df = df[df["tx_type"].str.lower() == "invoice refund"]
         if df.empty:
             return pd.DataFrame()
-
         df = df.rename(columns={
             "invoice_id": "transaction_id",
             "payout_amount": "amount",
@@ -699,35 +632,40 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "buyername": "full_name",
             "buyeremail": "email"
         })
-
         # Split buyer full name into first and last names
         name_split = df["full_name"].astype(str).str.strip().str.split(n=1, expand=True)
         df["first_name"] = name_split[0]
         df["last_name"] = name_split[1] if name_split.shape[1] > 1 else ""
-
-        df["last_4cc"] = ""  # No card digits in BitPay
+        df["last_4cc"] = "" # No card digits in BitPay
         df["processor_name"] = "bitpay"
-
         df = df[[
             "amount", "currency", "date", "last_4cc",
             "email", "first_name", "last_name", "processor_name"
         ]]
-
         return df
-
     elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
         return patch_standardize_zotapay_paymentasia_withdrawals(df, processor)
-
     elif processor.lower() == "trustpayments":
+        print(f"Entering standardize_processor_columns_withdrawals for trustpayments")
+        print(f"Initial df columns: {df.columns.tolist()}")
+        print(f"Initial df shape: {df.shape}")
+        # Check if required columns exist
+        required_cols = ["requesttypedescription", "errorcode", "billingfullname", "transactionstartedtimestamp",
+                         "maskedpan", "currencyiso3a", "mainamount", "orderreference"]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            print(f"Missing required columns: {missing_cols}")
+            return pd.DataFrame()
         # Filter to only REFUND type and errorcode == 0
         df = df[
             (df["requesttypedescription"].str.upper() == "REFUND") &
             (df["errorcode"] == 0)
             ].copy()
-        df = df[df["currencyiso3a"].str.upper().isin(["USD", "EUR"])].copy()
+        print(f"After REFUND and errorcode filter: df shape {df.shape}")
         if df.empty:
+            print("DataFrame is empty after filtering. Sample raw data before filter:")
+            print(df.head(5)) # Print sample of original df if empty after filter
             return pd.DataFrame()
-
         def split_billingfullname(name):
             if pd.isna(name):
                 return "", ""
@@ -739,7 +677,7 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df["date"] = pd.to_datetime(df["transactionstartedtimestamp"], errors="coerce")
         df["last_4cc"] = df["maskedpan"].astype(str).str[-4:]
         df["currency"] = df["currencyiso3a"]
-        df["amount"] = pd.to_numeric(df["mainamount"], errors="coerce")
+        df["amount"] = pd.to_numeric(df["mainamount"], errors='coerce')
         # --- Robustly clean TP as str, remove decimals, strip spaces ---
         df["tp"] = df["orderreference"].astype(str).str.split("-").str[0].str.strip().str.replace(r"\.0$", "",
                                                                                                   regex=True)
@@ -751,14 +689,33 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "amount", "currency", "date", "last_4cc", "email",
             "first_name", "last_name", "processor_name", "tp"
         ]
-        return df[keep]
-
+        final_df = df[keep]
+        print(f"Final df shape after processing: {final_df.shape}")
+        print(f"Sample processed rows: {final_df.head(2)}")
+        return final_df
+    # In standardize_processor_columns_withdrawals, update barclays block:
+    elif processor in ["barclays", "barclaycard"]:
+        df = df[df["Current Status"].str.lower() == "captured"]
+        df = df[df["Trans Type Code"].str.lower() == "refund"]
+        df["transaction_id"] = df["Audit Reference"]
+        df["currency"] = df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
+        df["amount"] = pd.to_numeric(df["Trans Amount(HUC)"], errors='coerce').abs()
+        df["date"] = df["Transaction Date"]
+        df["tp"] = df["Sales Details"].astype(str).apply(
+            lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
+        df['last_4cc'] = df['Online Token'].astype(str).str[-4:]
+        df['processor_name'] = processor
+        df['first_name'] = ''
+        df['last_name'] = ''
+        df['email'] = ''
+        keep_cols = ["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name",
+                     "tp"]
+        df = df[keep_cols]
+        return df
     return pd.DataFrame()
-
 # ----------------------------
 # CRM Handling
 # ----------------------------
-
 def extract_crm_transaction_id(comment: str, processor: str):
     text = str(comment)
     processor = processor.lower()
@@ -774,13 +731,20 @@ def extract_crm_transaction_id(comment: str, processor: str):
         "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
         "ezeebill": r"(\d{7}-\d{18})",
         "paymentasia": r"(\d{7}-\d{18})",
+        "barclays": r"PSP TransactionId:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
+        'safechargeuk': r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
     }
+    if processor == "bridgerpay":
+        for p, pattern in patterns.items():
+            match = re.search(pattern, text)
+            if match:
+                return next((g for g in match.groups() if g), None)
+        return None
     pattern = patterns.get(processor)
     if not pattern:
         return None
     match = re.search(pattern, text)
     return next((g for g in match.groups() if g), None) if match else None
-
 def clean_crm_amount(amt):
     if pd.isna(amt):
         return 0.0
@@ -794,124 +758,29 @@ def clean_crm_amount(amt):
         return float(amt_str)
     except ValueError:
         return 0.0
-
-def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
+def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clean=False, transaction_type="deposit",
+                  lists_dir=None, processed_unmatched_shifted_deposits_dir=None, processed_crm_dir=None):
+    lists_dir = lists_dir or config.LISTS_DIR
+    processed_unmatched_shifted_deposits_dir = processed_unmatched_shifted_deposits_dir or config.PROCESSED_UNMATCHED_SHIFTED_DEPOSITS_DIR
+    processed_crm_dir = processed_crm_dir or config.PROCESSED_CRM_DIR
+    print(f"Using processed_crm_dir for load_crm_file: {processed_crm_dir}")
     # Define normalized_processor at the start
     normalized_processor = processor_name.lower()
-    # Calculate relevant previous date based on the current day
-    date_str = extract_date_from_filename(filepath)
-    current_date = datetime.strptime(date_str, '%Y-%m-%d')
-    previous_date = current_date - timedelta(days=1) # Previous day for unmatched data
-    previous_date_str = get_previous_business_day(date_str)
     # Load current raw CRM file
     df = pd.read_excel(filepath, engine="openpyxl")
     df.columns = df.columns.str.strip()
     df['regulation'] = df['Site (Account) (Account)'].apply(categorize_regulation)
-    # Filter out paypal and inpendium for australia regulation
-    mask_aus = df['regulation'] == 'australia'
-    mask_psp = df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
-    df = df[~(mask_aus & mask_psp)]
-    # Load and process unmatched_shifted_deposits from the previous day
-    previous_unmatched_path = LISTS_DIR / previous_date_str / "unmatched_shifted_deposits.xlsx"
-    if previous_unmatched_path.exists():
-        unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
-        logging.info(
-            f"Loaded unmatched_shifted_deposits from {previous_unmatched_path} with columns: {unmatched_df.columns.tolist()}")
-        # Expanded mapping based on sample unmatched file
-        mapping = {
-            'Name': 'crm_type',
-            'Created On': 'crm_date',
-            'First Name (Account) (Account)': 'crm_firstname',
-            'Last Name (Account) (Account)': 'crm_lastname',
-            'Email (Account) (Account)': 'crm_email',
-            'Amount': 'crm_amount',
-            'Currency': 'crm_currency',
-            'Approved': 'crm_approved',
-            'Approved On': 'crm_approved_on', # Optional
-            'TP Account': 'crm_tp',
-            'Internal Comment': 'internal_comment',
-            'Method of Payment': 'payment_method',
-            'Internal Type': 'internal_type', # Optional
-            'Site (Account) (Account)': 'regulation',
-            'Country Of Residence (Account) (Account)': 'country_of_residence', # Optional
-            'PSP name': 'crm_processor_name',
-            'CC Last 4 Digits': 'crm_last4'
-        }
-        unmatched_mapped = unmatched_df.rename(columns=mapping, errors='ignore')
-        # Log columns after mapping
-        logging.debug(f"Columns in unmatched_mapped after mapping: {unmatched_mapped.columns.tolist()}")
-        # Normalize crm_processor_name
-        if 'crm_processor_name' in unmatched_mapped.columns:
-            unmatched_mapped['crm_processor_name'] = unmatched_mapped['crm_processor_name'].astype(
-                str).str.strip().str.lower().replace(PSP_NAME_MAP)
-        else:
-            logging.warning(f"'crm_processor_name' column missing in {previous_unmatched_path}")
-            unmatched_mapped['crm_processor_name'] = 'unknown'
-        # Extract transaction_id from internal_comment using per-row processor
-        if 'internal_comment' in unmatched_mapped.columns and 'crm_processor_name' in unmatched_mapped.columns:
-            unmatched_mapped['crm_transaction_id'] = unmatched_mapped.apply(
-                lambda row: extract_crm_transaction_id(row['internal_comment'], row['crm_processor_name'])
-                if pd.notna(row['internal_comment']) and pd.notna(row['crm_processor_name']) else None,
-                axis=1
-            )
-            unmatched_mapped['crm_transaction_id'] = unmatched_mapped['crm_transaction_id'].astype(str).fillna(
-                'UNKNOWN')
-        else:
-            logging.warning(
-                f"Internal Comment or crm_processor_name column not found in {previous_unmatched_path}, columns available: {unmatched_mapped.columns.tolist()}")
-            unmatched_mapped['crm_transaction_id'] = 'UNKNOWN'
-        # Log for debugging
-        for idx, row in unmatched_mapped.iterrows():
-            if row['crm_transaction_id'] == 'UNKNOWN' and pd.notna(row.get('internal_comment')):
-                logging.debug(
-                    f"Failed to extract transaction_id for internal_comment: {row['internal_comment']}, processor: {row.get('crm_processor_name', 'N/A')}")
-        # Define required columns for final output
-        required_columns = ['crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount',
-                            'crm_currency', 'payment_method', 'crm_approved', 'crm_processor_name', 'crm_last4',
-                            'regulation', 'crm_transaction_id', 'crm_type']
-        for col in required_columns:
-            if col not in unmatched_mapped.columns:
-                unmatched_mapped[col] = pd.NA
-        unmatched_mapped = unmatched_mapped[required_columns]
-        # Convert data types
-        if 'crm_date' in unmatched_mapped.columns:
-            unmatched_mapped['crm_date'] = pd.to_datetime(unmatched_mapped['crm_date'], errors='coerce').fillna(
-                pd.NaT).dt.strftime('%m/%d/%Y %I:%M:%S %p')
-        for col in ['crm_amount', 'crm_last4']:
-            if col in unmatched_mapped.columns:
-                unmatched_mapped[col] = pd.to_numeric(unmatched_mapped[col], errors='coerce').fillna(0)
-        # Standardize crm_currency
-        if 'crm_currency' in unmatched_mapped.columns:
-            unmatched_mapped['crm_currency'] = unmatched_mapped['crm_currency'].replace({
-                'US Dollar': 'USD',
-                'Euro': 'EUR'
-            })
-        # Convert crm_approved to 1/0
-        if 'crm_approved' in unmatched_mapped.columns:
-            unmatched_mapped['crm_approved'] = unmatched_mapped['crm_approved'].str.strip().str.lower().map(
-                {'yes': 'Yes', 'no': 'No'}).fillna(0)
-        # Categorize regulation
-        if 'regulation' in unmatched_mapped.columns:
-            unmatched_mapped['regulation'] = unmatched_mapped['regulation'].apply(categorize_regulation)
-        # Append to current CRM if new transactions
-        existing_transaction_ids = set(df['Internal Comment'].apply(
-            lambda x: extract_crm_transaction_id(x, normalized_processor) if pd.notna(x) else None).dropna().unique())
-        new_deposits = unmatched_mapped[~unmatched_mapped['crm_transaction_id'].isin(existing_transaction_ids)]
-        if not new_deposits.empty:
-            for col in df.columns:
-                if col not in new_deposits.columns:
-                    new_deposits[col] = pd.NA
-            for col in new_deposits.columns:
-                if col not in df.columns:
-                    df[col] = pd.NA
-            df = pd.concat([df, new_deposits], ignore_index=True)
-            logging.info(f"Added {len(new_deposits)} new unmatched deposits from {previous_date_str}")
-        # Save the processed unmatched data
-        if save_clean:
-            unmatched_out_path = PROCESSED_CRM_DIR / "unmatched_shifted_deposits" / date_str / "unmatched_shifted_deposits.xlsx"
-            unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
-            unmatched_mapped.to_excel(unmatched_out_path, index=False)
-            logging.info(f"Saved unmatched deposits to {unmatched_out_path}")
+    # Filter for the specified regulation
+    if regulation == 'row':
+        row_regs = ['mauritius', 'cyprus', 'australia']
+        df = df[df['regulation'].isin(row_regs)]
+    elif regulation == 'uk':
+        df = df[df['regulation'] == 'uk']
+    # Filter out paypal and inpendium for australia regulation (only for row)
+    if regulation == 'row':
+        mask_aus = df['regulation'] == 'australia'
+        mask_psp = df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
+        df = df[~(mask_aus & mask_psp)]
     df["PSP name"] = (
         df["PSP name"]
         .astype(str)
@@ -919,27 +788,35 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         .str.lower()
         .replace(PSP_NAME_MAP)
     )
+    if regulation == 'uk':
+        df["PSP name"] = df["PSP name"].replace({'safecharge': 'safechargeuk'})
+    # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
+    neteller_mask = df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+    df.loc[neteller_mask, "PSP name"] = "neteller"
     df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
-    df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor))
+    if normalized_processor == 'bridgerpay':
+        df['transaction_id'] = df.get('Internal Comment', pd.Series(index=df.index, dtype=str)).astype(str).str.strip()
+    else:
+        df['transaction_id'] = df['Internal Comment'].apply(
+            lambda c: extract_crm_transaction_id(c, normalized_processor))
     df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
-    if normalized_processor in ["zotapay", "paymentasia"]:
-        name_has_chinese = (
-                df["First Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]') |
-                df["Last Name (Account) (Account)"].astype(str).str.contains(r'[\u4e00-\u9fff]')
-        )
-        name_col_match = df["Name"].str.lower() == "withdrawal"
-        psp_match = df["PSP name"].str.contains("pamy|zotapay|wire withdrawal", case=False, na=False)
-        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|PA-MY", case=False, na=False)
-        full_mask = name_col_match & (psp_match | method_match)
+    if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
+        name_col_match = df["Name"].str.lower() == transaction_type
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|pa-my", case=False,
+                                                                        na=False)
+        psp_match = df["PSP name"].str.contains("zotapay_paymentasia", case=False, na=False)
+        wire_match = df["PSP name"].str.contains("wire ?transfer", case=False, regex=True, na=False)
+        full_mask = name_col_match & (psp_match | (wire_match & method_match))
         df = df[full_mask].reset_index(drop=True)
     else:
         psp_mask = df["PSP name"] == normalized_processor
         if transaction_type == "withdrawal":
             name_mask = df["Name"].str.lower() == "withdrawal"
             df = df[name_mask & psp_mask].reset_index(drop=True)
-
         else:
             df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
+        if regulation == 'uk' and normalized_processor == 'safechargeuk':
+            df["PSP name"] = 'safecharge'
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({
             "Euro": "EUR",
@@ -947,6 +824,8 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             "Canadian Dollar": "CAD",
             "Australian Dollar": "AUD"
         })
+    if df.empty:
+        return None
     if transaction_type == "withdrawal":
         needed_columns = [
             "Created On",
@@ -987,44 +866,54 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')
     if save_clean:
         date_str = extract_date_from_filename(filepath)
-        # Save processed CRM file
-        folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
+        # Save processed CRM file without extra regulation folder
+        folder_name = 'safecharge' if regulation == 'uk' and normalized_processor == 'safechargeuk' else (
+            "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"] else normalized_processor)
         folder = f"{folder_name}_{transaction_type}s.xlsx"
-        out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
+        out_path = processed_crm_dir / folder_name / date_str / folder
+        print(f"Calculated out_path: {out_path}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        # If df is empty after filtering, create an empty DataFrame with the needed columns
-        if df.empty:
-            needed_columns = [
-                "Created On",
-                "First Name (Account) (Account)",
-                "Last Name (Account) (Account)",
-                "Email (Account) (Account)",
-                "tp",
-                "Amount",
-                "Currency",
-                "Method of Payment",
-                "PSP name",
-                "CC Last 4 Digits",
-                "transaction_id",
-                "Approved",
-                "Name",
-                "Site (Account) (Account)"
-            ] if transaction_type == "deposit" else [
-                "Created On",
-                "First Name (Account) (Account)",
-                "Last Name (Account) (Account)",
-                "Email (Account) (Account)",
-                "tp",
-                "Amount",
-                "Currency",
-                "Method of Payment",
-                "PSP name",
-                "CC Last 4 Digits",
-                "Name",
-                "Site (Account) (Account)"
-            ]
-            df = pd.DataFrame(columns=[col for col in needed_columns])
-            logging.info(f"Creating empty processed CRM file for {normalized_processor} {transaction_type}s")
+        with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+            if "transaction_id" in df.columns and transaction_type == "deposit":
+                worksheet = writer.sheets['Sheet1']
+                trans_col = df.columns.get_loc('transaction_id') + 1
+                for row in range(2, len(df) + 2):
+                    worksheet.cell(row=row, column=trans_col).number_format = '@'
+    return df.reset_index(drop=True)
+def process_crm_subset(df: pd.DataFrame, processor: str, regulation: str, transaction_type: str, save_clean: bool, processed_crm_dir: Path, date_str: str):
+    normalized_processor = processor.lower()
+    if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"] and transaction_type == "withdrawal":
+        method_match = df["Method of Payment"].astype(str).str.contains("paymentasia|zotapay-cup|pa-my", case=False, na=False)
+        psp_match = df["PSP name"].str.contains("zotapay_paymentasia", case=False, na=False)
+        wire_match = df["PSP name"].str.contains("wire ?transfer", case=False, regex=True, na=False)
+        full_mask = method_match | psp_match | (wire_match & method_match) # Adjusted to your last fix
+        df = df[full_mask].reset_index(drop=True)
+    if df.empty:
+        return None
+    df["tp"] = df.get("TP Account", "")
+    if normalized_processor == 'bridgerpay':
+        df['transaction_id'] = df.get('Internal Comment', pd.Series(index=df.index, dtype=str)).astype(str).str.strip()
+    else:
+        df['transaction_id'] = df['Internal Comment'].apply(lambda c: extract_crm_transaction_id(c, normalized_processor) if pd.notna(c) else 'UNKNOWN')
+    df['transaction_id'] = df['transaction_id'].astype(str).fillna('UNKNOWN')
+    if "Currency" in df.columns:
+        df["Currency"] = df["Currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
+    if transaction_type == "withdrawal":
+        needed_columns = ["Created On", "First Name (Account) (Account)", "Last Name (Account) (Account)", "Email (Account) (Account)", "tp", "Amount", "Currency", "Method of Payment", "PSP name", "CC Last 4 Digits", "Name", "Site (Account) (Account)"]
+        df = df[[col for col in needed_columns if col in df.columns]]
+        if "transaction_id" in df.columns:
+            df = df.drop(columns=["transaction_id"])
+    elif transaction_type == "deposit":
+        needed_columns = ["Created On", "First Name (Account) (Account)", "Last Name (Account) (Account)", "Email (Account) (Account)", "tp", "Amount", "Currency", "Method of Payment", "PSP name", "CC Last 4 Digits", "transaction_id", "Approved", "Name", "Site (Account) (Account)"]
+        df = df[[col for col in needed_columns if col in df.columns]]
+        df['crm_approved'] = df.get('Approved', 0).str.strip().str.lower().map({'yes': 1, 'no': 0}).fillna(0)
+        df['crm_transaction_id'] = df['transaction_id'].fillna('UNKNOWN')
+    if save_clean:
+        folder_name = 'safecharge' if regulation == 'uk' and normalized_processor == 'safechargeuk' else ("zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia", "zotapay_paymentasia"] else normalized_processor)
+        out_filename = f"{folder_name}_{transaction_type}s.xlsx"
+        out_path = processed_crm_dir / folder_name / date_str / out_filename
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')
             if "transaction_id" in df.columns and transaction_type == "deposit":
@@ -1036,46 +925,56 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
 # ----------------------------
 # Utility
 # ----------------------------
-
 def get_previous_business_day(current_date_str):
     current_date = datetime.strptime(current_date_str, '%Y-%m-%d')
     prev_date = current_date - timedelta(days=1)
     holidays = set(load_uk_holidays())
-    skipped_dates = []  # Track skipped for logging
+    skipped_dates = [] # Track skipped for logging
     while prev_date.weekday() >= 5 or prev_date.strftime('%Y-%m-%d') in holidays:
-        skipped_dates.append(prev_date.strftime('%Y-%m-%d'))  # Log skipped date
+        skipped_dates.append(prev_date.strftime('%Y-%m-%d')) # Log skipped date
         prev_date -= timedelta(days=1)
     if skipped_dates:
         logging.info(f"Skipped dates for {current_date_str}: {skipped_dates} (weekends/holidays)")
     else:
         logging.info(f"No skips for {current_date_str}; using direct previous: {prev_date.strftime('%Y-%m-%d')}")
     return prev_date.strftime('%Y-%m-%d')
-
 # ----------------------------
 # Parallel Batch Processor
 # ----------------------------
-def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True,
-                              transaction_type="deposit"):
-    valid_paths = [str(p) for p in file_paths if Path(p).exists()]
-    if not valid_paths:
+def process_files_in_parallel(file_paths, processor_names=None, is_crm=False, save_clean=True,
+                              transaction_type="deposit", regulation=None, lists_dir=None, processed_unmatched_shifted_deposits_dir=None, processed_crm_dir=None, processed_processor_dir=None):
+    if isinstance(processor_names, str):
+        processor_names = [processor_names] # Convert single str to list for consistency
+    if processor_names and len(processor_names) != len(file_paths):
+        raise ValueError("processor_names must match length of file_paths if provided")
+    # Get valid indices (skip None or non-existing paths)
+    valid_indices = [i for i, p in enumerate(file_paths) if p is not None and Path(p).exists()]
+    if not valid_indices:
         return []
     with ThreadPoolExecutor() as executor:
         futures = []
-        for path in file_paths:
+        for i in valid_indices:
+            path = file_paths[i]
+            p_name = processor_names[i] if processor_names else None
+            if p_name is None:
+                raise ValueError("processor_names must be provided for multiple processors")
             if is_crm:
-                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean, transaction_type))
+                futures.append(
+                    executor.submit(load_crm_file, str(path), p_name, regulation, save_clean, transaction_type, lists_dir=lists_dir, processed_unmatched_shifted_deposits_dir=processed_unmatched_shifted_deposits_dir, processed_crm_dir=processed_crm_dir))
             else:
-                futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean, transaction_type=transaction_type))
+                futures.append(executor.submit(load_processor_file, str(path), p_name, save_clean, transaction_type=transaction_type, processed_processor_dir=processed_processor_dir, regulation=regulation))
         results = [f.result() for f in futures]
     return results
-
 # ----------------------------
 # Processor File Loader
 # ----------------------------
-def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
+def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit",
+                        processed_processor_dir=None, regulation: str = None) -> pd.DataFrame:
+    processed_processor_dir = processed_processor_dir or config.PROCESSED_PROCESSOR_DIR
+    print(f"Using processed_processor_dir for load_processor_file: {processed_processor_dir}")
     # Check if file exists before processing
     if not Path(filepath).exists():
-        return None  # Return None instead of raising error
+        return None # Return None instead of raising error
     ext = Path(filepath).suffix.lower()
     dtype = {
         "Transaction ID": str,
@@ -1085,48 +984,60 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
         "ID of the corresponding Neteller transaction": str,
         'Pan':str,
     }
-    skip = 15 if processor_name.lower() == "ezeebill" else 11 if processor_name.lower() == "safecharge" else 0
-
+    skip = 15 if processor_name.lower() == "ezeebill" else 11 if processor_name.lower() in ["safecharge", "safechargeuk"] else 4 if processor_name.lower() == "barclays" else 0
     if ext == ".csv":
         df = pd.read_csv(filepath, dtype=dtype, encoding="utf-8-sig", skiprows=skip)
-    elif ext == ".xlsx":
-        df = pd.read_excel(filepath, dtype=dtype, skiprows=skip, engine="openpyxl")
+    elif ext in [".xlsx", ".xls"]:
+        engine = 'xlrd' if ext == ".xls" else 'openpyxl'
+        df = pd.read_excel(filepath, dtype=dtype, skiprows=skip, engine=engine)
     else:
         raise ValueError("Unsupported file type")
-
+    print(f"Loaded raw file for {processor_name} {transaction_type}: shape {df.shape}, columns {df.columns.tolist()}")
     if transaction_type == "deposit":
         df_clean = standardize_processor_columns_deposits(df, processor_name)
+        if 'currency' in df_clean.columns:
+            df_clean['currency'] = df_clean['currency'].astype(str).str.upper()
     else:
         df_clean = standardize_processor_columns_withdrawals(df, processor_name)
-
+        if 'currency' in df_clean.columns:
+            df_clean['currency'] = df_clean['currency'].astype(str).str.upper()
+    if not df_clean.empty and 'currency' in df_clean.columns:
+        shared_processors = ['trustpayments', 'shift4', 'skrill', 'powercash', 'paypal', 'neteller']
+        if processor_name.lower() in shared_processors:
+            if regulation == 'row':
+                df_clean = df_clean[df_clean['currency'] != 'GBP']
+            elif regulation == 'uk':
+                df_clean = df_clean[df_clean['currency'] == 'GBP']
     if df_clean is None or df_clean.empty:
+        print(f"Cleaned df for {processor_name} {transaction_type} is empty or None")
         return None
-
     if save_clean:
         # Only save if we have data
         if df_clean is not None and not df_clean.empty:
             date_str = extract_date_from_filename(filepath)
             folder_name = processor_name.lower()
             out_filename = f"{folder_name}_{transaction_type}s.xlsx"
-            out_path = PROCESSED_PROCESSOR_DIR / folder_name / date_str / out_filename
+            out_path = processed_processor_dir / folder_name / date_str / out_filename
+            print(f"Calculated out_path: {out_path}")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             df_clean.to_excel(out_path, index=False)
         else:
             print(f" Not saving empty {processor_name} {transaction_type}s")
-
     return df_clean
-
-# Updated combine_processed_files to read with dtype for transaction_id
 def combine_processed_files(
-    date, processors, processor_name=None, # Added processor_name as optional parameter
-    processed_crm_dir=PROCESSED_CRM_DIR,
-    processed_proc_dir=PROCESSED_PROCESSOR_DIR,
+    date, processors, processor_name=None,
+    processed_crm_dir=None,
+    processed_proc_dir=None,
     out_crm_dir=None,
     out_proc_dir=None,
     transaction_type="withdrawal",
     exchange_rate_map=None,
-    extra_processors=None
+    extra_processors=None,
+    regulation: str = None,
+    crm_dir=None
 ):
+    processed_crm_dir = processed_crm_dir or config.LISTS_DIR
+    processed_proc_dir = processed_proc_dir or config.LISTS_DIR
     if extra_processors is None:
         extra_processors = []
     all_processors = list(processors) + list(extra_processors)
@@ -1134,15 +1045,14 @@ def combine_processed_files(
         out_crm_dir = processed_crm_dir / "combined"
     if out_proc_dir is None:
         out_proc_dir = processed_proc_dir / "combined"
-    # Define current_date and normalized_processor locally
-    current_date = datetime.strptime(date, '%Y-%m-%d')
-    normalized_processor = processor_name.lower() if processor_name else 'crm'
+    dirs = config.setup_dirs_for_reg(regulation, create=True)
     crm_dfs, proc_dfs = [], []
     crm_file_template = f"{{}}_{transaction_type}s.xlsx"
     proc_file_template = f"{{}}_{transaction_type}s.xlsx"
-    # Load other processed CRM files
+    # Load other processed CRM files (removed regulation.upper() from path)
     for proc in all_processors:
-        crm_f = processed_crm_dir / proc / date / f"{proc}_{transaction_type}s.xlsx"
+        crm_f = processed_crm_dir / (proc if not (regulation == 'uk' and proc == 'safechargeuk') else 'safecharge') / date / f"{proc if not (regulation == 'uk' and proc == 'safechargeuk') else 'safecharge'}_{transaction_type}s.xlsx"
+        print(f"Looking for CRM file: {crm_f}")
         if crm_f.exists():
             df = pd.read_excel(crm_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)
             crm_dfs.append(df)
@@ -1150,6 +1060,7 @@ def combine_processed_files(
             print(f" CRM processed file not found for {proc}: {crm_f}")
     for proc in all_processors: # Only original processors for processor files
         proc_f = processed_proc_dir / proc / date / proc_file_template.format(proc)
+        print(f"Looking for processor file: {proc_f}")
         if proc_f.exists():
             df = pd.read_excel(proc_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)
             proc_dfs.append(df)
@@ -1175,6 +1086,10 @@ def combine_processed_files(
             df['Currency'] = 'USD'
         if 'Amount' not in df.columns:
             df['Amount'] = 0.0
+        # Clean Amount
+        df['Amount'] = df['Amount'].apply(clean_crm_amount)
+        # Add abs_amount for grouping
+        df['abs_amount'] = df['Amount'].abs()
         # Decide if last4 is available
         last4_nonblank = (df['CC Last 4 Digits'].astype(str).str.strip() != '').any()
         # Identify emails with cancellations
@@ -1191,7 +1106,7 @@ def combine_processed_files(
             else:
                 base_cols = ['First Name (Account) (Account)', 'Last Name (Account) (Account)']
             if has_canc:
-                group_cols = base_cols
+                group_cols = base_cols + ['Currency']  # FIXED: remove 'abs_amount' to net across amounts
             else:
                 group_cols = base_cols + ['PSP name']
             for keys, sub_group in group.groupby(group_cols):
@@ -1242,13 +1157,12 @@ def combine_processed_files(
                     else:
                         row0 = sub_group.iloc[0].copy()
                 # Set
-                row0['Amount'] = abs(total_amt)
+                row0['Amount'] = -total_amt  # FIXED: flip sign for expected convention (negative for net CANCEL)
                 row0['Currency'] = tgt_cur
                 row0['Name'] = target_type
                 grouped_rows.append(row0)
         out_df = pd.DataFrame(grouped_rows)
         return out_df
-
     def group_processor_withdrawals(df, exchange_rate_map):
         df = df.copy()
         # Clean string columns used in grouping to avoid issues
@@ -1260,85 +1174,116 @@ def combine_processed_files(
         out_dfs = []
         for pname, group in df.groupby('processor_name'):
             grouped_rows = []
-            if 'last_4cc' in group.columns and (group['last_4cc'].astype(str).str.strip() != '').any():
-                # Group by last_4cc
-                for last4, subg in group.groupby('last_4cc', dropna=False):
-                    if subg.empty or pd.isna(last4) or str(last4).strip() == '':
+            if pname == 'safechargeuk':
+                # Special handling for safechargeuk: group by email
+                for email, sub_group in group.groupby('email'):
+                    if sub_group.empty:
                         continue
-                    # Assume all rows have email; filter to non-NaN for safety
-                    non_na_mask = subg['email'].notna() & (subg['email'].str.strip() != '')
-                    if not non_na_mask.any():
-                        # If all NaN emails, append rows as-is (or skip, depending on needs)
-                        grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
-                        continue
-                    subg = subg[non_na_mask].reset_index(drop=True)  # Reset index for iloc
-                    emails = subg['email'].tolist()
-                    if len(emails) <= 1:
-                        grouped_rows.append(subg.iloc[0].copy())
-                        continue
-                    # Compute pairwise similarities
-                    high_similar = []
-                    for i, email1 in enumerate(emails):
-                        for j, email2 in enumerate(emails[i + 1:], i + 1):
-                            sim = enhance_email_similarity(email1, email2)
-                            if sim >= 0.8:
-                                high_similar.append((i, j, sim))
-                    if not high_similar:
-                        # No similarities: keep all rows separate
-                        grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
-                        continue
-                    # Build graph for connected components
-                    from collections import defaultdict
-                    graph = defaultdict(list)
-                    for i, j, _ in high_similar:
-                        graph[i].append(j)
-                        graph[j].append(i)
-                    # DFS to find components
-                    visited = set()
-                    components = []
-                    for idx in range(len(emails)):
-                        if idx not in visited:
-                            component = []
-                            stack = [idx]
-                            while stack:
-                                node = stack.pop()
-                                if node not in visited:
-                                    visited.add(node)
-                                    component.append(node)
-                                    for neigh in graph[node]:
-                                        if neigh not in visited:
-                                            stack.append(neigh)
-                            if component:
-                                components.append(component)
-                    # Aggregate within each component
-                    for component in components:
-                        if not component:
-                            continue
-                        agg_rows = subg.iloc[component]
-                        currencies = agg_rows['currency'].tolist()
-                        tgt_cur = choose_target_currency(currencies)
-                        converted_amounts = []
-                        for _, row in agg_rows.iterrows():
-                            amt = float(row['amount'])
-                            src_cur = row['currency']
-                            if src_cur == tgt_cur:
-                                converted = amt
+                    currencies = sub_group['currency'].tolist()
+                    tgt_cur = choose_target_currency(currencies)
+                    converted_amounts = []
+                    for _, row in sub_group.iterrows():
+                        amt = float(row['amount'])
+                        src_cur = row['currency']
+                        if src_cur == tgt_cur:
+                            converted = amt
+                        else:
+                            key = (src_cur, tgt_cur)
+                            if exchange_rate_map and key in exchange_rate_map:
+                                converted = amt * exchange_rate_map[key]
                             else:
-                                key = (src_cur, tgt_cur)
-                                if exchange_rate_map and key in exchange_rate_map:
-                                    converted = amt * exchange_rate_map[key]
-                                else:
-                                    converted = amt  # Fallback if no rate
-                            converted_amounts.append(converted)
-                        total_amt = sum(converted_amounts)
-                        agg_row = agg_rows.iloc[0].copy()  # Use first row in component as base
-                        agg_row['amount'] = total_amt
-                        agg_row['currency'] = tgt_cur
-                        agg_row['email'] = list(set(emails[idx] for idx in component))
-                        grouped_rows.append(agg_row)
+                                converted = amt
+                        converted_amounts.append(converted)
+                    total_amt = sum(converted_amounts)
+                    if abs(total_amt) < 1e-6:
+                        continue
+                    agg_row = sub_group.iloc[0].copy()
+                    agg_row['amount'] = total_amt
+                    agg_row['currency'] = tgt_cur
+                    # Collect unique last_4cc into a comma-separated string
+                    unique_last4 = sorted(set(str(l4).strip() for l4 in sub_group['last_4cc'] if str(l4).strip()))
+                    agg_row['last_4cc'] = ','.join(unique_last4)
+                    grouped_rows.append(agg_row)
             else:
-                # Fallback if no last_4cc: no aggregation
-                grouped_rows.extend([row.copy() for _, row in group.iterrows()])
+                if 'last_4cc' in group.columns and (group['last_4cc'].astype(str).str.strip() != '').any():
+                    # Group by last_4cc
+                    for last4, subg in group.groupby('last_4cc', dropna=False):
+                        if subg.empty or pd.isna(last4) or str(last4).strip() == '':
+                            continue
+                        # Assume all rows have email; filter to non-NaN for safety
+                        non_na_mask = subg['email'].notna() & (subg['email'].str.strip() != '')
+                        if not non_na_mask.any():
+                            # If all NaN emails, append rows as-is (or skip, depending on needs)
+                            grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
+                            continue
+                        subg = subg[non_na_mask].reset_index(drop=True) # Reset index for iloc
+                        emails = subg['email'].tolist()
+                        if len(emails) <= 1:
+                            grouped_rows.append(subg.iloc[0].copy())
+                            continue
+                        # Compute pairwise similarities
+                        high_similar = []
+                        for i, email1 in enumerate(emails):
+                            for j, email2 in enumerate(emails[i + 1:], i + 1):
+                                sim = enhance_email_similarity(email1, email2)
+                                if sim >= 0.8:
+                                    high_similar.append((i, j, sim))
+                        if not high_similar:
+                            # No similarities: keep all rows separate
+                            grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
+                            continue
+                        # Build graph for connected components
+                        from collections import defaultdict
+                        graph = defaultdict(list)
+                        for i, j, _ in high_similar:
+                            graph[i].append(j)
+                            graph[j].append(i)
+                        # DFS to find components
+                        visited = set()
+                        components = []
+                        for idx in range(len(emails)):
+                            if idx not in visited:
+                                component = []
+                                stack = [idx]
+                                while stack:
+                                    node = stack.pop()
+                                    if node not in visited:
+                                        visited.add(node)
+                                        component.append(node)
+                                        for neigh in graph[node]:
+                                            if neigh not in visited:
+                                                stack.append(neigh)
+                                if component:
+                                    components.append(component)
+                        # Aggregate within each component
+                        for component in components:
+                            if not component:
+                                continue
+                            agg_rows = subg.iloc[component]
+                            currencies = agg_rows['currency'].tolist()
+                            tgt_cur = choose_target_currency(currencies)
+                            converted_amounts = []
+                            for _, row in agg_rows.iterrows():
+                                amt = float(row['amount'])
+                                src_cur = row['currency']
+                                if src_cur == tgt_cur:
+                                    converted = amt
+                                else:
+                                    key = (src_cur, tgt_cur)
+                                    if exchange_rate_map and key in exchange_rate_map:
+                                        converted = amt * exchange_rate_map[key]
+                                    else:
+                                        converted = amt # Fallback if no rate
+                                converted_amounts.append(converted)
+                            total_amt = sum(converted_amounts)
+                            agg_row = agg_rows.iloc[0].copy() # Use first row in component as base
+                            agg_row['amount'] = total_amt
+                            agg_row['currency'] = tgt_cur
+                            agg_row['email'] = list(set(emails[idx] for idx in component))
+                            grouped_rows.append(agg_row)
+                else:
+                    # Fallback if no last_4cc: no aggregation
+                    grouped_rows.extend([row.copy() for _, row in group.iterrows()])
             if grouped_rows:
                 out_dfs.append(pd.DataFrame(grouped_rows))
         if out_dfs:
@@ -1348,24 +1293,30 @@ def combine_processed_files(
         return out_df
     # Combine and save
     if crm_dfs:
+        # Filter non-empty before concat to avoid FutureWarning
+        crm_dfs = [df for df in crm_dfs if not df.empty]
         combined_crm = pd.concat(crm_dfs, ignore_index=True)
         if transaction_type == "withdrawal":
-            from src.config import CRM_DIR
-            raw_crm_path = CRM_DIR / f"crm_{date}.xlsx"
+            # In preprocess_test.py, update the df_cancels regulation filtering in combine_processed_files
+            # Find this section (around line where df_cancels is processed):
+
+            raw_crm_path = crm_dir / f"crm_{date}.xlsx"  # Use passed crm_dir
             if raw_crm_path.exists():
                 df_raw = pd.read_excel(raw_crm_path, engine="openpyxl")
                 df_raw.columns = df_raw.columns.str.strip()
                 cancel_mask = df_raw["Name"].astype(str).str.strip().str.lower() == "withdrawal cancelled"
                 df_cancels = df_raw[cancel_mask].copy()
-
                 # The part of the code where it filters the rows that have value in the PSP name column is commented because there might be scenarios when there is a value there
                 # cancel_psp_na = df_cancels["PSP name"].isna() | (df_cancels["PSP name"].str.strip() == "")
                 # df_cancels = df_cancels[cancel_psp_na]
-
                 # Exclude cancellations with 'Wire Transfer' in Method of Payment
                 if 'Method of Payment' in df_cancels.columns:
-                    df_cancels = df_cancels[~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]
+                    df_cancels = df_cancels[
+                        ~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]
                 df_cancels['regulation'] = df_cancels['Site (Account) (Account)'].apply(categorize_regulation)
+                # FIXED: Use isin for ROW regulation (mauritius/cyprus/australia), exact match for UK
+                row_regs = ['mauritius', 'cyprus', 'australia'] if regulation == 'row' else [regulation]
+                df_cancels = df_cancels[df_cancels['regulation'].isin(row_regs)]
                 mask_aus = df_cancels['regulation'] == 'australia'
                 mask_psp = df_cancels["PSP name"].str.lower().isin(['paypal', 'inpendium'])
                 df_cancels = df_cancels[~(mask_aus & mask_psp)]
@@ -1433,8 +1384,9 @@ def combine_processed_files(
             'Approved On', 'TP Account', 'Internal Comment', 'Internal Type', 'Country Of Residence (Account) (Account)'
         ]
         combined_crm = combined_crm.drop(columns=[col for col in unwanted_columns if col in combined_crm.columns], errors='ignore')
-        combined_crm['regulation'] = combined_crm['regulation'].apply(categorize_regulation)
-        combined_crm = combined_crm[combined_crm['regulation'] != 'canada']
+        if not combined_crm.empty:
+            combined_crm['regulation'] = combined_crm['regulation'].apply(categorize_regulation)
+            combined_crm = combined_crm[combined_crm['regulation'] != 'canada']
         # Define base column order with regulation between crm_last4 and crm_transaction_id
         base_columns = [
             'crm_date', 'crm_firstname', 'crm_lastname', 'crm_email', 'crm_tp', 'crm_amount', 'crm_currency',
@@ -1448,7 +1400,7 @@ def combine_processed_files(
         custom_columns = base_columns + [col for col in existing_columns if col not in base_columns]
         # Reorder columns, using only those that exist
         combined_crm = combined_crm[[col for col in custom_columns if col in existing_columns]]
-        out_crm_date_dir = out_crm_dir / date
+        out_crm_date_dir = out_crm_dir / date # Removed regulation.upper()
         out_crm_date_dir.mkdir(parents=True, exist_ok=True)
         combined_crm_path = out_crm_date_dir / f"combined_crm_{transaction_type}s.xlsx"
         with pd.ExcelWriter(combined_crm_path, engine='openpyxl') as writer:
@@ -1456,19 +1408,15 @@ def combine_processed_files(
             if 'crm_transaction_id' in combined_crm.columns and not combined_crm.empty:
                 worksheet = writer.sheets['Sheet1']
                 trans_col = combined_crm.columns.get_loc('crm_transaction_id') + 1
-                row_count = int(combined_crm.shape[0]) if not combined_crm.empty and isinstance(combined_crm.shape[0], (
-                int, np.integer)) else 0 # Ensure scalar int
-                print(f"Debug: row_count: {row_count}") # Debug
-                if row_count > 0:
-                    for row in range(2, row_count + 2): # Use validated row_count
-                        worksheet.cell(row=row, column=trans_col).number_format = '@'
-                else:
-                    print("Debug: No rows to format in combined_crm")
+                for row in range(2, len(combined_crm) + 2):
+                    worksheet.cell(row=row, column=trans_col).number_format = '@'
         print(f"Combined CRM columns: {combined_crm.columns.tolist()}") # Debug print
         print(f"Combined CRM {transaction_type}s saved to {combined_crm_path}")
     else:
         print("No CRM files found to combine.")
     if proc_dfs:
+        # Filter non-empty before concat to avoid FutureWarning
+        proc_dfs = [df for df in proc_dfs if not df.empty]
         combined_proc = pd.concat(proc_dfs, ignore_index=True)
         if transaction_type == "withdrawal":
             combined_proc = group_processor_withdrawals(combined_proc, exchange_rate_map)
@@ -1533,7 +1481,7 @@ def combine_processed_files(
         # Reorder columns, using only those that exist
         existing_proc_columns = combined_proc.columns.tolist()
         combined_proc = combined_proc[[col for col in custom_proc_columns if col in existing_proc_columns]]
-        out_proc_date_dir = out_proc_dir / date
+        out_proc_date_dir = out_proc_dir / date # Removed regulation.upper()
         out_proc_date_dir.mkdir(parents=True, exist_ok=True)
         combined_proc_path = out_proc_date_dir / f"combined_processor_{transaction_type}s.xlsx"
         combined_proc.to_excel(combined_proc_path, index=False)
@@ -1541,35 +1489,28 @@ def combine_processed_files(
         print(f"Combined proc columns: {combined_proc.columns.tolist()}") # Debug print
     else:
         print("No processor files found to combine.")
-
-def append_unmatched_to_combined(date_str, unmatched_path_str):
-    combined_path = Path(COMBINED_CRM_DIR) / date_str / "combined_crm_deposits.xlsx"
+def append_unmatched_to_combined(date_str, unmatched_path_str, regulation: str, combined_crm_dir=None):
+    combined_crm_dir = combined_crm_dir or config.COMBINED_CRM_DIR
+    combined_path = combined_crm_dir / date_str / "combined_crm_deposits.xlsx" # Removed regulation.upper()
     unmatched_path = Path(unmatched_path_str)
-
     if not combined_path.exists():
         logging.info(f"Combined CRM file not found: {combined_path}")
         return
     if not unmatched_path.exists():
         logging.info(f"Unmatched shifted deposits file not found: {unmatched_path}")
         return
-
     df_combined = pd.read_excel(combined_path, dtype={'crm_transaction_id': str})
     df_unmatched = pd.read_excel(unmatched_path, dtype={'crm_transaction_id': str})
-
     combined_cols = set(df_combined.columns)
     unmatched_cols = set(df_unmatched.columns)
     if combined_cols != unmatched_cols:
         logging.warning(f"Column mismatch between combined ({combined_cols}) and unmatched ({unmatched_cols}). Appending anyway.")
-
     existing_ids = set(df_combined['crm_transaction_id'].dropna().unique())
-
     if 'crm_transaction_id' in df_unmatched.columns:
         df_unmatched_to_append = df_unmatched[~df_unmatched['crm_transaction_id'].isin(existing_ids)]
     else:
         df_unmatched_to_append = df_unmatched
-
     logging.info(f"Rows to append after filtering: {df_unmatched_to_append.shape[0]}")
-
     if not df_unmatched_to_append.empty:
         df_updated = pd.concat([df_combined, df_unmatched_to_append], ignore_index=True)
         if 'crm_date' in df_updated.columns:
@@ -1578,7 +1519,6 @@ def append_unmatched_to_combined(date_str, unmatched_path_str):
         key_cols = ['crm_transaction_id', 'crm_tp', 'crm_email', 'crm_amount']
         df_updated = df_updated.drop_duplicates(subset=[col for col in key_cols if col in df_updated.columns])
         logging.info(f"Updated combined_crm_deposits shape after append and dedup: {df_updated.shape}")
-
         with pd.ExcelWriter(combined_path, engine='openpyxl') as writer:
             df_updated.to_excel(writer, index=False, sheet_name='Sheet1')
             if 'crm_transaction_id' in df_updated.columns:

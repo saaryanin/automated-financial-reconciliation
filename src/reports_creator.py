@@ -1,222 +1,175 @@
-import logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-import time
-import warnings
-import shutil
-from src.preprocess_test import process_files_in_parallel, combine_processed_files,append_unmatched_to_combined
-from src.config import CRM_DIR, PROCESSOR_DIR, DATA_DIR, PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, RATES_DIR
+# testing_uk_regulation.py (updated to append previous unmatched shifted deposits to raw CRM for deposits)
+# testing_uk_regulation.py (updated)
 import pandas as pd
-import numpy as np
-from src.withdrawals_matcher import ReconciliationEngine
-from src.utils import (setup_logger, load_excel_if_exists, safe_concat, drop_cols
-)
-from src.shifts_handler import main as handle_shifts
-import sys
-from src.files_renamer import run_renamer  # Import the renamer
-import re
-from collections import defaultdict
+from pathlib import Path
+import shutil
+import src.config as config
+from src.preprocess_test import load_crm_file, load_processor_file, combine_processed_files, process_files_in_parallel, PSP_NAME_MAP, process_crm_subset, extract_crm_transaction_id
+from concurrent.futures import ThreadPoolExecutor
+from src.config import BASE_DIR, TEMP_DIR
+import time
+from src.utils import categorize_regulation, get_previous_business_day
+from src.deposits_matcher_test import match_deposits_for_date
+from src.shifts_handler_test import main as handle_shifts
+from src.withdrawals_matcher_test import match_withdrawals_for_date,run_cross_processor_matching
+from src.cross_regulation_matcher import run_cross_regulation_matching
+from src.files_renamer import run_renamer  # Added import for files_renamer
 
-# Suppress openpyxl and pandas warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
-warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
-
-def main(date=None):
+def setup_regulation_structure(regulation, processors):
     start_time = time.time()
-
-    # Clear DATA_DIR contents (as before)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)  # Ensure exists
-    lists_dir = LISTS_DIR  # Full path from config
-    rates_dir = RATES_DIR
-
-    for item in list(DATA_DIR.iterdir()):  # Use list() to avoid modification-during-iteration
-        if item.is_dir():
-            if item == lists_dir or item == rates_dir:
-                continue  # Skip entirely (preserve contents + dir)
-            # Clear contents only (unlink files, rmtree child dirs), leave empty dir intact for later mkdir-free moves
-            for child in list(item.iterdir()):
-                if child.is_dir():
-                    shutil.rmtree(child)
-                    print(f"Cleared child dir {child} in {item}")
-                else:
-                    child.unlink()
-                    print(f"Removed child file {child} in {item}")
-            print(f"Cleared contents of {item} to prevent stale file bleed")
-        elif item.is_file():
-            item.unlink()
-            print(f"Removed stray file {item} in DATA_DIR")
-
-    # --- Configuration ---
-    if date is None:
-        date = sys.argv[1] if len(sys.argv) > 1 else "2025-03-24"  # Default only for standalone
-    PROCESSORS = ["paypal", "safecharge", "powercash", "shift4", "skrill", "trustpayments", "neteller", "zotapay", "bitpay", "ezeebill", "paymentasia"]
-
-    # NEW: Clear any stale report_dir for this date to prevent bleed from previous runs
-    report_dir = LISTS_DIR / date
-    if report_dir.exists():
-        shutil.rmtree(report_dir)
-        print(f"Removed old report dir {report_dir} to prevent stale matching file bleed")
-    report_dir.mkdir(parents=True, exist_ok=True)
-
-    # --- Activate Renamer with Forced Date ---
-    run_renamer(forced_date=date)
-
-    # --- Step 1: Gather files (use DATE for all) ---
-    crm_files = list(CRM_DIR.glob(f"crm_{date}.*"))
-    paypal_files = list(PROCESSOR_DIR.glob(f"paypal_{date}.*"))
-    safecharge_files = list(PROCESSOR_DIR.glob(f"safecharge_{date}.*"))
-    powercash_files = list(PROCESSOR_DIR.glob(f"powercash_{date}.*"))
-    shift4_files = list(PROCESSOR_DIR.glob(f"shift4_{date}.*"))
-    skrill_files = list(PROCESSOR_DIR.glob(f"skrill_{date}.*"))
-    trustpayments_files = list(PROCESSOR_DIR.glob(f"trustpayments_{date}.*"))
-    neteller_files = list(PROCESSOR_DIR.glob(f"neteller_{date}.*"))
-    zotapay_files = list(PROCESSOR_DIR.glob(f"zotapay_{date}.*"))
-    bitpay_files = list(PROCESSOR_DIR.glob(f"bitpay_{date}.*"))
-    ezeebill_files = list(PROCESSOR_DIR.glob(f"ezeebill_{date}.*"))
-    paymentasia_deposits_files = list(PROCESSOR_DIR.glob(f"paymentasia_deposits_{date}.*"))
-    paymentasia_withdrawals_files = list(PROCESSOR_DIR.glob(f"paymentasia_withdrawals_{date}.*"))
-
-    if not any([paypal_files, safecharge_files, powercash_files, shift4_files, skrill_files,
-                trustpayments_files, neteller_files, zotapay_files, bitpay_files, ezeebill_files,
-                paymentasia_deposits_files, paymentasia_withdrawals_files]):
-        raise FileNotFoundError(f"No processor raw files found for the given date {date}.")
-
-    # --- Deposits Processing ---
-
-    # --- Step 2: Preprocess processor files for deposits ---
-    process_files_in_parallel(paypal_files, processor_name="paypal", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(safecharge_files, processor_name="safecharge", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(powercash_files, processor_name="powercash", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(shift4_files, processor_name="shift4", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(skrill_files, processor_name="skrill", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(trustpayments_files, processor_name="trustpayments", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(neteller_files, processor_name="neteller", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(zotapay_files, processor_name="zotapay", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(bitpay_files, processor_name="bitpay", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(ezeebill_files, processor_name="ezeebill", is_crm=False, transaction_type="deposit")
-    process_files_in_parallel(paymentasia_deposits_files, processor_name="paymentasia", is_crm=False, transaction_type="deposit")
-
-    # --- Step 3: Preprocess CRM files for deposits ---
-    for processor in PROCESSORS:
-        process_files_in_parallel(crm_files, processor_name=processor, is_crm=True, transaction_type="deposit")
-
-    # --- Step 3.5: Combine processed files for deposits ---
+    dirs = config.setup_dirs_for_reg(regulation, create=True)
+    reg_crm_filepath = dirs['crm_dir'] / f"crm_{date_str}.xlsx"
+    if not reg_crm_filepath.exists():
+        print(f"CRM file not found at {reg_crm_filepath}")
+        exit(1)
+    end_time = time.time()
+    print(f"Setup for {regulation.upper()} took {end_time - start_time:.2f} seconds")
+    return {
+        **dirs,
+        'crm_filepath': reg_crm_filepath
+    }
+date_str = '2025-10-20'
+row_processors = [
+    'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
+    'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
+]
+uk_processors = [
+    'safechargeuk', 'barclays', 'barclaycard'
+]
+def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None):
+    start_time = time.time()
+    processors = row_processors if regulation == 'row' else uk_processors
+    if dirs is None:
+        dirs = setup_regulation_structure(regulation, processors)
+    crm_df = pd.read_excel(dirs['crm_filepath'], engine="openpyxl")
+    crm_df.columns = crm_df.columns.str.strip()
+    if transaction_type == 'deposit':
+        previous_date_str = get_previous_business_day(date_str)
+        prev_unmatched_path = dirs['lists_dir'] / previous_date_str / f"{regulation}_unmatched_shifted_deposits.xlsx"
+        if prev_unmatched_path.exists():
+            prev_df = pd.read_excel(prev_unmatched_path, engine="openpyxl")
+            prev_df.columns = prev_df.columns.str.strip()
+            crm_df = pd.concat([crm_df, prev_df], ignore_index=True)
+            print(f"Appended {len(prev_df)} rows from previous unmatched shifted deposits for {regulation}")
+    crm_df['regulation'] = crm_df['Site (Account) (Account)'].apply(categorize_regulation)
+    if regulation == 'row':
+        row_regs = ['mauritius', 'cyprus', 'australia']
+        crm_df = crm_df[crm_df['regulation'].isin(row_regs)]
+        mask_aus = crm_df['regulation'] == 'australia'
+        mask_psp = crm_df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
+        crm_df = crm_df[~(mask_aus & mask_psp)]
+    elif regulation == 'uk':
+        crm_df = crm_df[crm_df['regulation'] == 'uk']
+    crm_df["PSP name"] = crm_df["PSP name"].astype(str).str.strip().str.lower().replace(PSP_NAME_MAP)
+    if regulation == 'uk':
+        crm_df["PSP name"] = crm_df["PSP name"].replace({'safecharge': 'safechargeuk'})
+    # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
+    neteller_mask = crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+    crm_df.loc[neteller_mask, "PSP name"] = "neteller"
+    name_mask = crm_df["Name"].str.lower() == transaction_type
+    unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
+    filtered_processors = [p for p in processors if p in unique_psps]
+    if regulation == 'uk':
+        additional_psps = [p for p in row_processors if p not in ['safecharge'] and p in unique_psps]
+        filtered_processors += additional_psps
+    filtered_processors = list(set(filtered_processors)) # Dedup
+    potential_processors = processors
+    if regulation == 'uk':
+        potential_processors += [p for p in row_processors if p not in ['safecharge']]
+    for proc in potential_processors:
+        for ext in ['xlsx', 'csv', 'xls']:
+            proc_file = dirs['processor_dir'] / f"{proc}_{date_str}.{ext}"
+            if proc_file.exists() and proc not in filtered_processors:
+                filtered_processors.append(proc)
+                break
+    # Data validation: Check for missing 'Name' or 'PSP name'
+    invalid_rows = crm_df[crm_df['Name'].isna() | crm_df['PSP name'].isna()]
+    if not invalid_rows.empty:
+        print(
+            f"Warning: {len(invalid_rows)} CRM rows with missing 'Name' or 'PSP name' in {regulation.upper()} - dropping them.")
+        # Optionally save to a file for review:
+        # invalid_rows.to_excel(dirs['lists_dir'] / f"{regulation}_invalid_crm_rows.xlsx", index=False)
+    crm_df = crm_df.dropna(subset=['Name', 'PSP name'])
+    crm_start = time.time()
+    processed_crm_dfs = []
+    for proc in filtered_processors:
+        mask = crm_df["Name"].str.lower() == transaction_type
+        psp_mask = crm_df["PSP name"] == proc
+        subset = crm_df[mask & psp_mask].copy()
+        if regulation == 'uk' and proc == 'safechargeuk':
+            subset["PSP name"] = 'safecharge'
+        processed_subset = process_crm_subset(subset, proc, regulation, transaction_type, True, dirs['processed_crm_dir'], date_str)
+        if processed_subset is not None:
+            processed_crm_dfs.append(processed_subset)
+    crm_end = time.time()
+    print(f"CRM processing for {regulation.upper()} {transaction_type} took {crm_end - crm_start:.2f} seconds")
+    proc_start = time.time()
+    processor_file_paths = []
+    for proc in filtered_processors:
+        for ext in ['xlsx', 'csv', 'xls']:
+            proc_file = dirs['processor_dir'] / f"{proc}_{date_str}.{ext}"
+            if proc_file.exists():
+                processor_file_paths.append(proc_file)
+                break
+        else:
+            processor_file_paths.append(None)
+    processed_proc_dfs = process_files_in_parallel(processor_file_paths, processor_names=filtered_processors, is_crm=False, save_clean=True, transaction_type=transaction_type, regulation=regulation,
+                                                   processed_processor_dir=dirs['processed_processor_dir'])
+    proc_end = time.time()
+    print(f"Processor processing for {regulation.upper()} {transaction_type} took {proc_end - proc_start:.2f} seconds")
+    # Special combine for zotapay and paymentasia for withdrawals
+    if transaction_type == 'withdrawal' and 'zotapay' in filtered_processors and 'paymentasia' in filtered_processors:
+        zotapay_file = dirs['processed_processor_dir'] / "zotapay" / date_str / "zotapay_withdrawals.xlsx"
+        paymentasia_file = dirs['processed_processor_dir'] / "paymentasia" / date_str / "paymentasia_withdrawals.xlsx"
+        combined_out_dir = dirs['processed_processor_dir'] / "zotapay_paymentasia" / date_str
+        combined_out_file = combined_out_dir / "zotapay_paymentasia_withdrawals.xlsx"
+        zota_df = pd.read_excel(zotapay_file) if zotapay_file.exists() else pd.DataFrame()
+        pa_df = pd.read_excel(paymentasia_file) if paymentasia_file.exists() else pd.DataFrame()
+        combined_df = pd.concat([zota_df, pa_df], ignore_index=True)
+        if not combined_df.empty:
+            combined_out_dir.mkdir(parents=True, exist_ok=True)
+            combined_df.to_excel(combined_out_file, index=False)
+            print(f"Combined Zotapay + PaymentAsia withdrawals saved to {combined_out_file}")
+    combine_start = time.time()
+    # Combine using filtered_processors
+    extra_processors = ['zotapay_paymentasia'] if transaction_type == 'withdrawal' and 'zotapay' in filtered_processors and 'paymentasia' in filtered_processors else []
     combine_processed_files(
-        date=date,
-        processors=PROCESSORS,
-        transaction_type="deposit",
-        exchange_rate_map={},  # Load rates if needed, else empty dict
+        date_str,
+        filtered_processors,
+        processed_crm_dir=dirs['processed_crm_dir'],
+        processed_proc_dir=dirs['processed_processor_dir'],
+        out_crm_dir=dirs['combined_crm_dir'],
+        out_proc_dir=dirs['processed_processor_dir'] / "combined",
+        transaction_type=transaction_type,
+        regulation=regulation,
+        crm_dir=dirs['crm_dir'],
+        extra_processors=extra_processors
     )
-    unmatched_shifted_path = str(PROCESSED_CRM_DIR / "unmatched_shifted_deposits" / date / "unmatched_shifted_deposits.xlsx")
-    append_unmatched_to_combined(date, unmatched_shifted_path)
+    combine_end = time.time()
+    print(f"Combining for {regulation.upper()} {transaction_type} took {combine_end - combine_start:.2f} seconds")
+    end_time = time.time()
+    print(f"Preprocessed and combined {transaction_type}s for {regulation.upper()} regulation saved successfully. Total time: {end_time - start_time:.2f} seconds.")
+if __name__ == "__main__":
+    # Run the renamer first to process raw files into regulation-specific dirs
+    run_renamer(forced_date=date_str)  # Optionally pass forced_date if needed for fallback
 
-
-    # --- Step 4: Generate deposits matching report ---
-    combined_crm_path_deposits = PROCESSED_CRM_DIR / "combined" / date / "combined_crm_deposits.xlsx"
-    combined_proc_path_deposits = PROCESSED_PROCESSOR_DIR / "combined" / date / "combined_processor_deposits.xlsx"
-
-    crm_df_deposits = pd.read_excel(combined_crm_path_deposits, dtype={'crm_transaction_id': str})
-    proc_df_deposits = pd.read_excel(combined_proc_path_deposits, dtype={'proc_transaction_id': str})
-
-    # Match by transaction_id (exact match)
-    matched_deposits = pd.merge(crm_df_deposits, proc_df_deposits, left_on='crm_transaction_id', right_on='proc_transaction_id', how='inner', suffixes=('_crm', '_proc'))
-    matched_deposits['match_status'] = 1
-
-    # Unmatched CRM: add proc columns as NaN
-    unmatched_crm_deposits = crm_df_deposits[~crm_df_deposits['crm_transaction_id'].isin(matched_deposits['crm_transaction_id'])].copy()
-    if not unmatched_crm_deposits.empty:
-        for col in proc_df_deposits.columns:
-            if col not in unmatched_crm_deposits.columns:
-                unmatched_crm_deposits.loc[:, col] = np.nan
-        unmatched_crm_deposits.loc[:, 'match_status'] = 0
-
-    # Unmatched Processor: add crm columns as NaN
-    unmatched_proc_deposits = proc_df_deposits[~proc_df_deposits['proc_transaction_id'].isin(matched_deposits['proc_transaction_id'])].copy()
-    if not unmatched_proc_deposits.empty:
-        for col in crm_df_deposits.columns:
-            if col not in unmatched_proc_deposits.columns:
-                unmatched_proc_deposits.loc[:, col] = np.nan
-        unmatched_proc_deposits.loc[:, 'match_status'] = 0
-
-    # Combine all: matched + unmatched_crm + unmatched_proc
-    dfs = [df for df in [matched_deposits, unmatched_crm_deposits, unmatched_proc_deposits] if not df.empty]
-    if dfs:
-        all_rows_deposits = pd.concat(dfs, ignore_index=True)
-    else:
-        all_rows_deposits = pd.DataFrame()
-    all_rows_deposits = all_rows_deposits.sort_values(by='match_status', ascending=False)
-
-    columns = list(all_rows_deposits.columns)
-    if 'crm_type' in columns:
-        columns.insert(0, columns.pop(columns.index('crm_type')))
-    all_rows_deposits = all_rows_deposits[columns]
-
-
-    # Save to Excel
-    report_path_deposits = report_dir / "deposits_matching.xlsx"
-
-    with pd.ExcelWriter(report_path_deposits, engine='openpyxl') as writer:
-        all_rows_deposits.to_excel(writer, sheet_name='Deposits_Matching', index=False)
-
-    print(f" Deposits matching report saved to {report_path_deposits}")
-
-    # --- Apply Shifts Handler ---
-    matched_sums = handle_shifts(date)
+    overall_start = time.time()
+    for reg in ['row', 'uk']:
+        processors = row_processors if reg == 'row' else uk_processors
+        dirs = setup_regulation_structure(reg, processors)
+        preprocess_for_regulation(reg, 'deposit', dirs=dirs)
+        preprocess_for_regulation(reg, 'withdrawal', dirs=dirs)
+    overall_end = time.time()
+    print(f"Overall processing time: {overall_end - overall_start:.2f} seconds")
+    match_deposits_for_date(date_str)
+    matched_sums = handle_shifts(date_str)
     if matched_sums:
         print("Matched Shifted Deposits by Currency:")
-        for currency, amount in matched_sums.items():
-            print(f"{currency}: {amount}")
-
-    # --- Withdrawals Processing ---
-
-    logger = setup_logger('TrainingGenerator', logging.INFO)
-
-    processor_filetypes = {
-        "safecharge": ".xlsx",
-        "paypal": ".csv",
-        "powercash": ".csv",
-        "shift4": ".csv",
-        "skrill": ".csv",
-        "neteller": ".csv",
-        "bitpay": ".csv",
-        "zotapay": ".csv",
-        "paymentasia": ".csv",
-        "trustpayments": ".csv"
-    }
-
-    # --- Preprocess files for withdrawals ---
-    for proc in PROCESSORS:
-        crm_file = CRM_DIR / f"crm_{date}.xlsx"
-        proc_ext = processor_filetypes.get(proc, ".csv")
-        processor_file = PROCESSOR_DIR / f"{proc}_{date}{proc_ext}"
-
-        print(f"Preprocessing CRM file for {proc}...")
-        process_files_in_parallel([crm_file], processor_name=proc, is_crm=True, save_clean=True, transaction_type="withdrawal")
-
-        if processor_file.exists():
-            print(f"Preprocessing processor file for {proc}...")
-            process_files_in_parallel([processor_file], processor_name=proc, is_crm=False, save_clean=True, transaction_type="withdrawal")
-        else:
-            print(f"Processor file for {proc} not found.")
-
-    # --- Combine Zotapay and PaymentAsia files for withdrawals ---
-    zotapay_file = PROCESSED_PROCESSOR_DIR / "zotapay" / date / "zotapay_withdrawals.xlsx"
-    paymentasia_file = PROCESSED_PROCESSOR_DIR / "paymentasia" / date / "paymentasia_withdrawals.xlsx"
-    combined_out_dir = PROCESSED_PROCESSOR_DIR / "zotapay_paymentasia" / date
-    combined_out_file = combined_out_dir / "zotapay_paymentasia_withdrawals.xlsx"
-
-    zota_df = load_excel_if_exists(zotapay_file)
-    pa_df = load_excel_if_exists(paymentasia_file)
-    zota_pa_dfs = [zota_df, pa_df]
-    if safe_concat(zota_pa_dfs).shape[0]:
-        combined_df = safe_concat(zota_pa_dfs, ignore_index=True)
-        combined_out_dir.mkdir(parents=True, exist_ok=True)
-        combined_df.to_excel(combined_out_file, index=False)
-        print(f"Combined Zotapay + PaymentAsia withdrawals saved to {combined_out_file}")
-    else:
-        print("No Zotapay or PaymentAsia files found to combine.")
-
-    # --- Load exchange rates ---
-    rates_path = DATA_DIR / "rates" / f"rates_{date}.csv"
+        for reg, sums in matched_sums.items():
+            print(f"{reg.upper()}:")
+            for currency, amount in sums.items():
+                print(f" {currency}: {amount}")
+    rates_path = BASE_DIR / "data" / "rates" / f"rates_{date_str}.csv"
     if rates_path.exists():
         rates_df = pd.read_csv(rates_path)
         rates_df['from_currency'] = rates_df['from_currency'].str.strip()
@@ -227,157 +180,7 @@ def main(date=None):
         }
     else:
         exchange_rate_map = {}
-
-    # --- Combine all processed files for withdrawals ---
-    combine_processed_files(
-        date=date,
-        processors=PROCESSORS + ['zotapay_paymentasia'],
-        processed_crm_dir=PROCESSED_CRM_DIR,
-        processed_proc_dir=PROCESSED_PROCESSOR_DIR,
-        transaction_type="withdrawal",
-        exchange_rate_map=exchange_rate_map
-    )
-
-    # --- Load combined data for withdrawals matching ---
-    combined_crm_path_withdrawals = PROCESSED_CRM_DIR / "combined" / date / "combined_crm_withdrawals.xlsx"
-    combined_proc_path_withdrawals = PROCESSED_PROCESSOR_DIR / "combined" / date / "combined_processor_withdrawals.xlsx"
-
-    crm_df_withdrawals = load_excel_if_exists(combined_crm_path_withdrawals)
-    processor_df_withdrawals = load_excel_if_exists(combined_proc_path_withdrawals)
-
-    if crm_df_withdrawals is None or processor_df_withdrawals is None:
-        print("No valid combined CRM or processor files found for withdrawals. Skipping.")
-    else:
-        # --- Reconciliation for withdrawals ---
-        engine = ReconciliationEngine(
-            exchange_rate_map, config={
-                'enable_cross_processor': True,
-                'enable_warning_flag': True
-            }
-        )
-        crm_df_non_cancelled = crm_df_withdrawals[crm_df_withdrawals['crm_type'].str.lower() != 'withdrawal cancelled']
-
-        matches = engine.match_withdrawals(crm_df_non_cancelled, processor_df_withdrawals)
-        report = engine.generate_report()
-        print("\n" + "="*80)
-        print(report)
-        print("="*80 + "\n")
-
-        # --- Prepare output dataframe for withdrawals ---
-        matches_df = pd.DataFrame(matches)
-
-        # Add payment_method column (position will be handled by desired_columns selection later)
-        matches_df['payment_method'] = np.nan
-
-        # Assign payment_method for non-cancelled CRM rows (matched/unmatched), assuming order preserved from input
-        crm_rows_count = len(crm_df_non_cancelled)
-        if len(matches_df) >= crm_rows_count and not crm_df_non_cancelled.empty:
-            pm_col_idx = matches_df.columns.get_loc('payment_method')
-            matches_df.iloc[:crm_rows_count, pm_col_idx] = crm_df_non_cancelled['payment_method'].values
-            print(f"Assigned payment_method for {crm_rows_count} non-cancelled rows")
-
-        desired_columns = [
-            'crm_type', 'crm_date', 'crm_email', 'crm_firstname', 'crm_lastname', 'crm_tp', 'crm_last4', 'crm_currency', 'crm_amount',
-            'payment_method',
-            'crm_processor_name',
-            'regulation',
-            'proc_date', 'proc_email', 'proc_tp', 'proc_firstname', 'proc_lastname', 'proc_last4', 'proc_currency',
-            'proc_amount', 'proc_amount_crm_currency', 'proc_processor_name',
-            'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
-            'payment_status', 'warning', 'comment'
-        ]
-
-        matches_df = matches_df[[c for c in desired_columns if c in matches_df.columns]]
-
-        # Parse the report to add comments for Rule 4 warnings
-        report = str(report)  # Ensure report is string to avoid AttributeError
-        unmatched_by_last4 = defaultdict(list)
-        matched_by_last4 = defaultdict(list)
-        # Parse unmatched
-        for match in re.finditer(r'Row (\d+) breaks Rule 4: Unmatched-processor last4 ([\d.]+) found in CRM last4s', report):
-            row_num = int(match.group(1))
-            last4 = match.group(2).rstrip('.0')
-            unmatched_by_last4[last4].append(row_num)
-        # Parse propagation
-        for match in re.finditer(r'Row (\d+) breaks Rule 4 propagation: Matching last4 ([\d.]+)', report):
-            row_num = int(match.group(1))
-            last4 = match.group(2).rstrip('.0')
-            matched_by_last4[last4].append(row_num)
-
-        for last4, unmatched_rows in unmatched_by_last4.items():
-            matched_rows = matched_by_last4.get(last4, [])
-            if matched_rows:
-                matched_str = ', '.join([f"row {r}" for r in matched_rows]) if len(matched_rows) > 1 else f"row {matched_rows[0]}"
-                comment = f"Matched the same last4 :{last4} in {matched_str}"
-                for u_row in unmatched_rows:
-                    idx = u_row - 1
-                    current = matches_df.at[idx, 'comment']
-                    new_com = current + ' . ' + comment if pd.notna(current) and current else comment
-                    matches_df.at[idx, 'comment'] = new_com
-
-                unmatched_str = ', '.join([f"row {r}" for r in unmatched_rows]) if len(unmatched_rows) > 1 else f"row {unmatched_rows[0]}"
-                comment_m = f"Matched the same last4 :{last4} in {unmatched_str}"
-                for m_row in matched_rows:
-                    idx = m_row - 1
-                    current = matches_df.at[idx, 'comment']
-                    new_com = current + ' . ' + comment_m if pd.notna(current) and current else comment_m
-                    matches_df.at[idx, 'comment'] = new_com
-
-        # --- Append cancellations ---
-        cancelled = engine.make_cancelled_rows(crm_df_withdrawals)
-        if cancelled and len(cancelled) > 0:  # Explicit non-empty list check
-            cancelled_df = pd.DataFrame(cancelled)  # Convert list-of-dicts to DF
-            if not cancelled_df.empty:
-                # Add payment_method column for cancelled rows, assuming order preserved from filtered CRM cancelled rows
-                cancelled_df['payment_method'] = np.nan
-                cancelled_crm_mask = crm_df_withdrawals['crm_type'].str.lower() == 'withdrawal cancelled'
-                cancelled_crm_df = crm_df_withdrawals[cancelled_crm_mask].copy()
-                if len(cancelled_df) == len(cancelled_crm_df):
-                    pm_col_idx_cancel = cancelled_df.columns.get_loc('payment_method')
-                    cancelled_df.iloc[:, pm_col_idx_cancel] = cancelled_crm_df['payment_method'].values
-                    print(f"Assigned payment_method for {len(cancelled_df)} cancelled rows")
-                # Ensure desired columns for cancelled_df to match on concat
-                cancelled_df = cancelled_df[[c for c in desired_columns if c in cancelled_df.columns]]
-                # Append merged directly (no raw append needed)
-                if 'comment' in matches_df.columns:
-                    non_cancelled_mask = ~matches_df['comment'].str.contains('cancelled', na=False, regex=False)
-                    matches_df = pd.concat([matches_df[non_cancelled_mask], cancelled_df], ignore_index=True)
-                else:
-                    matches_df = pd.concat([matches_df, cancelled_df], ignore_index=True)  # Fallback if no comment col
-                print(f"Appended {len(cancelled_df)} cancelled rows with payment_method")
-
-        # --- Fix: Populate regulation using crm_index if available and regulation is missing ---
-        if 'crm_index' in matches_df.columns and 'regulation' not in matches_df.columns:
-            matches_df = matches_df.merge(crm_df_withdrawals[['regulation']], left_on='crm_index', right_index=True, how='left')
-
-        matches_df = drop_cols(matches_df, ['matched_proc_indices'])
-
-        #Adding a crm_type column to withdrawals_matching report
-        matches_df['crm_type'] = ''
-        matches_df.loc[matches_df['crm_email'].notna(), 'crm_type'] = 'Withdrawal'
-        matches_df.loc[matches_df[
-                           'comment'] == 'Withdrawal cancelled with no matching withdrawal found', 'crm_type'] = 'Withdrawal Cancelled'
-        columns = list(matches_df.columns)
-        columns.insert(0, columns.pop(columns.index('crm_type')))
-        matches_df = matches_df[columns]
-
-        # --- Save withdrawals matching report ---
-        report_path_withdrawals = report_dir / "withdrawals_matching.xlsx"
-        with pd.ExcelWriter(report_path_withdrawals, engine='openpyxl') as writer:
-            matches_df.to_excel(writer, sheet_name='Withdrawals_Matching', index=False)
-
-        print(f"Withdrawals matching report saved to {report_path_withdrawals}")
-
-        # --- Diagnostics JSON ---
-        if engine.diagnostics:
-            diag_path = report_path_withdrawals.with_name(f"diagnostics_{date}.json")
-            pd.DataFrame(engine.diagnostics).to_json(diag_path, orient='records', indent=2)
-            print(f"Saved diagnostics to {diag_path}")
-
-        print(f"Saved {len(matches_df)} rows for withdrawals")
-
-    end_time = time.time()
-    print(f"\nTotal time: {end_time - start_time:.2f} seconds")
-
-if __name__ == "__main__":
-    main()
+        print("No rates file found; using empty exchange rate map.")
+    match_withdrawals_for_date(date_str, exchange_rate_map)
+    run_cross_regulation_matching(date_str, exchange_rate_map)
+    run_cross_processor_matching(date_str, exchange_rate_map)

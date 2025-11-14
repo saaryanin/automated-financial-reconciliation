@@ -3,30 +3,32 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QTableWid
 from PyQt5.QtCore import Qt
 import shutil
 import pandas as pd
-from src.config import LISTS_DIR
 import sys
 from src.output import (generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
                 generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
                 remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits, generate_matched_withdrawals,
                 save_unmatched_to_excel,save_matched_to_excel)
 from src.shifts_handler import main as handle_shifts
-from src.config import OUTPUT_DIR
+from src.config import setup_dirs_for_reg
+from pathlib import Path
 
 class FourthWindow(QWidget):
     def __init__(self, date_str):
         super().__init__()
         print("Debug: FourthWindow __init__ started")
         self.date_str = date_str
+        self.regulations = ['uk', 'row']
         self.initUI()
         print("Debug: initUI completed")
         self.run_output_script()
         print("Debug: run_output_script called")
     def initUI(self):
         print("Debug: initUI started")
-        self.setWindowTitle('Processing Output')
+        self.setWindowTitle('Export Daily Reconciliation Reports')
         self.setGeometry(300, 300, 800, 600) # Initial size, will be adjusted dynamically
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
         qr.moveCenter(cp)
         self.move(qr.topLeft())
         layout = QVBoxLayout()
@@ -130,62 +132,59 @@ class FourthWindow(QWidget):
         """)
         print("Debug: initUI finished")
     def populate_shifts_table(self):
-        shifts_path = OUTPUT_DIR / self.date_str / "total_shifts_by_currency.csv"
-        if not shifts_path.exists():
-            print("Debug: Shifts file not found")
+        shifts_data = {}
+        for regulation in self.regulations:
+            dirs = setup_dirs_for_reg(regulation)
+            shifts_path = dirs['output_dir'] / self.date_str / f"{regulation.upper()} total_shifts_by_currency.xlsx"
+            if shifts_path.exists():
+                df = pd.read_excel(shifts_path)
+                if not df.empty:
+                    shifts_data[regulation.upper()] = df.iloc[0].to_dict()
+        if not shifts_data:
+            print("Debug: No shifts files found")
             self.shifts_label.setText("No Shifts Detected")
             self.shifts_label.show()
             self.table_container.hide()
             return
-        try:
-            df = pd.read_csv(shifts_path)
-            if df.empty:
-                print("Debug: Shifts file is empty")
-                self.shifts_label.setText("No Shifts Detected")
-                self.shifts_label.show()
-                self.table_container.hide()
-                return
-            num_currencies = len(df.columns)
-            self.shifts_label.setText(
-                "Total Shifts by Currencies" if num_currencies >= 2 else "Total Shifts by Currency")
-            self.shifts_table.setRowCount(len(df))
-            self.shifts_table.setColumnCount(len(df.columns))
-            self.shifts_table.setHorizontalHeaderLabels(df.columns.tolist())
-            for i in range(len(df)):
-                for j in range(len(df.columns)):
-                    value = df.iloc[i, j]
-                    formatted_value = f"{value:g}"
-                    item = QTableWidgetItem(formatted_value)
-                    item.setTextAlignment(Qt.AlignCenter)
-                    self.shifts_table.setItem(i, j, item)
-            # Resize columns to contents first to get natural widths
-            self.shifts_table.resizeColumnsToContents()
-            # Find the maximum column width to ensure no clipping and equal widths for centering
-            max_width = 0
-            for j in range(self.shifts_table.columnCount()):
-                max_width = max(max_width, self.shifts_table.columnWidth(j))
-            # Set a minimum column width
-            min_col_width = 120
-            col_width = max(max_width, min_col_width)
-            # Set all columns to the same width for symmetric centering
-            for j in range(self.shifts_table.columnCount()):
-                self.shifts_table.setColumnWidth(j, col_width)
-            # Set row height for better visibility but tighter
-            for i in range(len(df)):
-                self.shifts_table.setRowHeight(i, 60)
-            # Calculate and set fixed width for the table to prevent expansion and ensure centering
-            col_sum = sum(self.shifts_table.columnWidth(j) for j in range(self.shifts_table.columnCount()))
-            vheader_w = self.shifts_table.verticalHeader().width()
-            frame_w = self.shifts_table.style().pixelMetric(QStyle.PM_DefaultFrameWidth) * 2
-            desired_w = col_sum + vheader_w + frame_w
-            self.shifts_table.setFixedWidth(desired_w)
-            self.table_container.show()
-        except Exception as e:
-            print(f"Debug: Error populating shifts table: {e}")
-            self.shifts_label.setText("Error Loading Shifts")
-            self.table_container.hide()
+        # Combine into one DF
+        combined_df = pd.DataFrame(shifts_data).T.fillna(0)
+        currencies = combined_df.columns.tolist()
+        self.shifts_label.setText("Total Shifts by Currencies" if len(currencies) >= 2 else "Total Shifts by Currency")
+        self.shifts_label.show()
+        self.shifts_table.setRowCount(len(combined_df))
+        self.shifts_table.setColumnCount(len(currencies) + 1)  # +1 for regulation
+        header_labels = ['Regulation'] + currencies
+        self.shifts_table.setHorizontalHeaderLabels(header_labels)
+        for i, (reg, row) in enumerate(combined_df.iterrows()):
+            # Regulation column
+            item = QTableWidgetItem(reg)
+            item.setTextAlignment(Qt.AlignCenter)
+            self.shifts_table.setItem(i, 0, item)
+            # Currency columns
+            for j, curr in enumerate(currencies):
+                value = row[curr]
+                formatted_value = f"{value:g}"
+                item = QTableWidgetItem(formatted_value)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.shifts_table.setItem(i, j + 1, item)
+        # Resize columns
+        self.shifts_table.resizeColumnsToContents()
+        max_width = 0
+        for j in range(self.shifts_table.columnCount()):
+            max_width = max(max_width, self.shifts_table.columnWidth(j))
+        min_col_width = 120
+        col_width = max(max_width, min_col_width)
+        for j in range(self.shifts_table.columnCount()):
+            self.shifts_table.setColumnWidth(j, col_width)
+        for i in range(len(combined_df)):
+            self.shifts_table.setRowHeight(i, 60)
+        col_sum = sum(self.shifts_table.columnWidth(j) for j in range(self.shifts_table.columnCount()))
+        vheader_w = self.shifts_table.verticalHeader().width()
+        frame_w = self.shifts_table.style().pixelMetric(QStyle.PM_DefaultFrameWidth) * 2
+        desired_w = col_sum + vheader_w + frame_w
+        self.shifts_table.setFixedWidth(desired_w)
+        self.table_container.show()
     def adjust_window_size(self):
-        # Calculate required width based on visible widgets
         margins = self.layout().contentsMargins()
         margin_width = margins.left() + margins.right()
         button_width = self.export_btn.sizeHint().width()
@@ -195,7 +194,6 @@ class FourthWindow(QWidget):
         else:
             label_width = self.shifts_label.sizeHint().width() if self.shifts_label.isVisible() else 0
             window_width = max(button_width, label_width) + margin_width
-        # Calculate required height based on visible widgets
         button_height = self.export_btn.sizeHint().height()
         label_height = self.shifts_label.sizeHint().height() if self.shifts_label.isVisible() else 0
         if self.table_container.isVisible():
@@ -204,13 +202,11 @@ class FourthWindow(QWidget):
             table_height = header_height + total_row_height
         else:
             table_height = 0
-        # Number of widgets: button always, +label if visible, +table if visible
         num_widgets = 1 + (1 if label_height > 0 else 0) + (1 if table_height > 0 else 0)
         num_spacings = max(0, num_widgets - 1)
         margin_height = margins.top() + margins.bottom()
         window_height = button_height + label_height + table_height + self.layout().spacing() * num_spacings + margin_height
         self.resize(window_width, window_height)
-        # Recenter the window
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
@@ -218,94 +214,75 @@ class FourthWindow(QWidget):
         print(f"Debug: Window resized to {window_width}x{window_height}")
 
     def is_perfect_match(self):
-        """Check if deposits and withdrawals matching files indicate perfect reconciliation (all match_status=1) and no shifts."""
-        perfect = True
-        lists_dir = LISTS_DIR / self.date_str
-        deposits_path = lists_dir / "deposits_matching.xlsx"
-        withdrawals_path = lists_dir / "withdrawals_matching.xlsx"
-        shifts_path = OUTPUT_DIR / self.date_str / "total_shifts_by_currency.csv"
-
-        # Check deposits
-        if deposits_path.exists():
-            try:
-                df_d = pd.read_excel(deposits_path)
-                if 'match_status' in df_d.columns:
-                    unmatched_d = (df_d['match_status'] == 0).sum()
-                    if unmatched_d > 0:
-                        perfect = False
-            except Exception as e:
-                print(f"Debug: Error checking deposits: {e}")
-                perfect = False
-
-        # Check withdrawals
-        if withdrawals_path.exists():
-            try:
-                df_w = pd.read_excel(withdrawals_path)
-                if 'match_status' in df_w.columns:
-                    unmatched_w = (df_w['match_status'] == 0).sum()
-                    if unmatched_w > 0:
-                        perfect = False
-            except Exception as e:
-                print(f"Debug: Error checking withdrawals: {e}")
-                perfect = False
-
-        # Check shifts
-        if shifts_path.exists():
-            try:
-                df_s = pd.read_csv(shifts_path)
-                if not df_s.empty:
-                    perfect = False
-            except Exception as e:
-                print(f"Debug: Error checking shifts: {e}")
-
-        return perfect
+        for regulation in self.regulations:
+            dirs = setup_dirs_for_reg(regulation)
+            lists_dir = dirs['lists_dir'] / self.date_str
+            deposits_path = lists_dir / f"{regulation}_deposits_matching.xlsx"
+            withdrawals_path = lists_dir / f"{regulation}_withdrawals_matching.xlsx"
+            shifts_path = dirs['output_dir'] / self.date_str / f"{regulation.upper()} total_shifts_by_currency.xlsx"
+            # Check deposits
+            if deposits_path.exists():
+                try:
+                    df_d = pd.read_excel(deposits_path)
+                    if 'match_status' in df_d.columns and (df_d['match_status'] == 0).any():
+                        return False
+                except Exception as e:
+                    print(f"Debug: Error checking deposits for {regulation}: {e}")
+                    return False
+            # Check withdrawals
+            if withdrawals_path.exists():
+                try:
+                    df_w = pd.read_excel(withdrawals_path)
+                    if 'match_status' in df_w.columns and (df_w['match_status'] == 0).any():
+                        return False
+                except Exception as e:
+                    print(f"Debug: Error checking withdrawals for {regulation}: {e}")
+                    return False
+            # Check shifts
+            if shifts_path.exists():
+                try:
+                    df_s = pd.read_excel(shifts_path)
+                    if not df_s.empty:
+                        return False
+                except Exception as e:
+                    print(f"Debug: Error checking shifts for {regulation}: {e}")
+        return True
 
     def run_output_script(self):
         print("Debug: run_output_script started")
         try:
-            output_dir = OUTPUT_DIR / self.date_str
-            # Clear output/dated except for withdrawals_matching_updated.xlsx
-            if output_dir.exists():
-                files_to_keep = ["withdrawals_matching_updated.xlsx"]
+            matched_sums = handle_shifts(self.date_str)
+            for regulation in self.regulations:
+                dirs = setup_dirs_for_reg(regulation)
+                output_dir = dirs['output_dir'] / self.date_str
+                output_dir.mkdir(parents=True, exist_ok=True)
+                # Clear output_dir except for specific files
+                files_to_keep = [f"{regulation}_warnings_withdrawals.xlsx", "withdrawals_matching_updated.xlsx"]
                 for item in list(output_dir.iterdir()):
                     if item.name not in files_to_keep:
                         if item.is_file():
                             item.unlink()
-                            print(f"Removed file {item} in output/{self.date_str}")
                         else:
                             shutil.rmtree(item)
-                            print(f"Removed dir {item} in output/{self.date_str}")
-            output_dir.mkdir(parents=True, exist_ok=True)  # Ensure dir exists without clearing
-            print(f"Debug: output_dir ensured without rmtree for {self.date_str}")
-
-            # Save shifts CSV (idempotent; re-runs handle_shifts safely)
-            matched_sums = handle_shifts(self.date_str)
-            if matched_sums:
-                output_path = output_dir / "total_shifts_by_currency.csv"
-                df = pd.DataFrame([matched_sums])
-                if not df.empty:
-                    df.to_csv(output_path, index=False)
-                    print(f"Debug: Shifts CSV saved: {output_path}")
-                else:
-                    print("Debug: No shifts data—skipping CSV")
-            else:
-                print("Debug: handle_shifts returned None/empty—skipping CSV")
-
-            # Phase 2: Generate all output files (unmatched/unapproved/etc.)
-            print("Debug: Running phase 2")
-            crm_deps_df = generate_unmatched_crm_deposits(self.date_str)
-            generate_unapproved_crm_deposits(self.date_str)
-            proc_deps_df = generate_unmatched_proc_deposits(self.date_str)
-            proc_wds_df = generate_unmatched_proc_withdrawals(self.date_str)
-            proc_deps_df, proc_wds_df, compensated_deps, compensated_wds = remove_compensated_entries(proc_deps_df, proc_wds_df)
-            crm_wds_df = generate_unmatched_crm_withdrawals(self.date_str)
-            deps_df = generate_matched_deposits(self.date_str, compensated_deps)
-            wds_df = generate_matched_withdrawals(self.date_str, compensated_wds)
-            save_matched_to_excel(self.date_str, deps_df, wds_df)
-            save_unmatched_to_excel(self.date_str, crm_deps_df, crm_wds_df, proc_deps_df, proc_wds_df)
-            print("Debug: Phase 2 complete—all files generated")
-
-            # Now populate UI (table will show if CSV exists)
+                # Save shifts for this regulation if data exists
+                if matched_sums and regulation in matched_sums:
+                    df = pd.DataFrame([matched_sums[regulation]])
+                    if not df.empty:
+                        shifts_path = output_dir / f"{regulation.upper()} total_shifts_by_currency.xlsx"
+                        df.to_excel(shifts_path, index=False)
+                # Generate output files for this regulation
+                lists_dir = dirs['lists_dir']
+                crm_deps_df = generate_unmatched_crm_deposits(self.date_str, lists_dir, regulation)
+                generate_unapproved_crm_deposits(self.date_str, lists_dir, output_dir, regulation)
+                proc_deps_df = generate_unmatched_proc_deposits(self.date_str, lists_dir, regulation)
+                proc_wds_df = generate_unmatched_proc_withdrawals(self.date_str, lists_dir, output_dir, regulation)
+                proc_deps_df, proc_wds_df, compensated_deps, compensated_wds = remove_compensated_entries(proc_deps_df, proc_wds_df)
+                crm_wds_df = generate_unmatched_crm_withdrawals(self.date_str, lists_dir, output_dir, regulation)
+                deps_df = generate_matched_deposits(self.date_str, lists_dir, regulation, compensated_deps)
+                wds_df = generate_matched_withdrawals(self.date_str, regulation, lists_dir, output_dir, compensated_wds)
+                save_matched_to_excel(self.date_str, regulation, deps_df, wds_df, output_dir)
+                save_unmatched_to_excel(self.date_str, regulation, crm_deps_df, proc_deps_df, crm_wds_df, proc_wds_df, output_dir)
+            # Populate UI
             self.populate_shifts_table()
             self.export_btn.setEnabled(True)
             self.adjust_window_size()
@@ -316,32 +293,32 @@ class FourthWindow(QWidget):
         except Exception as e:
             print(f"Error executing output phase 2: {e}")
             import traceback
-            traceback.print_exc()  # For EXE console debug
+            traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to run output phase 2: {e}")
         print("Debug: run_output_script finished")
     def export_files(self):
         print("Debug: export_files started")
         dest_folder = QFileDialog.getExistingDirectory(self, "Select Folder to Export To")
         if dest_folder:
-            source_folder = OUTPUT_DIR / self.date_str
-            if source_folder.exists():
-                exported_count = 0
-                excluded_files = ["warnings_withdrawals.xlsx", "withdrawals_matching_updated.xlsx"]
-                for file in source_folder.iterdir():
-                    if file.is_file() and file.name not in excluded_files:
-                        shutil.copy(str(file), dest_folder)
-                        exported_count += 1
-                if exported_count > 0:
-                    QMessageBox.information(self, "Success", f"{exported_count} files exported to {dest_folder}")
-                else:
-                    # Check for perfect match for custom alert
-                    if self.is_perfect_match():
-                        alert_msg = "Congratulations! Every row has matched perfectly with no discrepancies or shifts detected. No additional output reports are required for this date."
-                        QMessageBox.information(self, "Perfect Reconciliation", alert_msg)
-                    else:
-                        QMessageBox.warning(self, "No Files", "No files to export (excluding warnings_withdrawals.xlsx and withdrawals_matching_updated.xlsx).")
+            exported_count = 0
+            excluded_files = ["warnings_withdrawals.xlsx", "withdrawals_matching_updated.xlsx"]
+            for regulation in self.regulations:
+                dirs = setup_dirs_for_reg(regulation)
+                source_folder = dirs['output_dir'] / self.date_str
+                if source_folder.exists():
+                    for file in source_folder.iterdir():
+                        if file.is_file() and file.name not in excluded_files:
+                            dest_file = Path(dest_folder) / f"{regulation.upper()}_{file.name}"
+                            shutil.copy(str(file), str(dest_file))
+                            exported_count += 1
+            if exported_count > 0:
+                QMessageBox.information(self, "Success", f"{exported_count} files exported to {dest_folder}")
             else:
-                QMessageBox.warning(self, "Error", f"No files found in output/{self.date_str}")
+                if self.is_perfect_match():
+                    alert_msg = "Congratulations! Every row has matched perfectly with no discrepancies or shifts detected. No additional output reports are required for this date."
+                    QMessageBox.information(self, "Perfect Reconciliation", alert_msg)
+                else:
+                    QMessageBox.warning(self, "No Files", "No files to export (excluding warnings and updated matching).")
         print("Debug: export_files finished")
 if __name__ == "__main__":
     app = QApplication(sys.argv)

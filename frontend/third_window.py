@@ -3,22 +3,24 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import pandas as pd
 import numpy as np
 import re
-from src.config import LISTS_DIR, OUTPUT_DIR
+from src.config import setup_dirs_for_reg
 from src.output import clean_value, format_date, process_comment, generate_warning_withdrawals
 from fourth_window import FourthWindow # Import to open next window
 class ThirdWindow(QWidget):
-    def __init__(self, date_str):
+    def __init__(self, date_str, regulation):
         super().__init__()
         self.date_str = date_str
+        self.regulation = regulation
+        self.dirs = setup_dirs_for_reg(self.regulation)
         self.screen_width = QApplication.desktop().screenGeometry().width()
         self.available_height = QApplication.desktop().availableGeometry().height()
         self.initUI()
-        self.load_thread = LoadWarningsThread(self.date_str)
+        self.load_thread = LoadWarningsThread(self.date_str, self.regulation)
         self.load_thread.dataLoaded.connect(self.on_data_loaded)
         self.load_thread.errorOccurred.connect(self.on_load_error)
         self.load_thread.start()
     def initUI(self):
-        self.setWindowTitle('Review Warning Withdrawals')
+        self.setWindowTitle(f'Review Warning Withdrawals - {self.regulation.upper()}')
         layout = QVBoxLayout()
         layout.setSpacing(10)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -128,12 +130,14 @@ class ThirdWindow(QWidget):
         self.orig_indices = data_dict['orig_indices']
         self.orig_to_local = data_dict['orig_to_local']
         self.original_matching_df = data_dict['original_matching_df']
+        alert_message = f"There are no rows to review in {self.regulation.upper()} regulation"
         if data_dict.get('no_warnings', False):
-            QMessageBox.information(self, "Info", "No warnings file found. Skipping review and proceeding to export.")
+            QMessageBox.information(self, "Info", alert_message)
             self.on_next()  # Auto-proceed if no warnings
             return
         if self.warnings_df.empty:
-            self.add_no_warnings_label()
+            QMessageBox.information(self, "Info", alert_message)
+            self.on_next()  # Auto-proceed if empty
             return
         # Clean processor columns
         columns_to_clean = [
@@ -353,11 +357,6 @@ class ThirdWindow(QWidget):
         QMessageBox.critical(self, "Error", f"Failed to load warnings: {error_msg}")
         self.close()
 
-    def add_no_warnings_label(self):
-        label = QLabel("No warnings to review.")
-        label.setAlignment(Qt.AlignCenter)
-        self.layout.insertWidget(self.layout.count() - 1, label)  # Add before buttons
-        self.adjust_tables_and_window()
     def format_cell_value(self, val, col):
         if pd.isna(val):
             return ''
@@ -575,7 +574,7 @@ class ThirdWindow(QWidget):
         print(f"Removed (accepted) indices: {len(removed_indices)}")
         print(f"Remaining (unselected) indices: {len(remaining_indices)}")
         # Load original matching_df
-        original_matching_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
+        original_matching_path = self.dirs['lists_dir'] / self.date_str / f"{self.regulation}_withdrawals_matching.xlsx"
         matching_df = pd.read_excel(original_matching_path)
         # Update accepted rows: for differ/cross, set directly
         for idx in removed_indices:
@@ -671,30 +670,35 @@ class ThirdWindow(QWidget):
         print(f"Unselected CRM splits: {sum(1 for r in unselected_split_rows if pd.notna(r.get('crm_email')))}")
         print(f"Unselected Proc splits: {sum(1 for r in unselected_split_rows if pd.notna(r.get('proc_email')))}")
         # Save updated matching_df
-        output_dir = OUTPUT_DIR / self.date_str
+        output_dir = self.dirs['output_dir'] / self.date_str
         updated_matching_path = output_dir / "withdrawals_matching_updated.xlsx"
         matching_df.to_excel(updated_matching_path, index=False)
         print(f"Updated matching saved to {updated_matching_path}")
         print("Processing complete. Opening export window.")
         # Reorder: Create/show fourth BEFORE close (keeps app alive during init)
-        self.fourth_window = FourthWindow(self.date_str)
-        self.fourth_window.show()
-        print("Debug: Fourth window shown")
-        self.close()  # Now safe—fourth is active
+        if self.regulation == 'uk':
+            self.next_window = ThirdWindow(self.date_str, 'row')
+        else:
+            self.next_window = FourthWindow(self.date_str)
+        self.next_window.show()
+        print("Debug: Next window shown")
+        self.close()  # Now safe—next is active
 class LoadWarningsThread(QThread):
     dataLoaded = pyqtSignal(dict) # Emit dict with processed data
     errorOccurred = pyqtSignal(str) # For error handling
-    def __init__(self, date_str):
+    def __init__(self, date_str, regulation):
         super().__init__()
         self.date_str = date_str
+        self.regulation = regulation
     def run(self):
         try:
-            output_dir = OUTPUT_DIR / self.date_str
+            dirs = setup_dirs_for_reg(self.regulation)
+            output_dir = dirs['output_dir'] / self.date_str
             output_dir.mkdir(parents=True, exist_ok=True)
-            warnings_withdrawals_path = output_dir / "warnings_withdrawals.xlsx"
+            warnings_withdrawals_path = output_dir / f"{self.regulation.upper()} warnings_withdrawals.xlsx"
             if warnings_withdrawals_path.exists():
                 warnings_withdrawals_path.unlink() # Safer than rmtree for single file
-            generate_warning_withdrawals(self.date_str)
+            generate_warning_withdrawals(self.date_str, dirs['lists_dir'], output_dir, self.regulation)
             if not warnings_withdrawals_path.exists():
                 data_dict = {
                     'warnings_df': pd.DataFrame(columns=['crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4', 'proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment', 'crm_date', 'proc_date']),
@@ -705,7 +709,7 @@ class LoadWarningsThread(QThread):
                 self.dataLoaded.emit(data_dict)
                 return
             warnings_df = pd.read_excel(warnings_withdrawals_path)
-            original_path = LISTS_DIR / self.date_str / "withdrawals_matching.xlsx"
+            original_path = dirs['lists_dir'] / self.date_str / f"{self.regulation}_withdrawals_matching.xlsx"
             original_matching_df = pd.read_excel(original_path) if original_path.exists() else pd.DataFrame()
             if not original_matching_df.empty:
                 original_matching_df['crm_amount'] = original_matching_df['crm_amount'].apply(clean_value)

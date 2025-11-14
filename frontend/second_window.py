@@ -4,8 +4,8 @@ import sys
 import re
 from src.reports_creator import main as reports_main
 from src.output import main as output_main
-# from third_window import ThirdWindow
-# from fourth_window import FourthWindow
+from third_window import ThirdWindow
+from fourth_window import FourthWindow
 from src.config import setup_dirs_for_reg
 
 class StdoutRedirector(object):
@@ -14,44 +14,46 @@ class StdoutRedirector(object):
         self.preprocess_count = 0
         self.deposits_match_count = 0
         self.withdrawals_match_count = 0
-        self.output_prepared_count = 0
         self.cross_count = 0
+        self.output_count = 0
+        self.current_progress = 0
 
     def write(self, message):
         cleaned_message = message.strip()
-        # Updated patterns for new output
+        new_progress = self.current_progress
         if "Preprocessed and combined" in cleaned_message:
             self.preprocess_count += 1
-            progress = min(5 * self.preprocess_count, 20)  # Up to 20% for 4 preprocess steps
-            self.progress_bar.setValue(progress)
+            new_progress = min(2 + 4 * self.preprocess_count, 18)  # Slower: 6,10,14,18 for 4 steps
         elif "Deposits matching report saved to" in cleaned_message:
             self.deposits_match_count += 1
             if self.deposits_match_count == 1:
-                self.progress_bar.setValue(30)
+                new_progress = 22
             elif self.deposits_match_count == 2:
-                self.progress_bar.setValue(40)
+                new_progress = 26
         elif "Matched Shifted Deposits by Currency:" in cleaned_message:
-            self.progress_bar.setValue(45)
+            new_progress = 30
         elif re.search(r"(No Zotapay or PaymentAsia|Combined Zotapay \+ PaymentAsia)", cleaned_message):
-            self.progress_bar.setValue(50)
+            new_progress = 34
         elif "Withdrawals matching report saved to" in cleaned_message:
             self.withdrawals_match_count += 1
             if self.withdrawals_match_count == 1:
-                self.progress_bar.setValue(60)
+                new_progress = 38
             elif self.withdrawals_match_count == 2:
-                self.progress_bar.setValue(70)
-        elif "Cross-regulation matching" in cleaned_message:  # Adjust if exact print is different
+                new_progress = 42
+        elif "Cross-regulation matching" in cleaned_message:
             self.cross_count += 1
-            self.progress_bar.setValue(75)
-        elif "Cross-processor matching" in cleaned_message:  # Adjust if exact print is different
+            new_progress = 46
+        elif "Cross-processor matching" in cleaned_message:
             self.cross_count += 1
-            self.progress_bar.setValue(80)
+            new_progress = 50
         elif "Overall processing time" in cleaned_message:
-            self.progress_bar.setValue(85)
-        elif "DataFrame prepared for" in cleaned_message or "No unmatched" in cleaned_message:
-            self.output_prepared_count += 1
-            progress = 85 + min(2 * self.output_prepared_count, 15)  # Up to 100% for ~8-10 messages
-            self.progress_bar.setValue(progress)
+            new_progress = 54
+        elif re.search(r"(DataFrame prepared for|saved to|No unmatched|Removed \d+ compensated)", cleaned_message):
+            self.output_count += 1
+            new_progress = min(54 + 3 * self.output_count, 100)  # Spread output to 46%, increment 3% each
+        if new_progress > self.current_progress:
+            self.current_progress = new_progress
+            self.progress_bar.setValue(self.current_progress)
         QApplication.processEvents()  # Update UI immediately
 
     def flush(self):
@@ -170,8 +172,7 @@ class SecondWindow(QWidget):
             self.fourth_window = FourthWindow(self.date_str)
             self.fourth_window.show()
         else:
-            print(f"Debug: Warnings file(s) exist—opening ThirdWindow")
-            self.third_window = ThirdWindow(self.date_str)
+            print(f"Debug: Warnings file(s) exist—opening ThirdWindow for 'uk'")
+            self.third_window = ThirdWindow(self.date_str, 'uk')
             self.third_window.show()
         self.close()  # Close second window regardless
-

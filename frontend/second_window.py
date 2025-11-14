@@ -155,24 +155,6 @@ class SecondWindow(QWidget):
         print("Debug: run_processing_scripts finished")
 
     def open_next_window(self):
-        print("Debug: Checking for warnings files before opening next window")
-        has_warnings = False
-        for reg in ['row', 'uk']:
-            dirs = setup_dirs_for_reg(reg)
-            output_dir = dirs['output_dir'] / self.date_str
-            warnings_path = output_dir / f"{reg.upper()} warnings_withdrawals.xlsx"
-            print(f"Debug: Checking {warnings_path}")
-            if warnings_path.exists():
-                has_warnings = True
-                print(f"Debug: Warnings file found for {reg.upper()}")
-                break
-        if not has_warnings:
-            print(f"Debug: No warnings files found—skipping to fourth_window export")
-            QMessageBox.information(self, "Info", "No warnings file found for any regulation. Skipping review and proceeding to export.")
-            self.fourth_window = FourthWindow(self.date_str)
-            self.fourth_window.show()
-        else:
-            print(f"Debug: Warnings file(s) exist—opening ThirdWindow for 'uk'")
-            self.third_window = ThirdWindow(self.date_str, 'uk')
-            self.third_window.show()
-        self.close()  # Close second window regardless
+        self.third_window = ThirdWindow(self.date_str, 'uk')
+        self.third_window.show()
+        self.close()

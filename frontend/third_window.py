@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QMessageBox, QDesktopWidget, QApplication, QHeaderView, QScrollArea
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 import pandas as pd
 import numpy as np
 import re
@@ -130,14 +130,21 @@ class ThirdWindow(QWidget):
         self.orig_indices = data_dict['orig_indices']
         self.orig_to_local = data_dict['orig_to_local']
         self.original_matching_df = data_dict['original_matching_df']
+
+        # Initialise safe defaults (in case of no warnings / empty file)
+        self.accepted_rows = {}
+        self.other_paired_orig = []
+        # (differ_orig_indices is only used for display – safe to leave uninitialised)
+
         alert_message = f"There are no rows to review in {self.regulation.upper()} regulation"
-        if data_dict.get('no_warnings', False):
+
+        if data_dict.get('no_warnings', False) or self.warnings_df.empty:
             QMessageBox.information(self, "Info", alert_message)
-            self.on_next()  # Auto-proceed if no warnings
+            self.on_next()  # direct call after user clicks OK
             return
         if self.warnings_df.empty:
             QMessageBox.information(self, "Info", alert_message)
-            self.on_next()  # Auto-proceed if empty
+            QTimer.singleShot(0, self.on_next)
             return
         # Clean processor columns
         columns_to_clean = [
@@ -674,15 +681,17 @@ class ThirdWindow(QWidget):
         updated_matching_path = output_dir / "withdrawals_matching_updated.xlsx"
         matching_df.to_excel(updated_matching_path, index=False)
         print(f"Updated matching saved to {updated_matching_path}")
-        print("Processing complete. Opening export window.")
-        # Reorder: Create/show fourth BEFORE close (keeps app alive during init)
+        print("Processing complete.")
+
         if self.regulation == 'uk':
+            print("Opening ROW review window.")
             self.next_window = ThirdWindow(self.date_str, 'row')
         else:
+            print("Opening export window.")
             self.next_window = FourthWindow(self.date_str)
+
         self.next_window.show()
-        print("Debug: Next window shown")
-        self.close()  # Now safe—next is active
+        QTimer.singleShot(0, self.close)  # delayed close – eliminates the 0xC0000409 crash when chaining
 class LoadWarningsThread(QThread):
     dataLoaded = pyqtSignal(dict) # Emit dict with processed data
     errorOccurred = pyqtSignal(str) # For error handling
@@ -690,34 +699,28 @@ class LoadWarningsThread(QThread):
         super().__init__()
         self.date_str = date_str
         self.regulation = regulation
+
     def run(self):
         try:
             dirs = setup_dirs_for_reg(self.regulation)
             output_dir = dirs['output_dir'] / self.date_str
             output_dir.mkdir(parents=True, exist_ok=True)
+
             warnings_withdrawals_path = output_dir / f"{self.regulation.upper()} warnings_withdrawals.xlsx"
-            if warnings_withdrawals_path.exists():
-                warnings_withdrawals_path.unlink() # Safer than rmtree for single file
-            generate_warning_withdrawals(self.date_str, dirs['lists_dir'], output_dir, self.regulation)
-            if not warnings_withdrawals_path.exists():
-                data_dict = {
-                    'warnings_df': pd.DataFrame(columns=['crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4', 'proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4', 'comment', 'crm_date', 'proc_date']),
-                    'orig_indices': np.array([]),
-                    'orig_to_local': {},
-                    'no_warnings': True
-                }
-                self.dataLoaded.emit(data_dict)
-                return
-            warnings_df = pd.read_excel(warnings_withdrawals_path)
             original_path = dirs['lists_dir'] / self.date_str / f"{self.regulation}_withdrawals_matching.xlsx"
+
+            # ALWAYS load and clean the original matching file
             original_matching_df = pd.read_excel(original_path) if original_path.exists() else pd.DataFrame()
             if not original_matching_df.empty:
                 original_matching_df['crm_amount'] = original_matching_df['crm_amount'].apply(clean_value)
                 original_matching_df['proc_amount'] = original_matching_df['proc_amount'].apply(clean_value)
-                original_matching_df['proc_amount_crm_currency'] = original_matching_df['proc_amount_crm_currency'].apply(clean_value)
+                original_matching_df['proc_amount_crm_currency'] = original_matching_df[
+                    'proc_amount_crm_currency'].apply(clean_value)
                 original_matching_df['crm_amount'] = pd.to_numeric(original_matching_df['crm_amount'], errors='coerce')
-                original_matching_df['proc_amount'] = pd.to_numeric(original_matching_df['proc_amount'], errors='coerce')
-                original_matching_df['proc_amount_crm_currency'] = pd.to_numeric(original_matching_df['proc_amount_crm_currency'], errors='coerce')
+                original_matching_df['proc_amount'] = pd.to_numeric(original_matching_df['proc_amount'],
+                                                                    errors='coerce')
+                original_matching_df['proc_amount_crm_currency'] = pd.to_numeric(
+                    original_matching_df['proc_amount_crm_currency'], errors='coerce')
                 original_matching_df['comment'] = original_matching_df['comment'].fillna('').astype(str)
                 str_columns = ['crm_firstname', 'crm_lastname', 'proc_firstname', 'proc_lastname',
                                'crm_email', 'proc_email',
@@ -730,15 +733,38 @@ class LoadWarningsThread(QThread):
                 for col in str_columns:
                     if col in original_matching_df.columns:
                         join = 'email' in col
-                        original_matching_df[col] = original_matching_df[col].apply(lambda x: clean_value(x, join_list=join))
+                        original_matching_df[col] = original_matching_df[col].apply(
+                            lambda x: clean_value(x, join_list=join))
+
+            # No warnings file → treat as no warnings
+            if not warnings_withdrawals_path.exists():
+                data_dict = {
+                    'warnings_df': pd.DataFrame(columns=[
+                        'crm_email', 'crm_amount', 'crm_currency', 'crm_tp', 'crm_processor_name', 'crm_last4',
+                        'proc_email', 'proc_amount', 'proc_currency', 'proc_tp', 'proc_processor_name', 'proc_last4',
+                        'comment', 'crm_date', 'proc_date'
+                    ]),
+                    'orig_indices': np.array([]),
+                    'orig_to_local': {},
+                    'no_warnings': True,
+                    'original_matching_df': original_matching_df
+                }
+                self.dataLoaded.emit(data_dict)
+                return
+
+            # Warnings file exists → load it
+            warnings_df = pd.read_excel(warnings_withdrawals_path)
+
             if 'orig_index' in warnings_df.columns:
-                warnings_df['orig_index'] = pd.to_numeric(warnings_df['orig_index'], errors='coerce').dropna().astype(int)
+                warnings_df['orig_index'] = pd.to_numeric(warnings_df['orig_index'], errors='coerce').dropna().astype(
+                    int)
                 orig_indices = warnings_df['orig_index'].values
                 warnings_df = warnings_df.drop('orig_index', axis=1)
                 orig_to_local = {orig_indices[i]: i for i in range(len(orig_indices))}
             else:
                 orig_indices = np.arange(len(warnings_df))
                 orig_to_local = {i: i for i in range(len(orig_indices))}
+
             data_dict = {
                 'warnings_df': warnings_df,
                 'orig_indices': orig_indices,

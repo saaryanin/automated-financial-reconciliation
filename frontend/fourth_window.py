@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QFileDialog, \
-    QMessageBox, QDesktopWidget, QHeaderView, QApplication, QHBoxLayout, QSizePolicy, QStyle
+    QMessageBox, QDesktopWidget, QHeaderView, QApplication, QHBoxLayout, QSizePolicy, QStyle, QCheckBox
 from PyQt5.QtCore import Qt
 import shutil
 import pandas as pd
@@ -17,89 +17,42 @@ class FourthWindow(QWidget):
         super().__init__()
         print("Debug: FourthWindow __init__ started")
         self.date_str = date_str
-        self.regulations = ['uk', 'row']
+        self.regulations = ['row', 'uk']
         self.initUI()
         print("Debug: initUI completed")
         self.run_output_script()
         print("Debug: run_output_script called")
+
     def initUI(self):
         print("Debug: initUI started")
         self.setWindowTitle('Export Daily Reconciliation Reports')
-        self.setGeometry(300, 300, 800, 600) # Initial size, will be adjusted dynamically
+        self.setGeometry(300, 300, 800, 600)  # Initial size, will be adjusted dynamically
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
-        qr.moveCenter(cp)
         self.move(qr.topLeft())
         layout = QVBoxLayout()
-        layout.setSpacing(15) # Add spacing between widgets for better layout
-        layout.setContentsMargins(20, 20, 20, 20) # Margins for the window content
+        layout.setSpacing(15)  # Add spacing between widgets for better layout
+        layout.setContentsMargins(20, 20, 20, 20)  # Margins for the window content
+        # Regulations selection (centered)
+        reg_layout = QHBoxLayout()
+        reg_layout.addStretch(1)
+        self.row_checkbox = QCheckBox('ROW')
+        self.row_checkbox.setChecked(True)
+        reg_layout.addWidget(self.row_checkbox)
+        self.uk_checkbox = QCheckBox('UK')
+        self.uk_checkbox.setChecked(True)
+        reg_layout.addWidget(self.uk_checkbox)
+        reg_layout.addStretch(1)
+        layout.addLayout(reg_layout)
         # Export button (initially disabled)
         self.export_btn = QPushButton('Export Daily Reconciliation Reports')
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self.export_files)
         layout.addWidget(self.export_btn)
-        # Shifts label (initially hidden)
-        self.shifts_label = QLabel()
-        self.shifts_label.setAlignment(Qt.AlignCenter)
-        self.shifts_label.setStyleSheet("""
-            QLabel {
-                font-family: 'Segoe UI', Arial, sans-serif;
-                font-size: 16px;
-                font-weight: 600;
-                color: #2c3e50;
-                padding: 10px;
-                background: transparent;
-                border: none;
-            }
-        """)
-        self.shifts_label.hide()
-        layout.addWidget(self.shifts_label)
-        # Shifts table (initially hidden)
-        self.shifts_table = QTableWidget()
-        self.shifts_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.shifts_table.horizontalHeader().setVisible(True)
-        self.shifts_table.verticalHeader().setVisible(False)
-        self.shifts_table.horizontalHeader().setStretchLastSection(False)
-        self.shifts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.shifts_table.horizontalHeader().setSectionsClickable(False)
-        self.shifts_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.shifts_table.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.shifts_table.setAlternatingRowColors(True)
-        self.shifts_table.setStyleSheet("""
-            QTableWidget {
-                font-family: 'Segoe UI', Arial, sans-serif;
-                font-size: 16px;
-                background: transparent;
-                border: none;
-                border-radius: 4px;
-                gridline-color: #dfe6e9;
-                alternate-background-color: transparent;
-            }
-            QHeaderView::section {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4a90e2, stop:1 #357abd);
-                color: #ffffff;
-                font-weight: 600;
-                padding: 12px 15px; /* Reduced vertical padding for tighter fit */
-                border: none;
-                font-size: 16px;
-            }
-            QTableWidget::item {
-                background-color: transparent;
-                padding: 12px 15px; /* Reduced padding for tighter fit */
-                color: #2c3e50;
-            }
-        """)
-        # Container for centering the table horizontally
-        self.table_container = QWidget()
-        self.table_layout = QHBoxLayout(self.table_container)
-        self.table_layout.addStretch(1)
-        self.table_layout.addWidget(self.shifts_table)
-        self.table_layout.addStretch(1)
-        self.table_layout.setContentsMargins(0, 0, 0, 0)
-        self.table_layout.setSpacing(0)
-        self.table_container.hide()
-        layout.addWidget(self.table_container)
+        # Shifts area (dynamic)
+        self.shifts_layout = QVBoxLayout()
+        layout.addLayout(self.shifts_layout)
         self.setLayout(layout)
         self.setStyleSheet("""
             QWidget {
@@ -130,88 +83,176 @@ class FourthWindow(QWidget):
                 box-shadow: none;
             }
         """)
+        # Styles for dynamic labels/tables (added here for reuse)
+        self.label_style = """
+            QLabel {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 16px;
+                font-weight: 600;
+                color: #2c3e50;
+                padding: 10px;
+                background: transparent;
+                border: none;
+            }
+        """
+        self.table_style = """
+            QTableWidget {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 16px;
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                gridline-color: #dfe6e9;
+                alternate-background-color: transparent;
+            }
+            QHeaderView::section {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4a90e2, stop:1 #357abd);
+                color: #ffffff;
+                font-weight: 600;
+                padding: 12px 15px; /* Reduced vertical padding for tighter fit */
+                border: none;
+                font-size: 16px;
+            }
+            QTableWidget::item {
+                background-color: transparent;
+                padding: 12px 15px; /* Reduced padding for tighter fit */
+                color: #2c3e50;
+            }
+        """
         print("Debug: initUI finished")
-    def populate_shifts_table(self):
+
+    def display_shifts(self):
+        # Clear existing shifts display
+        while self.shifts_layout.count():
+            child = self.shifts_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
         shifts_data = {}
+        has_any_shifts = False
         for regulation in self.regulations:
             dirs = setup_dirs_for_reg(regulation)
             shifts_path = dirs['output_dir'] / self.date_str / f"{regulation.upper()} total_shifts_by_currency.xlsx"
             if shifts_path.exists():
                 df = pd.read_excel(shifts_path)
                 if not df.empty:
-                    shifts_data[regulation.upper()] = df.iloc[0].to_dict()
-        if not shifts_data:
-            print("Debug: No shifts files found")
-            self.shifts_label.setText("No Shifts Detected")
-            self.shifts_label.show()
-            self.table_container.hide()
+                    shifts_data[regulation] = df.iloc[0].to_dict()
+                    has_any_shifts = True
+        if not has_any_shifts:
+            no_shifts_label = QLabel("No Shifts In The Regulations")
+            no_shifts_label.setAlignment(Qt.AlignCenter)
+            no_shifts_label.setStyleSheet(self.label_style)
+            self.shifts_layout.addWidget(no_shifts_label)
             return
-        # Combine into one DF
-        combined_df = pd.DataFrame(shifts_data).T.fillna(0)
-        currencies = combined_df.columns.tolist()
-        self.shifts_label.setText("Total Shifts by Currencies" if len(currencies) >= 2 else "Total Shifts by Currency")
-        self.shifts_label.show()
-        self.shifts_table.setRowCount(len(combined_df))
-        self.shifts_table.setColumnCount(len(currencies) + 1)  # +1 for regulation
-        header_labels = ['Regulation'] + currencies
-        self.shifts_table.setHorizontalHeaderLabels(header_labels)
-        for i, (reg, row) in enumerate(combined_df.iterrows()):
-            # Regulation column
-            item = QTableWidgetItem(reg)
-            item.setTextAlignment(Qt.AlignCenter)
-            self.shifts_table.setItem(i, 0, item)
-            # Currency columns
-            for j, curr in enumerate(currencies):
-                value = row[curr]
-                formatted_value = f"{value:g}"
-                item = QTableWidgetItem(formatted_value)
-                item.setTextAlignment(Qt.AlignCenter)
-                self.shifts_table.setItem(i, j + 1, item)
-        # Resize columns
-        self.shifts_table.resizeColumnsToContents()
-        max_width = 0
-        for j in range(self.shifts_table.columnCount()):
-            max_width = max(max_width, self.shifts_table.columnWidth(j))
-        min_col_width = 120
-        col_width = max(max_width, min_col_width)
-        for j in range(self.shifts_table.columnCount()):
-            self.shifts_table.setColumnWidth(j, col_width)
-        for i in range(len(combined_df)):
-            self.shifts_table.setRowHeight(i, 60)
-        col_sum = sum(self.shifts_table.columnWidth(j) for j in range(self.shifts_table.columnCount()))
-        vheader_w = self.shifts_table.verticalHeader().width()
-        frame_w = self.shifts_table.style().pixelMetric(QStyle.PM_DefaultFrameWidth) * 2
-        desired_w = col_sum + vheader_w + frame_w
-        self.shifts_table.setFixedWidth(desired_w)
-        self.table_container.show()
+        for regulation in self.regulations:
+            reg_upper = regulation.upper()
+            if regulation in shifts_data:
+                label_text = f"{reg_upper} Shifts By Currency"
+                reg_label = QLabel(label_text)
+                reg_label.setAlignment(Qt.AlignCenter)
+                reg_label.setStyleSheet(self.label_style)
+                self.shifts_layout.addWidget(reg_label)
+                # Table setup
+                data = shifts_data[regulation]
+                currencies = list(data.keys())
+                amounts = list(data.values())
+                reg_table = QTableWidget()
+                reg_table.setEditTriggers(QTableWidget.NoEditTriggers)
+                reg_table.horizontalHeader().setVisible(True)
+                reg_table.verticalHeader().setVisible(False)
+                reg_table.horizontalHeader().setStretchLastSection(False)
+                reg_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+                reg_table.horizontalHeader().setSectionsClickable(False)
+                reg_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                reg_table.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+                reg_table.setAlternatingRowColors(True)
+                reg_table.setStyleSheet(self.table_style)
+                reg_table.setRowCount(1)
+                reg_table.setColumnCount(len(currencies))
+                reg_table.setHorizontalHeaderLabels(currencies)
+                for j, amt in enumerate(amounts):
+                    formatted_amt = f"{amt:g}"
+                    item = QTableWidgetItem(formatted_amt)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    reg_table.setItem(0, j, item)
+                # Resize columns to contents
+                reg_table.resizeColumnsToContents()
+                max_width = 0
+                for j in range(reg_table.columnCount()):
+                    max_width = max(max_width, reg_table.columnWidth(j))
+                min_col_width = 120
+                col_width = max(max_width, min_col_width)
+                for j in range(reg_table.columnCount()):
+                    reg_table.setColumnWidth(j, col_width)
+                reg_table.setRowHeight(0, 60)
+                # Center table in container
+                table_container = QWidget()
+                table_layout = QHBoxLayout(table_container)
+                table_layout.addStretch(1)
+                table_layout.addWidget(reg_table)
+                table_layout.addStretch(1)
+                table_layout.setContentsMargins(0, 0, 0, 0)
+                table_layout.setSpacing(0)
+                self.shifts_layout.addWidget(table_container)
+            else:
+                no_shift_label = QLabel(f"No Shifts in {reg_upper}")
+                no_shift_label.setAlignment(Qt.AlignCenter)
+                no_shift_label.setStyleSheet(self.label_style)
+                self.shifts_layout.addWidget(no_shift_label)
+
     def adjust_window_size(self):
         margins = self.layout().contentsMargins()
         margin_width = margins.left() + margins.right()
-        button_width = self.export_btn.sizeHint().width()
-        if self.table_container.isVisible():
-            table_width = self.shifts_table.width()
-            window_width = max(button_width, table_width) + margin_width
-        else:
-            label_width = self.shifts_label.sizeHint().width() if self.shifts_label.isVisible() else 0
-            window_width = max(button_width, label_width) + margin_width
-        button_height = self.export_btn.sizeHint().height()
-        label_height = self.shifts_label.sizeHint().height() if self.shifts_label.isVisible() else 0
-        if self.table_container.isVisible():
-            header_height = self.shifts_table.horizontalHeader().height()
-            total_row_height = sum(self.shifts_table.rowHeight(i) for i in range(self.shifts_table.rowCount()))
-            table_height = header_height + total_row_height
-        else:
-            table_height = 0
-        num_widgets = 1 + (1 if label_height > 0 else 0) + (1 if table_height > 0 else 0)
-        num_spacings = max(0, num_widgets - 1)
         margin_height = margins.top() + margins.bottom()
-        window_height = button_height + label_height + table_height + self.layout().spacing() * num_spacings + margin_height
-        self.resize(window_width, window_height)
+        # Width: max of button, reg layout, shifts widgets
+        button_width = self.export_btn.sizeHint().width()
+        reg_layout_width = self.layout().itemAt(0).layout().sizeHint().width()  # reg checkboxes
+        max_width = max(button_width, reg_layout_width)
+        # Collect shifts widgets for height and width
+        total_shifts_height = 0
+        max_shifts_width = 0
+        tables = []
+        labels = []
+        for i in range(self.shifts_layout.count()):
+            widget = self.shifts_layout.itemAt(i).widget()
+            if isinstance(widget, QLabel):
+                labels.append(widget)
+                if widget.isVisible():
+                    total_shifts_height += widget.sizeHint().height()
+                    max_shifts_width = max(max_shifts_width, widget.sizeHint().width())
+            elif isinstance(widget, QWidget):  # table container
+                table = widget.layout().itemAt(1).widget()
+                if table:
+                    tables.append(table)
+                    # Resize table rows
+                    table.resizeRowsToContents()
+                    header_height = table.horizontalHeader().height()
+                    row_height = table.rowHeight(0) if table.rowCount() > 0 else 0
+                    table_height = header_height + row_height + 20  # buffer
+                    table.setFixedHeight(table_height)
+                    total_shifts_height += table_height
+                    # Table width from columns
+                    col_sum = sum(table.columnWidth(j) for j in range(table.columnCount()))
+                    vheader_w = table.verticalHeader().width()
+                    frame_w = table.style().pixelMetric(QStyle.PM_DefaultFrameWidth) * 2
+                    table_width = col_sum + vheader_w + frame_w
+                    max_shifts_width = max(max_shifts_width, table_width)
+        max_width = max(max_width, max_shifts_width) + margin_width
+        # Height: button + reg_layout + shifts + spacings
+        button_height = self.export_btn.sizeHint().height()
+        reg_height = self.layout().itemAt(0).layout().sizeHint().height()
+        num_widgets = len(labels) + len(tables)  # containers count as one per table
+        num_spacings = max(0, 1 + num_widgets)  # between reg, button, shifts
+        total_height = button_height + reg_height + total_shifts_height + self.layout().spacing() * num_spacings + margin_height
+        # Cap to screen
+        available_height = QApplication.desktop().availableGeometry().height()
+        frame_overhead = self.frameGeometry().height() - self.height() if self.isVisible() else 40
+        final_height = min(total_height + frame_overhead, available_height - 30)
+        self.resize(max_width, final_height)
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
-        print(f"Debug: Window resized to {window_width}x{window_height}")
+        print(f"Debug: Window resized to {max_width}x{final_height}")
 
     def is_perfect_match(self):
         for regulation in self.regulations:
@@ -283,7 +324,7 @@ class FourthWindow(QWidget):
                 save_matched_to_excel(self.date_str, regulation, deps_df, wds_df, output_dir)
                 save_unmatched_to_excel(self.date_str, regulation, crm_deps_df, proc_deps_df, crm_wds_df, proc_wds_df, output_dir)
             # Populate UI
-            self.populate_shifts_table()
+            self.display_shifts()
             self.export_btn.setEnabled(True)
             self.adjust_window_size()
             if self.is_perfect_match():
@@ -296,19 +337,31 @@ class FourthWindow(QWidget):
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to run output phase 2: {e}")
         print("Debug: run_output_script finished")
+
     def export_files(self):
         print("Debug: export_files started")
+        if not self.row_checkbox.isChecked() and not self.uk_checkbox.isChecked():
+            QMessageBox.warning(self, "Error", "Regulation must be picked before Exporting")
+            return
         dest_folder = QFileDialog.getExistingDirectory(self, "Select Folder to Export To")
         if dest_folder:
             exported_count = 0
-            excluded_files = ["warnings_withdrawals.xlsx", "withdrawals_matching_updated.xlsx"]
-            for regulation in self.regulations:
-                dirs = setup_dirs_for_reg(regulation)
+            selected_regs = []
+            if self.row_checkbox.isChecked():
+                selected_regs.append('row')
+            if self.uk_checkbox.isChecked():
+                selected_regs.append('uk')
+            for reg in selected_regs:
+                dirs = setup_dirs_for_reg(reg)
                 source_folder = dirs['output_dir'] / self.date_str
                 if source_folder.exists():
                     for file in source_folder.iterdir():
-                        if file.is_file() and file.name not in excluded_files:
-                            dest_file = Path(dest_folder) / f"{regulation.upper()}_{file.name}"
+                        if file.is_file() and "warnings_withdrawals" not in file.name and "withdrawals_matching_updated" not in file.name:
+                            reg_upper = reg.upper()
+                            if file.name.startswith(reg_upper + ' ') or file.name.startswith(reg_upper + '_'):
+                                dest_file = Path(dest_folder) / file.name
+                            else:
+                                dest_file = Path(dest_folder) / f"{reg_upper}_{file.name}"
                             shutil.copy(str(file), str(dest_file))
                             exported_count += 1
             if exported_count > 0:
@@ -318,7 +371,8 @@ class FourthWindow(QWidget):
                     alert_msg = "Congratulations! Every row has matched perfectly with no discrepancies or shifts detected. No additional output reports are required for this date."
                     QMessageBox.information(self, "Perfect Reconciliation", alert_msg)
                 else:
-                    QMessageBox.warning(self, "No Files", "No files to export (excluding warnings and updated matching).")
+                    QMessageBox.warning(self, "No Files",
+                                        "No files to export (excluding warnings and updated matching).")
         print("Debug: export_files finished")
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -514,27 +514,42 @@ def parse_adjustment(row):
     new_comment = f"Client requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}"
     new_amount = sign * abs_diff
     return new_amount, new_comment
+
+
 def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulation, matching_df=None):
     if matching_df is None:
         matching_df = load_matching_df(date_str, lists_dir, output_dir, regulation)
         if matching_df is None:
             return None
-    print(f"Total rows in withdrawals_matching: {len(matching_df)}")
+
+    print(f"DEBUG OUTPUT: Total rows in withdrawals_matching: {len(matching_df)}")
+    print(f"DEBUG OUTPUT: Columns in matching_df: {matching_df.columns.tolist()}")
+
     # Filter rows where warning == False
     df = matching_df[matching_df['warning'] == False]
-    print(f"Rows after warning == False: {len(df)}")
-    # Filter unmatched processor withdrawals: match_status == 0 and comment contains "No matching CRM row found"
+    print(f"DEBUG OUTPUT: Rows after warning == False: {len(df)}")
+
+    # Filter unmatched processor withdrawals
     unmatched_proc = df[(df['match_status'] == 0) & (
-            df['comment'].str.contains("No matching CRM row found|Unmatched due to warning|\\[unmatched_warning\\]", na=False)
+        df['comment'].str.contains("No matching CRM row found|Unmatched due to warning|\\[unmatched_warning\\]",
+                                   na=False)
     )]
-    unmatched_proc = unmatched_proc.copy() # Fix SettingWithCopyWarning if needed in future mods
-    print(f"Rows after match_status==0 and comment contains 'No matching CRM row found': {len(unmatched_proc)}")
-    print(f"Number of rows with proc_email NaN: {unmatched_proc['proc_email'].isna().sum()}")
+
+    print(f"DEBUG OUTPUT: Rows after match_status==0 and comment filter: {len(unmatched_proc)}")
+    print(f"DEBUG OUTPUT: Number of rows with proc_email not NaN: {unmatched_proc['proc_email'].notna().sum()}")
+
     if not unmatched_proc.empty:
-        nan_proc_rows = unmatched_proc[unmatched_proc['proc_email'].isna()][['proc_email', 'comment', 'match_status', 'proc_amount']]
-        if not nan_proc_rows.empty:
-            print("Sample NaN proc_email rows:")
-            print(nan_proc_rows.head())
+        sample_proc_rows = unmatched_proc[unmatched_proc['proc_email'].notna()][
+            ['proc_email', 'proc_amount', 'proc_currency', 'proc_processor_name', 'comment']].head()
+        print("DEBUG OUTPUT: Sample PSP rows:")
+        print(sample_proc_rows)
+
+        # Check for rows with Unmatched due to warning
+        warning_rows = unmatched_proc[unmatched_proc['comment'].str.contains("Unmatched due to warning", na=False)]
+        print(f"DEBUG OUTPUT: Rows with 'Unmatched due to warning': {len(warning_rows)}")
+        if not warning_rows.empty:
+            print("DEBUG OUTPUT: Sample warning rows:")
+            print(warning_rows[['proc_email', 'proc_amount', 'proc_currency', 'comment']].head())
     # REMOVED: unmatched_proc = unmatched_proc[unmatched_proc['proc_email'].notna()].copy()  # Allow NaN emails
     print(f"Rows after handling NaN proc_email (no filter): {len(unmatched_proc)}")
     if unmatched_proc.empty:

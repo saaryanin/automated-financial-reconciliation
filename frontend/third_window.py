@@ -607,47 +607,69 @@ class ThirdWindow(QWidget):
                     t.removeRow(r)
 
     def on_next(self):
-        print("Starting on_next"); sys.stdout.flush()
-        print("Collecting tables"); sys.stdout.flush()
+        print("Starting on_next");
+        sys.stdout.flush()
+        print("Collecting tables");
+        sys.stdout.flush()
         tables = [getattr(self, attr, None) for attr in ['differ_table', 'other_table'] if
                   getattr(self, attr, None)]
-        print("Tables collected, len(tables):", len(tables)); sys.stdout.flush()
+        print("Tables collected, len(tables):", len(tables));
+        sys.stdout.flush()
         remaining_indices = set()
-        print("Remaining set created"); sys.stdout.flush()
+        print("Remaining set created");
+        sys.stdout.flush()
         for t in tables:
-            print("Processing table, id:", id(t)); sys.stdout.flush()
+            print("Processing table, id:", id(t));
+            sys.stdout.flush()
             if t is getattr(self, 'other_table', None):
-                print("It's other_table"); sys.stdout.flush()
+                print("It's other_table");
+                sys.stdout.flush()
                 for r in range(t.rowCount()):
                     crm_orig = int(t.item(r, 0).text())
                     psp_orig = int(t.item(r, 1).text())
                     remaining_indices.add(crm_orig)
                     remaining_indices.add(psp_orig)
             else:
-                print("It's differ_table"); sys.stdout.flush()
-                print("Entering row loop, rowCount=", t.rowCount()); sys.stdout.flush()
+                print("It's differ_table");
+                sys.stdout.flush()
+                print("Entering row loop, rowCount=", t.rowCount());
+                sys.stdout.flush()
                 for r in range(t.rowCount()):
-                    print("Row", r); sys.stdout.flush()
+                    print("Row", r);
+                    sys.stdout.flush()
                     idx_item = t.item(r, 0)
-                    print("Got item:", idx_item); sys.stdout.flush()
+                    print("Got item:", idx_item);
+                    sys.stdout.flush()
                     if idx_item:
                         value = idx_item.text()
-                        print("Text:", value); sys.stdout.flush()
+                        print("Text:", value);
+                        sys.stdout.flush()
                         int_value = int(value)
-                        print("Int:", int_value); sys.stdout.flush()
+                        print("Int:", int_value);
+                        sys.stdout.flush()
                         remaining_indices.add(int_value)
-                        print("Added"); sys.stdout.flush()
-                print("Exited row loop"); sys.stdout.flush()
-        print("Exited table loop"); sys.stdout.flush()
+                        print("Added");
+                        sys.stdout.flush()
+                print("Exited row loop");
+                sys.stdout.flush()
+        print("Exited table loop");
+        sys.stdout.flush()
         removed_indices = set(self.orig_indices) - remaining_indices
-        print("Calculated removed_indices"); sys.stdout.flush()
-        print(f"Removed (accepted) indices: {len(removed_indices)}"); sys.stdout.flush()
-        print(f"Remaining (unselected) indices: {len(remaining_indices)}"); sys.stdout.flush()
+        print("Calculated removed_indices");
+        sys.stdout.flush()
+        print(f"Removed (accepted) indices: {len(removed_indices)}");
+        sys.stdout.flush()
+        print(f"Remaining (unselected) indices: {len(remaining_indices)}");
+        sys.stdout.flush()
+
         # Load original matching_df
         original_matching_path = self.dirs['lists_dir'] / self.date_str / f"{self.regulation}_withdrawals_matching.xlsx"
-        print("Loading matching_df from:", original_matching_path); sys.stdout.flush()
+        print("Loading matching_df from:", original_matching_path);
+        sys.stdout.flush()
         matching_df = pd.read_excel(original_matching_path)
-        print("Loaded matching_df, shape:", matching_df.shape); sys.stdout.flush()
+        print("Loaded matching_df, shape:", matching_df.shape);
+        sys.stdout.flush()
+
         # Update accepted rows: for differ/cross, set directly
         for idx in removed_indices:
             if idx in matching_df.index:
@@ -659,7 +681,9 @@ class ThirdWindow(QWidget):
                 matching_df.at[idx, 'warning'] = False
                 matching_df.at[idx, 'match_status'] = 1
                 matching_df.at[idx, 'payment_status'] = 1
-        print("Updated accepted rows"); sys.stdout.flush()
+        print("Updated accepted rows");
+        sys.stdout.flush()
+
         # For accepted other pairs: merge PSP into CRM
         for display_r, (crm_orig, psp_orig) in enumerate(self.other_paired_orig):
             if crm_orig not in remaining_indices and psp_orig not in remaining_indices:  # Accepted
@@ -679,7 +703,9 @@ class ThirdWindow(QWidget):
                     matching_df.at[crm_orig, 'match_status'] = 1
                     matching_df.at[crm_orig, 'payment_status'] = 1
                     matching_df = matching_df.drop(psp_orig)
-        print("Updated other paired rows"); sys.stdout.flush()
+        print("Updated other paired rows");
+        sys.stdout.flush()
+
         # For unselected: Drop them from matching_df and create split rows
         unselected_split_rows = []
         reverse_rename = {
@@ -696,81 +722,230 @@ class ThirdWindow(QWidget):
             'PSP Processor Name': 'proc_processor_name',
             'PSP Last 4 Digits': 'proc_last4',
         }
+
+        print(f"DEBUG: Processing {len(remaining_indices)} remaining indices for split rows")
+
         for idx in remaining_indices:
             local_idx = self.orig_to_local.get(idx, None)
             if local_idx is None:
+                print(f"DEBUG: Could not find local_idx for orig_idx {idx}")
                 continue
+
+            # Get the original row to determine actual data presence
+            orig_has_crm = False
+            orig_has_proc = False
+
+            if idx in self.original_matching_df.index:
+                orig_row = self.original_matching_df.loc[idx]
+                orig_has_crm = pd.notna(orig_row.get('crm_email', np.nan))
+                orig_has_proc = pd.notna(orig_row.get('proc_email', np.nan))
+                print(f"DEBUG: Original row {idx}: has_crm={orig_has_crm}, has_proc={orig_has_proc}")
+
+            # Use warnings row for data
             row = self.warnings_df.loc[local_idx].rename(reverse_rename)
-            has_crm = pd.notna(row.get('crm_email', np.nan))
-            has_proc = pd.notna(row.get('proc_email', np.nan))
-            print(f"Unselected row {idx}: has_crm={has_crm}, has_proc={has_proc}")
-            orig_comment = self.original_matching_df.at[
-                idx, 'comment'] if idx in self.original_matching_df.index else row.get('comment', '')
+
+            # Check warnings data as well
+            warnings_has_crm = pd.notna(row.get('crm_email', np.nan))
+            warnings_has_proc = pd.notna(row.get('proc_email', np.nan))
+            print(f"DEBUG: Warnings row {idx}: has_crm={warnings_has_crm}, has_proc={warnings_has_proc}")
+
+            # CONSERVATIVE APPROACH: If either source indicates data, create split rows
+            # Also, if this is a warning row, it MUST have either CRM or PSP data by definition
+            has_crm = orig_has_crm or warnings_has_crm
+            has_proc = orig_has_proc or warnings_has_proc
+
+            # If still no data detected, check if this might be a PSP-only row by looking at other PSP fields
+            if not has_crm and not has_proc:
+                # Check for any PSP data in original row
+                if idx in self.original_matching_df.index:
+                    orig_row = self.original_matching_df.loc[idx]
+                    has_proc_data = any(pd.notna(orig_row.get(col, np.nan)) for col in
+                                        ['proc_amount', 'proc_currency', 'proc_processor_name', 'proc_last4'])
+                    if has_proc_data:
+                        has_proc = True
+                        print(f"DEBUG: Detected PSP data in other fields for row {idx}, forcing PSP split")
+
+                # Check for any PSP data in warnings row
+                has_proc_data_warnings = any(pd.notna(row.get(col, np.nan)) for col in
+                                             ['proc_amount', 'proc_currency', 'proc_processor_name', 'proc_last4'])
+                if has_proc_data_warnings:
+                    has_proc = True
+                    print(f"DEBUG: Detected PSP data in warnings other fields for row {idx}, forcing PSP split")
+
+            # SAFETY NET: If we still have no data but this is a warning row, create both splits to be safe
+            if not has_crm and not has_proc:
+                print(
+                    f"DEBUG WARNING: Row {idx} has no detected data but is a warning row. Creating both splits to prevent data loss.")
+                has_crm = True
+                has_proc = True
+
+            print(f"DEBUG: Final decision for row {idx}: has_crm={has_crm}, has_proc={has_proc}")
+
+            # Get the original row data for this index to ensure we have all fields
+            orig_row_data = None
+            if idx in self.original_matching_df.index:
+                orig_row_data = self.original_matching_df.loc[idx]
+            elif idx in matching_df.index:
+                orig_row_data = matching_df.loc[idx]
+
+            orig_comment = orig_row_data[
+                'comment'] if orig_row_data is not None and 'comment' in orig_row_data else row.get('comment', '')
+
             # Prefix for unmatched
             prefixed_comment = f"Unmatched due to warning: {orig_comment}"
+
             # Drop the original unselected row
             if idx in matching_df.index:
+                print(f"DEBUG: Dropping row {idx} from matching_df")
                 matching_df = matching_df.drop(idx)
+
             # Create CRM split if applicable
             if has_crm:
-                crm_row_dict = row.to_dict()
-                proc_cols = [c for c in matching_df.columns if c.startswith('proc_')]
-                for col in proc_cols:
-                    crm_row_dict[col] = np.nan
+                print(f"DEBUG: Creating CRM split for row {idx}")
+                crm_row_dict = {}
+
+                # Copy all CRM data from original row
+                if orig_row_data is not None:
+                    for col in orig_row_data.index:
+                        if col.startswith('crm_') or col in ['payment_method', 'regulation', 'crm_type']:
+                            crm_row_dict[col] = orig_row_data[col]
+
+                # If we don't have original data, use what we have from warnings
+                if not crm_row_dict:
+                    crm_row_dict = row.to_dict()
+                    # Clear PSP data
+                    proc_cols = [c for c in crm_row_dict.keys() if c.startswith('proc_')]
+                    for col in proc_cols:
+                        crm_row_dict[col] = np.nan
+
+                # Ensure critical fields are set
                 crm_row_dict['match_status'] = 0
                 crm_row_dict['payment_status'] = 0
                 crm_row_dict['warning'] = False
                 crm_row_dict['comment'] = prefixed_comment
-                crm_row_dict['crm_type'] = 'Withdrawal'
+                if 'crm_type' not in crm_row_dict:
+                    crm_row_dict['crm_type'] = 'Withdrawal'
+
+                print(
+                    f"DEBUG: CRM split for {idx} - email: {crm_row_dict.get('crm_email')}, amount: {crm_row_dict.get('crm_amount')}")
                 unselected_split_rows.append(crm_row_dict)
+
             # Create Proc split if applicable
             if has_proc:
-                proc_row_dict = row.to_dict()
+                print(f"DEBUG: Creating PSP split for row {idx}")
+                proc_row_dict = {}
+
+                # Copy all PSP data from original row
+                if idx in self.original_matching_df.index:
+                    orig_row = self.original_matching_df.loc[idx]
+                    for col in orig_row.index:
+                        if col.startswith('proc_'):
+                            proc_row_dict[col] = orig_row[col]
+                            if pd.notna(orig_row[col]):
+                                print(f"DEBUG: PSP field from original {col} = {orig_row[col]}")
+
+                # Also add from warnings row (may have cleaned/processed data)
+                warnings_row = self.warnings_df.loc[local_idx].rename(reverse_rename)
+                for col in warnings_row.index:
+                    if col.startswith('proc_') and col not in proc_row_dict:
+                        proc_row_dict[col] = warnings_row[col]
+                        if pd.notna(warnings_row[col]):
+                            print(f"DEBUG: PSP field from warnings {col} = {warnings_row[col]}")
+
+                # If we still don't have PSP data, try to extract from the original row directly
+                if not any(pd.notna(proc_row_dict.get(col, np.nan)) for col in
+                           ['proc_email', 'proc_amount', 'proc_currency']):
+                    print(f"DEBUG: No PSP data found for row {idx}, checking original row directly")
+                    if idx in self.original_matching_df.index:
+                        orig_row = self.original_matching_df.loc[idx]
+                        for col in ['proc_email', 'proc_amount', 'proc_currency', 'proc_processor_name', 'proc_last4']:
+                            if col in orig_row.index and pd.notna(orig_row[col]):
+                                proc_row_dict[col] = orig_row[col]
+                                print(f"DEBUG: Direct PSP field {col} = {orig_row[col]}")
+
+                # Clear CRM-specific fields
                 crm_cols = [c for c in matching_df.columns if c.startswith('crm_') and c != 'crm_type']
                 for col in crm_cols:
                     proc_row_dict[col] = np.nan
+
                 proc_row_dict['payment_method'] = np.nan
                 proc_row_dict['match_status'] = 0
                 proc_row_dict['payment_status'] = 0
                 proc_row_dict['warning'] = False
                 proc_row_dict['comment'] = prefixed_comment
                 proc_row_dict['crm_type'] = np.nan
+
+                print(
+                    f"DEBUG: PSP split for {idx} - email: {proc_row_dict.get('proc_email')}, amount: {proc_row_dict.get('proc_amount')}, currency: {proc_row_dict.get('proc_currency')}, processor: {proc_row_dict.get('proc_processor_name')}")
                 unselected_split_rows.append(proc_row_dict)
-        print(f"Unselected split rows: {len(unselected_split_rows)}"); sys.stdout.flush()
+
+        print(f"DEBUG: Unselected split rows created: {len(unselected_split_rows)}");
+        sys.stdout.flush()
+
         # Append the split rows to matching_df
         if unselected_split_rows:
             split_df = pd.DataFrame(unselected_split_rows)
-            matching_df = pd.concat([matching_df, split_df], ignore_index=False)
-            print("Concat done"); sys.stdout.flush()
+
+            # Ensure we have all the columns from matching_df
+            for col in matching_df.columns:
+                if col not in split_df.columns:
+                    split_df[col] = np.nan
+
+            # Reorder columns to match matching_df
+            split_df = split_df[matching_df.columns]
+
+            print(f"DEBUG: Split DF columns: {split_df.columns.tolist()}")
+            print(f"DEBUG: Split DF shape: {split_df.shape}")
+            print(f"DEBUG: Split DF PSP emails: {split_df['proc_email'].notna().sum()}")
+            print(f"DEBUG: Split DF CRM emails: {split_df['crm_email'].notna().sum()}")
+
+            matching_df = pd.concat([matching_df, split_df], ignore_index=True)
+            print("Concat done");
+            sys.stdout.flush()
+
         print(f"Updated matching_df shape after splits: {matching_df.shape}")
-        print(f"Unselected CRM splits: {sum(1 for r in unselected_split_rows if pd.notna(r.get('crm_email')))}")
-        print(f"Unselected Proc splits: {sum(1 for r in unselected_split_rows if pd.notna(r.get('proc_email')))}")
+        print(
+            f"Unselected CRM splits: {matching_df[(matching_df['match_status'] == 0) & (matching_df['crm_email'].notna())].shape[0]}")
+        print(
+            f"Unselected Proc splits: {matching_df[(matching_df['match_status'] == 0) & (matching_df['proc_email'].notna())].shape[0]}")
+
         # Save updated matching_df
         output_dir = self.dirs['output_dir'] / self.date_str
         updated_matching_path = output_dir / "withdrawals_matching_updated.xlsx"
         matching_df.to_excel(updated_matching_path, index=False)
-        print(f"Updated matching saved to {updated_matching_path}"); sys.stdout.flush()
-        print("Processing complete."); sys.stdout.flush()
+        print(f"Updated matching saved to {updated_matching_path}");
+        sys.stdout.flush()
+        print("Processing complete.");
+        sys.stdout.flush()
+
         if self.regulation == 'uk':
-            print("Opening ROW review window."); sys.stdout.flush()
+            print("Opening ROW review window.");
+            sys.stdout.flush()
             has = ThirdWindow.has_warnings('row', self.date_str)
-            print(f"has_warnings for row: {has}"); sys.stdout.flush()
+            print(f"has_warnings for row: {has}");
+            sys.stdout.flush()
             if has:
-                print("Opening ROW ThirdWindow"); sys.stdout.flush()
+                print("Opening ROW ThirdWindow");
+                sys.stdout.flush()
                 self.next_window = ThirdWindow(self.date_str, 'row')
             else:
-                print("No warnings for ROW, directly opening export window."); sys.stdout.flush()
+                print("No warnings for ROW, directly opening export window.");
+                sys.stdout.flush()
                 self.next_window = FourthWindow(self.date_str)
         else:
             print("Opening export window.")
             self.next_window = FourthWindow(self.date_str)
-        print("Next window created"); sys.stdout.flush()
+        print("Next window created");
+        sys.stdout.flush()
         self.hide()
-        print("Current window hidden"); sys.stdout.flush()
+        print("Current window hidden");
+        sys.stdout.flush()
         self.next_window.show()
-        print("Next window shown"); sys.stdout.flush()
+        print("Next window shown");
+        sys.stdout.flush()
         QTimer.singleShot(0, self.close)
-        print("Timer set for close"); sys.stdout.flush()
+        print("Timer set for close");
+        sys.stdout.flush()
 class LoadWarningsThread(QThread):
     dataLoaded = pyqtSignal(dict) # Emit dict with processed data
     errorOccurred = pyqtSignal(str) # For error handling

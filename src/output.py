@@ -550,7 +550,6 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
         if not warning_rows.empty:
             print("DEBUG OUTPUT: Sample warning rows:")
             print(warning_rows[['proc_email', 'proc_amount', 'proc_currency', 'comment']].head())
-    # REMOVED: unmatched_proc = unmatched_proc[unmatched_proc['proc_email'].notna()].copy()  # Allow NaN emails
     print(f"Rows after handling NaN proc_email (no filter): {len(unmatched_proc)}")
     if unmatched_proc.empty:
         print(f"No unmatched processor withdrawals found for {date_str}, skipping file creation.")
@@ -574,6 +573,11 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
     unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(lambda x: format_date(x, is_proc=True))
     # Make amounts negative
     unmatched_proc.loc[:, 'proc_amount'] = unmatched_proc['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+    # Remove rows where proc_amount is NaN (excludes invalid/blank rows like CRM splits)
+    unmatched_proc = unmatched_proc[unmatched_proc['proc_amount'].notna()]
+    if unmatched_proc.empty:
+        print(f"No valid unmatched processor withdrawals (all had NaN amounts) for {date_str}, skipping file creation.")
+        return None
     # Pad proc_last4
     pad_last4(unmatched_proc, 'proc_last4')
     # Manually add Type as 'Withdrawal'

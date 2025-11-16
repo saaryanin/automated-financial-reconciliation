@@ -488,31 +488,62 @@ def format_amount(amt):
     if float(amt).is_integer():
         return int(amt)
     return amt
+
+
 def parse_adjustment(row):
     def format_num(num):
-        rounded = round(num, 2)
+        if pd.isna(num):
+            return '0'
+        rounded = round(abs(num), 2)
         formatted = f"{rounded:.2f}"
         return formatted.rstrip('0').rstrip('.') if formatted.endswith('00') else formatted
 
     comment = str(row['comment'])
+
+    # Check if this is an accepted warning row with underpaid/overpaid
+    if "Warning accepted and was considered a match after review" in comment:
+        # Extract the underpaid/overpaid information
+        match = re.search(r'(Underpaid|Overpaid) by ([\d.]+) (\w+)', comment)
+        if match:
+            paid_type = match.group(1)
+            amt_str = match.group(2)
+            curr = match.group(3)
+            amt = float(amt_str)
+
+            requested_amount = round(abs(row['crm_amount']), 2)
+            received_amount = round(abs(row['proc_amount_crm_currency']), 2)
+
+            # Recalculate type based on amounts for consistency
+            type_ = 'Underpaid' if received_amount < requested_amount else 'Overpaid'
+            requested_str = format_num(requested_amount)
+            received_str = format_num(received_amount)
+            diff_str = format_num(amt)
+
+            new_comment = f"Client requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}"
+            new_amount = amt if type_ == 'Underpaid' else -amt
+            return new_amount, new_comment
+
+    # Original logic for regular underpaid/overpaid
     match = re.search(r'(Underpaid|Overpaid) by ([\d.]+) (\w+)', comment)
     if not match:
         return row['crm_amount'], comment
+
     paid_type = match.group(1)
     amt_str = match.group(2)
     curr = match.group(3)
     amt = float(amt_str)
-    sign = 1 if paid_type == 'Underpaid' else -1
-    abs_diff = round(amt, 2)
+
     requested_amount = round(abs(row['crm_amount']), 2)
     received_amount = round(abs(row['proc_amount_crm_currency']), 2)
-    # Recalculate type_ based on amounts for consistency
+
+    # Recalculate type based on amounts for consistency
     type_ = 'Underpaid' if received_amount < requested_amount else 'Overpaid'
     requested_str = format_num(requested_amount)
     received_str = format_num(received_amount)
-    diff_str = format_num(abs_diff)
+    diff_str = format_num(amt)
+
     new_comment = f"Client requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}"
-    new_amount = sign * abs_diff
+    new_amount = amt if type_ == 'Underpaid' else -amt
     return new_amount, new_comment
 
 
@@ -676,28 +707,48 @@ def remove_compensated_entries(proc_deps_df, proc_wds_df):
     print(f"Removed {len(dep_indices_to_drop)} compensated entries from processor deposits DF.")
     print(f"Removed {len(wd_indices_to_drop)} compensated entries from processor withdrawals DF.")
     return deposits_df, withdrawals_df, compensated_deposits, compensated_withdrawals
+
+
 def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulation, matching_df=None):
     if matching_df is None:
         matching_df = load_matching_df(date_str, lists_dir, output_dir, regulation)
         if matching_df is None:
             return None
-    # Removed warning==False filter to include warning==True rows in groups (e.g., for underpaid cross-processor fallbacks)
-    df = matching_df.copy() # Changed from df = matching_df[matching_df['warning'] == False]
+
+    # Include both warning and non-warning rows for proper grouping
+    df = matching_df.copy()
+
     # Group 1: match_status == 0 and payment_status == 0 and comment == "No matching processor row found"
-    group1 = df[(df['match_status'] == 0) & (df['payment_status'] == 0) & (df['comment'] == "No matching processor row found")].copy()
+    group1 = df[(df['match_status'] == 0) & (df['payment_status'] == 0) & (
+                df['comment'] == "No matching processor row found")].copy()
+
     # Group 2: match_status == 1 and payment_status == 0 and (comment contains "Overpaid" or "Underpaid")
-    group2 = df[(df['match_status'] == 1) & (df['payment_status'] == 0) & (df['comment'].str.contains("Overpaid|Underpaid", na=False))].copy()
+    # This includes both regular underpaid/overpaid AND accepted warning rows with amount differences
+    group2_condition = (
+            (df['match_status'] == 1) &
+            (df['payment_status'] == 0) &
+            (
+                    df['comment'].str.contains("Overpaid|Underpaid", na=False) |
+                    df['comment'].str.contains("Warning accepted and was considered a match after review", na=False)
+            )
+    )
+    group2 = df[group2_condition].copy()
+
     # Group 3: comment == "Withdrawal cancelled with no matching withdrawal found"
     group3 = df[df['comment'] == "Withdrawal cancelled with no matching withdrawal found"].copy()
+
     # Group 4: comment contains "Unmatched due to warning" AND crm_email notna (to exclude proc-only splits)
-    group4 = df[(df['comment'].str.contains("Unmatched due to warning|\\[unmatched_warning\\]", na=False)) & (df['crm_email'].notna())].copy()
+    group4 = df[(df['comment'].str.contains("Unmatched due to warning|\\[unmatched_warning\\]", na=False)) & (
+        df['crm_email'].notna())].copy()
+
     # Process Group 1
     if not group1.empty:
         group1['crm_amount'] = group1['crm_amount'].apply(clean_value)
         group1['crm_amount'] = pd.to_numeric(group1['crm_amount'], errors='coerce')
-        group1['comment'] = '' # Blank comment
+        group1['comment'] = ''  # Blank comment
         # Ensure crm_amount is negative
         group1['crm_amount'] = group1['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+
     # Process Group 3 like Group 1 but crm_amount positive and comment "Withdrawal cancellation"
     if not group3.empty:
         group3['crm_amount'] = group3['crm_amount'].apply(clean_value)
@@ -705,13 +756,17 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         group3['comment'] = "Withdrawal cancellation"
         # Make crm_amount positive
         group3['crm_amount'] = group3['crm_amount'].apply(lambda x: abs(x) if pd.notna(x) else x)
-    # Process Group 2
+
+    # Process Group 2 - this now includes accepted warning rows with underpaid/overpaid
     if not group2.empty:
         group2['crm_amount'] = group2['crm_amount'].apply(clean_value)
         group2['proc_amount'] = group2['proc_amount'].apply(clean_value)
+        group2['proc_amount_crm_currency'] = group2['proc_amount_crm_currency'].apply(clean_value)
         group2['crm_amount'] = pd.to_numeric(group2['crm_amount'], errors='coerce')
         group2['proc_amount'] = pd.to_numeric(group2['proc_amount'], errors='coerce')
+        group2['proc_amount_crm_currency'] = pd.to_numeric(group2['proc_amount_crm_currency'], errors='coerce')
         group2[['crm_amount', 'comment']] = group2.apply(parse_adjustment, axis=1, result_type='expand')
+
     # Process Group 4: Keep as is, crm_amount negative, but process comment to strip prefix
     if not group4.empty:
         group4['crm_amount'] = group4['crm_amount'].apply(clean_value)
@@ -875,17 +930,23 @@ def generate_matched_deposits(date_str, lists_dir, regulation, compensated_deps=
         return None
     print(f"Matched deposits (including cancellations) DataFrame prepared for {date_str}")
     return all_deposits
+
+
 def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, compensated_wds=None):
     matching_df = load_matching_df(date_str, lists_dir, output_dir, regulation)
     if matching_df is None:
         return None
+
+    # Filter for matched rows (match_status == 1) including those with Underpaid/Overpaid
     matched_df = matching_df[matching_df['match_status'] == 1].copy()
     if matched_df.empty:
         print(f"No matched withdrawals found for {date_str}.")
+
     # Make amounts negative
     matched_df['crm_amount'] = matched_df['crm_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
     matched_df['proc_amount'] = matched_df['proc_amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
-    # Select and rename columns (analogous to deposits, omitting Approved/Transaction IDs, adding Comment)
+
+    # Select and rename columns
     columns_map = {
         'crm_type': 'Type',
         'crm_date': 'Date',
@@ -912,6 +973,7 @@ def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, co
     matched_df = matched_df[available_cols]
     matched_df.rename(columns={k: v for k, v in columns_map.items() if k in available_cols}, inplace=True)
     matched_df['Match'] = 'Yes'
+
     # Re-order columns to place 'Match' before 'Comment'
     columns = list(matched_df.columns)
     if 'Comment' in columns and 'Match' in columns:
@@ -919,13 +981,16 @@ def generate_matched_withdrawals(date_str, regulation, lists_dir, output_dir, co
         comment_idx = columns.index('Comment')
         columns.insert(comment_idx, 'Match')
         matched_df = matched_df[columns]
+
     # Pad last4 and format date
     pad_last4(matched_df, 'CRM Last 4 Digits')
     pad_last4(matched_df, 'PSP Last 4 Digits')
     matched_df['Date'] = matched_df['Date'].apply(format_date)
+
     # Sort matched_df by Date descending
     matched_df['Date'] = pd.to_datetime(matched_df['Date'], errors='coerce')
     matched_df = matched_df.sort_values(by='Date', ascending=False)
+
     if 'Regulation' in matched_df.columns:
         matched_df['Regulation'] = matched_df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # *** SYMMETRIC CROSS-REGULATION LOADING (fixed for full ROW <-> UK separation) ***

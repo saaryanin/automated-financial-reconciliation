@@ -483,11 +483,28 @@ class ThirdWindow(QWidget):
                 continue
             # Button column (already fixed mode)
             table.setColumnWidth(button_col, 50)
-            # Data columns: min 130px, max 250px (prevents extreme widths, allows wrap)
-            min_w = 140
-            max_w = 250
+            # Data columns: custom min/max based on column type
             for j in range(data_start, table.columnCount()):
+                col_label = table.horizontalHeaderItem(j).text()
                 cw = table.columnWidth(j)
+                if col_label == 'comment':
+                    min_w = 250
+                    max_w = 400
+                elif 'Email' in col_label:
+                    min_w = 150
+                    max_w = 250
+                elif 'Amount' in col_label or 'Last 4 Digits' in col_label or 'Currency' in col_label:
+                    min_w = 80
+                    max_w = 120
+                elif 'TP' in col_label:
+                    min_w = 100
+                    max_w = 150
+                elif 'Processor Name' in col_label:
+                    min_w = 120
+                    max_w = 200
+                else:
+                    min_w = 100
+                    max_w = 200
                 new_w = max(min_w, min(cw, max_w))
                 table.setColumnWidth(j, new_w)
 
@@ -553,8 +570,9 @@ class ThirdWindow(QWidget):
         # Step 5: Calculate dynamic width (content-based, capped to screen)
         total_margins_width = layout_margins.left() + layout_margins.right() + scroll_area_margins.left() + scroll_area_margins.right() + 40  # Buffer
         window_width = max_table_width + total_margins_width
+        window_width += 100  # Extra width as per user request
         available_width = QApplication.desktop().availableGeometry().width()
-        window_width = min(window_width, available_width - 20)
+        window_width = max(1080, min(window_width, available_width - 20))  # Ensure at least 1080 if possible
 
         # Ensure minimum width (from initUI min size)
         window_width = max(window_width, 600)
@@ -607,82 +625,69 @@ class ThirdWindow(QWidget):
                     t.removeRow(r)
 
     def on_next(self):
-        print("Starting on_next");
-        sys.stdout.flush()
-        print("Collecting tables");
-        sys.stdout.flush()
+        print("Starting on_next")
+        # [Previous table collection code remains the same...]
         tables = [getattr(self, attr, None) for attr in ['differ_table', 'other_table'] if
                   getattr(self, attr, None)]
-        print("Tables collected, len(tables):", len(tables));
-        sys.stdout.flush()
         remaining_indices = set()
-        print("Remaining set created");
-        sys.stdout.flush()
         for t in tables:
-            print("Processing table, id:", id(t));
-            sys.stdout.flush()
             if t is getattr(self, 'other_table', None):
-                print("It's other_table");
-                sys.stdout.flush()
                 for r in range(t.rowCount()):
                     crm_orig = int(t.item(r, 0).text())
                     psp_orig = int(t.item(r, 1).text())
                     remaining_indices.add(crm_orig)
                     remaining_indices.add(psp_orig)
             else:
-                print("It's differ_table");
-                sys.stdout.flush()
-                print("Entering row loop, rowCount=", t.rowCount());
-                sys.stdout.flush()
                 for r in range(t.rowCount()):
-                    print("Row", r);
-                    sys.stdout.flush()
                     idx_item = t.item(r, 0)
-                    print("Got item:", idx_item);
-                    sys.stdout.flush()
                     if idx_item:
-                        value = idx_item.text()
-                        print("Text:", value);
-                        sys.stdout.flush()
-                        int_value = int(value)
-                        print("Int:", int_value);
-                        sys.stdout.flush()
-                        remaining_indices.add(int_value)
-                        print("Added");
-                        sys.stdout.flush()
-                print("Exited row loop");
-                sys.stdout.flush()
-        print("Exited table loop");
-        sys.stdout.flush()
+                        remaining_indices.add(int(idx_item.text()))
+
         removed_indices = set(self.orig_indices) - remaining_indices
-        print("Calculated removed_indices");
-        sys.stdout.flush()
-        print(f"Removed (accepted) indices: {len(removed_indices)}");
-        sys.stdout.flush()
-        print(f"Remaining (unselected) indices: {len(remaining_indices)}");
-        sys.stdout.flush()
 
         # Load original matching_df
         original_matching_path = self.dirs['lists_dir'] / self.date_str / f"{self.regulation}_withdrawals_matching.xlsx"
-        print("Loading matching_df from:", original_matching_path);
-        sys.stdout.flush()
         matching_df = pd.read_excel(original_matching_path)
-        print("Loaded matching_df, shape:", matching_df.shape);
-        sys.stdout.flush()
 
         # Update accepted rows: for differ/cross, set directly
         for idx in removed_indices:
             if idx in matching_df.index:
-                orig_comment = self.original_matching_df.at[
-                    idx, 'comment'] if idx in self.original_matching_df.index else ''
-                processed = process_comment(orig_comment)
-                simplified = self.get_simplified_comment(processed)
-                matching_df.at[idx, 'comment'] = simplified
+                # Get the original amounts to check for underpaid/overpaid
+                crm_amount = self.original_matching_df.at[
+                    idx, 'crm_amount'] if idx in self.original_matching_df.index else matching_df.at[idx, 'crm_amount']
+                proc_amount_crm_currency = self.original_matching_df.at[
+                    idx, 'proc_amount_crm_currency'] if idx in self.original_matching_df.index else matching_df.at[
+                    idx, 'proc_amount_crm_currency']
+
+                # Check if amounts are significantly different (underpaid/overpaid case)
+                if (pd.notna(crm_amount) and pd.notna(proc_amount_crm_currency) and
+                        abs(abs(crm_amount) - abs(proc_amount_crm_currency)) > 0.01):
+
+                    # Calculate the difference
+                    diff = abs(crm_amount) - abs(proc_amount_crm_currency)
+                    currency = matching_df.at[idx, 'crm_currency'] if 'crm_currency' in matching_df.columns else 'USD'
+
+                    if diff > 0:
+                        # Underpaid
+                        comment = f"Underpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+                    else:
+                        # Overpaid
+                        comment = f"Overpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+
+                    matching_df.at[idx, 'comment'] = comment
+                    # CRITICAL: Set payment_status = 0 for underpaid/overpaid cases so they appear in unmatched CRM WDs
+                    matching_df.at[idx, 'payment_status'] = 0
+                else:
+                    # Regular accepted match without amount difference
+                    orig_comment = self.original_matching_df.at[
+                        idx, 'comment'] if idx in self.original_matching_df.index else ''
+                    processed = process_comment(orig_comment)
+                    simplified = self.get_simplified_comment(processed)
+                    matching_df.at[idx, 'comment'] = simplified
+                    matching_df.at[idx, 'payment_status'] = 1
+
                 matching_df.at[idx, 'warning'] = False
                 matching_df.at[idx, 'match_status'] = 1
-                matching_df.at[idx, 'payment_status'] = 1
-        print("Updated accepted rows");
-        sys.stdout.flush()
 
         # For accepted other pairs: merge PSP into CRM
         for display_r, (crm_orig, psp_orig) in enumerate(self.other_paired_orig):
@@ -694,15 +699,38 @@ class ThirdWindow(QWidget):
                                 'proc_amount_crm_currency']:
                         if col in matching_df.columns:
                             matching_df.at[crm_orig, col] = psp_row[col]
-                    orig_comment = self.original_matching_df.at[
-                        crm_orig, 'comment'] if crm_orig in self.original_matching_df.index else ''
-                    processed = process_comment(orig_comment)
-                    simplified = self.get_simplified_comment(processed)
-                    matching_df.at[crm_orig, 'comment'] = simplified
+
+                    # Check for underpaid/overpaid in accepted other pairs
+                    crm_amount = matching_df.at[crm_orig, 'crm_amount']
+                    proc_amount_crm_currency = matching_df.at[crm_orig, 'proc_amount_crm_currency']
+
+                    if (pd.notna(crm_amount) and pd.notna(proc_amount_crm_currency) and
+                            abs(abs(crm_amount) - abs(proc_amount_crm_currency)) > 0.01):
+
+                        diff = abs(crm_amount) - abs(proc_amount_crm_currency)
+                        currency = matching_df.at[
+                            crm_orig, 'crm_currency'] if 'crm_currency' in matching_df.columns else 'USD'
+
+                        if diff > 0:
+                            comment = f"Underpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+                        else:
+                            comment = f"Overpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+
+                        matching_df.at[crm_orig, 'comment'] = comment
+                        # CRITICAL: Set payment_status = 0 for underpaid/overpaid cases
+                        matching_df.at[crm_orig, 'payment_status'] = 0
+                    else:
+                        orig_comment = self.original_matching_df.at[
+                            crm_orig, 'comment'] if crm_orig in self.original_matching_df.index else ''
+                        processed = process_comment(orig_comment)
+                        simplified = self.get_simplified_comment(processed)
+                        matching_df.at[crm_orig, 'comment'] = simplified
+                        matching_df.at[crm_orig, 'payment_status'] = 1
+
                     matching_df.at[crm_orig, 'warning'] = False
                     matching_df.at[crm_orig, 'match_status'] = 1
-                    matching_df.at[crm_orig, 'payment_status'] = 1
                     matching_df = matching_df.drop(psp_orig)
+
         print("Updated other paired rows");
         sys.stdout.flush()
 

@@ -519,8 +519,9 @@ def parse_adjustment(row):
             received_str = format_num(received_amount)
             diff_str = format_num(amt)
 
-            new_comment = f"Client requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}"
-            new_amount = amt if type_ == 'Underpaid' else -amt
+            new_comment = f"Client Requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}."
+            # FIX: For underpaid, amount should be negative; for overpaid, positive
+            new_amount = -amt if type_ == 'Underpaid' else amt
             return new_amount, new_comment
 
     # Original logic for regular underpaid/overpaid
@@ -542,10 +543,10 @@ def parse_adjustment(row):
     received_str = format_num(received_amount)
     diff_str = format_num(amt)
 
-    new_comment = f"Client requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}"
-    new_amount = amt if type_ == 'Underpaid' else -amt
+    new_comment = f"Client Requested {requested_str} {curr} and received {received_str} {curr}, {type_} by {diff_str} {curr}."
+    # FIX: For underpaid, amount should be negative; for overpaid, positive
+    new_amount = -amt if type_ == 'Underpaid' else amt
     return new_amount, new_comment
-
 
 def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulation, matching_df=None):
     if matching_df is None:

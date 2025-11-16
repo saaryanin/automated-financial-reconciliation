@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import re
 import sys
-from src.config import setup_dirs_for_reg
+from src.config import setup_dirs_for_reg,RATES_DIR
 from src.output import clean_value, format_date, process_comment, generate_warning_withdrawals
 from fourth_window import FourthWindow # Import to open next window
 class ThirdWindow(QWidget):
@@ -626,9 +626,7 @@ class ThirdWindow(QWidget):
 
     def on_next(self):
         print("Starting on_next")
-        # [Previous table collection code remains the same...]
-        tables = [getattr(self, attr, None) for attr in ['differ_table', 'other_table'] if
-                  getattr(self, attr, None)]
+        tables = [getattr(self, attr, None) for attr in ['differ_table', 'other_table'] if getattr(self, attr, None)]
         remaining_indices = set()
         for t in tables:
             if t is getattr(self, 'other_table', None):
@@ -645,6 +643,29 @@ class ThirdWindow(QWidget):
 
         removed_indices = set(self.orig_indices) - remaining_indices
 
+        # Load rates file
+        try:
+            rates_path = RATES_DIR/ f"rates_{self.date_str}.csv"
+            exchange_rate_map = {}
+            if rates_path.exists():
+                rates_df = pd.read_csv(rates_path)
+                rates_df['from_currency'] = rates_df['from_currency'].str.strip().str.upper()
+                rates_df['to_currency'] = rates_df['to_currency'].str.strip().str.upper()
+                exchange_rate_map = {
+                    (row['from_currency'], row['to_currency']): row['rate']
+                    for _, row in rates_df.iterrows()
+                }
+        except Exception as e:
+            print(f"Error loading rates file: {e}")
+            exchange_rate_map = {}
+
+        def format_num(num):
+            if pd.isna(num):
+                return '0'
+            rounded = round(abs(num), 2)
+            formatted = f"{rounded:.2f}"
+            return formatted.rstrip('0').rstrip('.') if formatted.endswith('00') else formatted
+
         # Load original matching_df
         original_matching_path = self.dirs['lists_dir'] / self.date_str / f"{self.regulation}_withdrawals_matching.xlsx"
         matching_df = pd.read_excel(original_matching_path)
@@ -658,6 +679,15 @@ class ThirdWindow(QWidget):
                 proc_amount_crm_currency = self.original_matching_df.at[
                     idx, 'proc_amount_crm_currency'] if idx in self.original_matching_df.index else matching_df.at[
                     idx, 'proc_amount_crm_currency']
+                proc_amount = self.original_matching_df.at[
+                    idx, 'proc_amount'] if idx in self.original_matching_df.index else matching_df.at[
+                    idx, 'proc_amount']
+                proc_currency = self.original_matching_df.at[
+                    idx, 'proc_currency'] if idx in self.original_matching_df.index else matching_df.at[
+                    idx, 'proc_currency']
+                crm_currency = self.original_matching_df.at[
+                    idx, 'crm_currency'] if idx in self.original_matching_df.index else matching_df.at[
+                    idx, 'crm_currency']
 
                 # Check if amounts are significantly different (underpaid/overpaid case)
                 if (pd.notna(crm_amount) and pd.notna(proc_amount_crm_currency) and
@@ -665,17 +695,55 @@ class ThirdWindow(QWidget):
 
                     # Calculate the difference
                     diff = abs(crm_amount) - abs(proc_amount_crm_currency)
-                    currency = matching_df.at[idx, 'crm_currency'] if 'crm_currency' in matching_df.columns else 'USD'
+                    currency = crm_currency if pd.notna(crm_currency) else 'USD'
 
                     if diff > 0:
-                        # Underpaid
-                        comment = f"Underpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+                        type_ = "Underpaid"
                     else:
-                        # Overpaid
-                        comment = f"Overpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+                        type_ = "Overpaid"
 
+                    abs_diff = abs(diff)
+                    comment = f"{type_} by {abs_diff:.2f} {currency}, Warning accepted and was considered a match after review."
                     matching_df.at[idx, 'comment'] = comment
                     # CRITICAL: Set payment_status = 0 for underpaid/overpaid cases so they appear in unmatched CRM WDs
+                    matching_df.at[idx, 'payment_status'] = 0
+                elif (pd.notna(crm_amount) and pd.notna(proc_amount) and
+                      pd.notna(crm_currency) and pd.notna(proc_currency) and
+                      crm_currency != proc_currency):
+                    # Try to convert if not already converted
+                    if pd.isna(proc_amount_crm_currency) and exchange_rate_map:
+                        from_curr = str(proc_currency).upper()
+                        to_curr = str(crm_currency).upper()
+                        key = (from_curr, to_curr)
+                        if key in exchange_rate_map:
+                            rate = exchange_rate_map[key]
+                            proc_amount_crm_currency = proc_amount * rate
+                        else:
+                            inv_key = (to_curr, from_curr)
+                            if inv_key in exchange_rate_map:
+                                rate = exchange_rate_map[inv_key]
+                                proc_amount_crm_currency = proc_amount / rate
+                        if not pd.isna(proc_amount_crm_currency):
+                            matching_df.at[idx, 'proc_amount_crm_currency'] = proc_amount_crm_currency
+
+                    crm_amount_abs = abs(crm_amount)
+                    proc_amount_abs = abs(proc_amount)
+
+                    if pd.notna(proc_amount_crm_currency):
+                        received_amount_crm = abs(proc_amount_crm_currency)
+                        diff = crm_amount_abs - received_amount_crm
+
+                        if diff > 0:
+                            type_ = "Underpaid"
+                        else:
+                            type_ = "Overpaid"
+
+                        abs_diff = abs(diff)
+                        comment = f"{type_} by {abs_diff:.2f} {crm_currency}, Warning accepted and was considered a match after review."
+                    else:
+                        comment = f"Client Requested {format_num(crm_amount_abs)} {crm_currency} and PSP shows {format_num(proc_amount_abs)} {proc_currency} . Different currencies, amount difference cannot be calculated . Warning accepted and was considered a match after review"
+
+                    matching_df.at[idx, 'comment'] = comment
                     matching_df.at[idx, 'payment_status'] = 0
                 else:
                     # Regular accepted match without amount difference
@@ -703,21 +771,63 @@ class ThirdWindow(QWidget):
                     # Check for underpaid/overpaid in accepted other pairs
                     crm_amount = matching_df.at[crm_orig, 'crm_amount']
                     proc_amount_crm_currency = matching_df.at[crm_orig, 'proc_amount_crm_currency']
+                    proc_amount = matching_df.at[crm_orig, 'proc_amount']
+                    proc_currency = matching_df.at[crm_orig, 'proc_currency']
+                    crm_currency = matching_df.at[crm_orig, 'crm_currency']
 
                     if (pd.notna(crm_amount) and pd.notna(proc_amount_crm_currency) and
                             abs(abs(crm_amount) - abs(proc_amount_crm_currency)) > 0.01):
 
                         diff = abs(crm_amount) - abs(proc_amount_crm_currency)
-                        currency = matching_df.at[
-                            crm_orig, 'crm_currency'] if 'crm_currency' in matching_df.columns else 'USD'
+                        currency = crm_currency if pd.notna(crm_currency) else 'USD'
 
                         if diff > 0:
-                            comment = f"Underpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+                            type_ = "Underpaid"
                         else:
-                            comment = f"Overpaid by {abs(diff):.2f} {currency} . Warning accepted and was considered a match after review"
+                            type_ = "Overpaid"
 
+                        abs_diff = abs(diff)
+                        comment = f"{type_} by {abs_diff:.2f} {currency}, Warning accepted and was considered a match after review."
                         matching_df.at[crm_orig, 'comment'] = comment
                         # CRITICAL: Set payment_status = 0 for underpaid/overpaid cases
+                        matching_df.at[crm_orig, 'payment_status'] = 0
+                    elif (pd.notna(crm_amount) and pd.notna(proc_amount) and
+                          pd.notna(crm_currency) and pd.notna(proc_currency) and
+                          crm_currency != proc_currency):
+                        # Try to convert if not already converted
+                        if pd.isna(proc_amount_crm_currency) and exchange_rate_map:
+                            from_curr = str(proc_currency).upper()
+                            to_curr = str(crm_currency).upper()
+                            key = (from_curr, to_curr)
+                            if key in exchange_rate_map:
+                                rate = exchange_rate_map[key]
+                                proc_amount_crm_currency = proc_amount * rate
+                            else:
+                                inv_key = (to_curr, from_curr)
+                                if inv_key in exchange_rate_map:
+                                    rate = exchange_rate_map[inv_key]
+                                    proc_amount_crm_currency = proc_amount / rate
+                            if not pd.isna(proc_amount_crm_currency):
+                                matching_df.at[crm_orig, 'proc_amount_crm_currency'] = proc_amount_crm_currency
+
+                        crm_amount_abs = abs(crm_amount)
+                        proc_amount_abs = abs(proc_amount)
+
+                        if pd.notna(proc_amount_crm_currency):
+                            received_amount_crm = abs(proc_amount_crm_currency)
+                            diff = crm_amount_abs - received_amount_crm
+
+                            if diff > 0:
+                                type_ = "Underpaid"
+                            else:
+                                type_ = "Overpaid"
+
+                            abs_diff = abs(diff)
+                            comment = f"{type_} by {abs_diff:.2f} {crm_currency}, Warning accepted and was considered a match after review."
+                        else:
+                            comment = f"Client Requested {format_num(crm_amount_abs)} {crm_currency} and PSP shows {format_num(proc_amount_abs)} {proc_currency} . Different currencies, amount difference cannot be calculated . Warning accepted and was considered a match after review"
+
+                        matching_df.at[crm_orig, 'comment'] = comment
                         matching_df.at[crm_orig, 'payment_status'] = 0
                     else:
                         orig_comment = self.original_matching_df.at[
@@ -782,7 +892,7 @@ class ThirdWindow(QWidget):
             has_crm = orig_has_crm or warnings_has_crm
             has_proc = orig_has_proc or warnings_has_proc
 
-            # If still no data detected, check if this might be a PSP-only row by looking at other PSP fields
+            # If still no data detected, check if this is a PSP-only row by looking at other PSP fields
             if not has_crm and not has_proc:
                 # Check for any PSP data in original row
                 if idx in self.original_matching_df.index:
@@ -944,6 +1054,35 @@ class ThirdWindow(QWidget):
         print(f"Updated matching saved to {updated_matching_path}");
         sys.stdout.flush()
         print("Processing complete.");
+        sys.stdout.flush()
+
+        if self.regulation == 'uk':
+            print("Opening ROW review window.");
+            sys.stdout.flush()
+            has = ThirdWindow.has_warnings('row', self.date_str)
+            print(f"has_warnings for row: {has}");
+            sys.stdout.flush()
+            if has:
+                print("Opening ROW ThirdWindow");
+                sys.stdout.flush()
+                self.next_window = ThirdWindow(self.date_str, 'row')
+            else:
+                print("No warnings for ROW, directly opening export window.");
+                sys.stdout.flush()
+                self.next_window = FourthWindow(self.date_str)
+        else:
+            print("Opening export window.")
+            self.next_window = FourthWindow(self.date_str)
+        print("Next window created");
+        sys.stdout.flush()
+        self.hide()
+        print("Current window hidden");
+        sys.stdout.flush()
+        self.next_window.show()
+        print("Next window shown");
+        sys.stdout.flush()
+        QTimer.singleShot(0, self.close)
+        print("Timer set for close");
         sys.stdout.flush()
 
         if self.regulation == 'uk':

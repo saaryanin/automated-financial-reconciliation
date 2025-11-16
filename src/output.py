@@ -5,7 +5,7 @@ import warnings
 import re
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
-from src.shifts_handler_test import main as handle_shifts, get_cutoff_time
+from src.shifts_handler import main as handle_shifts, get_cutoff_time
 from collections import OrderedDict
 import ast
 from datetime import datetime

@@ -24,6 +24,7 @@ a = Analysis(
         'src.utils',
         'src.shifts_handler',
         'src.processor_renamer',
+        'src.cross_regulation_matcher',  # Added for the new script
         'tempfile',             # For config's gettempdir() in frozen mode
         'shutil',               # For cleanup in reports_creator/output
         'pathlib',              # Explicit for Path usage in output.py cleanup

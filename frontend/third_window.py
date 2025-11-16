@@ -7,6 +7,19 @@ import sys
 from src.config import setup_dirs_for_reg,RATES_DIR
 from src.output import clean_value, format_date, process_comment, generate_warning_withdrawals
 from fourth_window import FourthWindow # Import to open next window
+
+class DevNull:
+    def __init__(self):
+        pass
+    def write(self, _):
+        pass
+    def flush(self):
+        pass
+
+if getattr(sys, 'frozen', False) and sys.platform.startswith('win'):
+    sys.stdout = DevNull()
+    sys.stderr = DevNull()
+
 class ThirdWindow(QWidget):
     def __init__(self, date_str, regulation):
         super().__init__()
@@ -841,8 +854,7 @@ class ThirdWindow(QWidget):
                     matching_df.at[crm_orig, 'match_status'] = 1
                     matching_df = matching_df.drop(psp_orig)
 
-        print("Updated other paired rows");
-        sys.stdout.flush()
+        print("Updated other paired rows")
 
         # For unselected: Drop them from matching_df and create split rows
         unselected_split_rows = []
@@ -1017,8 +1029,7 @@ class ThirdWindow(QWidget):
                     f"DEBUG: PSP split for {idx} - email: {proc_row_dict.get('proc_email')}, amount: {proc_row_dict.get('proc_amount')}, currency: {proc_row_dict.get('proc_currency')}, processor: {proc_row_dict.get('proc_processor_name')}")
                 unselected_split_rows.append(proc_row_dict)
 
-        print(f"DEBUG: Unselected split rows created: {len(unselected_split_rows)}");
-        sys.stdout.flush()
+        print(f"DEBUG: Unselected split rows created: {len(unselected_split_rows)}")
 
         # Append the split rows to matching_df
         if unselected_split_rows:
@@ -1038,8 +1049,7 @@ class ThirdWindow(QWidget):
             print(f"DEBUG: Split DF CRM emails: {split_df['crm_email'].notna().sum()}")
 
             matching_df = pd.concat([matching_df, split_df], ignore_index=True)
-            print("Concat done");
-            sys.stdout.flush()
+            print("Concat done")
 
         print(f"Updated matching_df shape after splits: {matching_df.shape}")
         print(
@@ -1051,68 +1061,29 @@ class ThirdWindow(QWidget):
         output_dir = self.dirs['output_dir'] / self.date_str
         updated_matching_path = output_dir / "withdrawals_matching_updated.xlsx"
         matching_df.to_excel(updated_matching_path, index=False)
-        print(f"Updated matching saved to {updated_matching_path}");
-        sys.stdout.flush()
-        print("Processing complete.");
-        sys.stdout.flush()
+        print(f"Updated matching saved to {updated_matching_path}")
+        print("Processing complete.")
 
         if self.regulation == 'uk':
-            print("Opening ROW review window.");
-            sys.stdout.flush()
+            print("Opening ROW review window.")
             has = ThirdWindow.has_warnings('row', self.date_str)
-            print(f"has_warnings for row: {has}");
-            sys.stdout.flush()
+            print(f"has_warnings for row: {has}")
             if has:
-                print("Opening ROW ThirdWindow");
-                sys.stdout.flush()
+                print("Opening ROW ThirdWindow")
                 self.next_window = ThirdWindow(self.date_str, 'row')
             else:
-                print("No warnings for ROW, directly opening export window.");
-                sys.stdout.flush()
+                print("No warnings for ROW, directly opening export window.")
                 self.next_window = FourthWindow(self.date_str)
         else:
             print("Opening export window.")
             self.next_window = FourthWindow(self.date_str)
-        print("Next window created");
-        sys.stdout.flush()
+        print("Next window created")
         self.hide()
-        print("Current window hidden");
-        sys.stdout.flush()
+        print("Current window hidden")
         self.next_window.show()
-        print("Next window shown");
-        sys.stdout.flush()
+        print("Next window shown")
         QTimer.singleShot(0, self.close)
-        print("Timer set for close");
-        sys.stdout.flush()
-
-        if self.regulation == 'uk':
-            print("Opening ROW review window.");
-            sys.stdout.flush()
-            has = ThirdWindow.has_warnings('row', self.date_str)
-            print(f"has_warnings for row: {has}");
-            sys.stdout.flush()
-            if has:
-                print("Opening ROW ThirdWindow");
-                sys.stdout.flush()
-                self.next_window = ThirdWindow(self.date_str, 'row')
-            else:
-                print("No warnings for ROW, directly opening export window.");
-                sys.stdout.flush()
-                self.next_window = FourthWindow(self.date_str)
-        else:
-            print("Opening export window.")
-            self.next_window = FourthWindow(self.date_str)
-        print("Next window created");
-        sys.stdout.flush()
-        self.hide()
-        print("Current window hidden");
-        sys.stdout.flush()
-        self.next_window.show()
-        print("Next window shown");
-        sys.stdout.flush()
-        QTimer.singleShot(0, self.close)
-        print("Timer set for close");
-        sys.stdout.flush()
+        print("Timer set for close")
 class LoadWarningsThread(QThread):
     dataLoaded = pyqtSignal(dict) # Emit dict with processed data
     errorOccurred = pyqtSignal(str) # For error handling

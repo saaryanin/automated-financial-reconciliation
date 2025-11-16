@@ -104,6 +104,7 @@ def generate_unmatched_crm_deposits(date_str, lists_dir, regulation):
         'crm_transaction_id': 'Transaction ID'
     }
     unmatched_crm.rename(columns=rename_dict, inplace=True)
+    unmatched_crm['Currency'] = unmatched_crm['Currency'].replace({'USD': 'US Dollar', 'EUR': 'Euro'})
     if 'Regulation' in df.columns: # Replace 'df' with the actual DF name, e.g., matched_df, all_withdrawals, unmatched_crm, etc.
         df['Regulation'] = df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     print(f"Unmatched CRM deposits DataFrame prepared for {date_str}")
@@ -159,6 +160,7 @@ def generate_unapproved_crm_deposits(date_str, lists_dir, output_dir, regulation
         'crm_transaction_id': 'Transaction ID'
     }
     unapproved_crm.rename(columns=rename_dict, inplace=True)
+    unapproved_crm['Currency'] = unapproved_crm['Currency'].replace({'USD': 'US Dollar', 'EUR': 'Euro'})
     if 'Regulation' in unapproved_crm.columns:
         unapproved_crm['Regulation'] = unapproved_crm['Regulation'].apply(
             lambda x: 'UK' if str(x).lower() == 'uk' else x)
@@ -843,6 +845,7 @@ def generate_unmatched_crm_withdrawals(date_str, lists_dir, output_dir, regulati
         'comment': 'Comment'
     }
     unmatched_crm.rename(columns=rename_dict, inplace=True)
+    unmatched_crm['Currency'] = unmatched_crm['Currency'].replace({'USD': 'US Dollar', 'EUR': 'Euro'})
     if 'Regulation' in df.columns: # Replace 'df' with the actual DF name, e.g., matched_df, all_withdrawals, unmatched_crm, etc.
         df['Regulation'] = df['Regulation'].apply(lambda x: 'UK' if str(x).lower() == 'uk' else x)
     # Sort by Date from newest to oldest

@@ -506,59 +506,11 @@ class ReconciliationWindow(QWidget):
             else:
                 files_list = ", ".join(unrecognized)
                 msg = f"The files {files_list} have not been recognized by the system. Please change their names according to the following format: processor name_YYYY-MM-DD for example: safecharge_2025-10-17."
-            self.show_warning("Unrecognized Files",
-                              msg + "\nResetting the attached window. Please attach again after renaming.")
+            self.show_warning("Unrecognized Files", msg + "\nResetting the attached window. Please attach again after renaming.")
             self.reset_attachments()
             return
 
         selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
-
-        # Cleanup old files for the selected date
-        for reg in ['row', 'uk']:
-            dirs = setup_dirs_for_reg(reg, create=False)
-
-            # Remove CRM file
-            crm_path = dirs['crm_dir'] / f"crm_{selected_date}.xlsx"
-            if crm_path.exists():
-                crm_path.unlink()
-
-            # Remove processor files
-            for f in dirs['processor_dir'].glob(f"*_{selected_date}.*"):
-                f.unlink()
-
-            # Remove rates file
-            rates_path = dirs['rates_dir'] / f"rates_{selected_date}.csv"
-            if rates_path.exists():
-                rates_path.unlink()
-
-            # Remove processed CRM dated folders including combined
-            combined_crm_dated = dirs['combined_crm_dir'] / selected_date
-            if combined_crm_dated.exists():
-                shutil.rmtree(combined_crm_dated)
-            for proc_dir in dirs['processed_crm_dir'].iterdir():
-                if proc_dir.is_dir():
-                    dated = proc_dir / selected_date
-                    if dated.exists():
-                        shutil.rmtree(dated)
-
-            # Remove processed processors dated folders including combined
-            for proc_dir in dirs['processed_processor_dir'].iterdir():
-                if proc_dir.is_dir():
-                    dated = proc_dir / selected_date
-                    if dated.exists():
-                        shutil.rmtree(dated)
-
-            # Remove lists dated folder
-            lists_dated = dirs['lists_dir'] / selected_date
-            if lists_dated.exists():
-                shutil.rmtree(lists_dated)
-
-            # Clear output dir (already in original code, but ensure)
-            output_date_dir = dirs['output_dir'] / selected_date
-            if output_date_dir.exists():
-                shutil.rmtree(output_date_dir)
-                print(f"Cleared output dir for {selected_date} in {reg.upper()}")
-
         rates_data = []
         for key, (input_field, _) in self.rate_inputs.items():
             from_curr, to_curr = key.split('_')
@@ -575,6 +527,10 @@ class ReconciliationWindow(QWidget):
             df.to_csv(file_path, index=False)
             for reg in ['row', 'uk']:
                 dirs = setup_dirs_for_reg(reg, create=True)
+                output_date_dir = dirs['output_dir'] / selected_date
+                if output_date_dir.exists():
+                    shutil.rmtree(output_date_dir)
+                    print(f"Cleared output dir for {selected_date} in {reg.upper()}")
                 reg_rates_path = dirs['rates_dir'] / f"rates_{selected_date}.csv"
                 shutil.copy(file_path, reg_rates_path)
             self.hide()
@@ -644,10 +600,8 @@ class ReconciliationWindow(QWidget):
         print("Debug: SecondWindow shown")
         self.close()
 
-
 if __name__ == "__main__":
     import sys
-
     app = QApplication(sys.argv)
     window = ReconciliationWindow()
     window.show()

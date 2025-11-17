@@ -511,6 +511,71 @@ class ReconciliationWindow(QWidget):
             return
 
         selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
+        row_processors = [
+            'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
+            'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
+        ]
+        uk_processors = [
+            'safechargeuk', 'barclays', 'barclaycard'
+        ]
+        for reg in ['row', 'uk']:
+            dirs = setup_dirs_for_reg(reg, create=True)
+            proc_list = row_processors if reg == 'row' else uk_processors
+            # Clear output dir for selected date
+            output_date_dir = dirs['output_dir'] / selected_date
+            if output_date_dir.exists():
+                shutil.rmtree(output_date_dir)
+                print(f"Cleared output dir for {selected_date} in {reg.upper()}")
+            # Clear lists date folder
+            lists_date = dirs['lists_dir'] / selected_date
+            if lists_date.exists():
+                shutil.rmtree(lists_date)
+                print(f"Cleared lists/{selected_date} for {reg.upper()}")
+            # Clear processed crm processor date folders
+            for proc in proc_list:
+                proc_date = dirs['processed_crm_dir'] / proc / selected_date
+                if proc_date.exists():
+                    shutil.rmtree(proc_date)
+                    print(f"Cleared processed/crm/{proc}/{selected_date} for {reg.upper()}")
+            # Clear processed crm combined date folder
+            combined_date = dirs['combined_crm_dir'] / selected_date
+            if combined_date.exists():
+                shutil.rmtree(combined_date)
+                print(f"Cleared processed/crm/combined/{selected_date} for {reg.upper()}")
+            # Clear processed crm unmatched_shifted_deposits date folder
+            unmatched_date = dirs['processed_unmatched_shifted_deposits_dir'] / selected_date
+            if unmatched_date.exists():
+                shutil.rmtree(unmatched_date)
+                print(f"Cleared processed/crm/unmatched_shifted_deposits/{selected_date} for {reg.upper()}")
+            # Clear processed processors processor date folders
+            for proc in proc_list:
+                proc_date = dirs['processed_processor_dir'] / proc / selected_date
+                if proc_date.exists():
+                    shutil.rmtree(proc_date)
+                    print(f"Cleared processed/processors/{proc}/{selected_date} for {reg.upper()}")
+            # Clear processed processors combined date folder
+            combined_proc_date = dirs['processed_processor_dir'] / 'combined' / selected_date
+            if combined_proc_date.exists():
+                shutil.rmtree(combined_proc_date)
+                print(f"Cleared processed/processors/combined/{selected_date} for {reg.upper()}")
+            # Extra for row: zotapay_paymentasia
+            if reg == 'row':
+                zota_pa_date = dirs['processed_processor_dir'] / 'zotapay_paymentasia' / selected_date
+                if zota_pa_date.exists():
+                    shutil.rmtree(zota_pa_date)
+                    print(f"Cleared processed/processors/zotapay_paymentasia/{selected_date} for {reg.upper()}")
+            # Remove crm file with date
+            crm_file = dirs['crm_dir'] / f"crm_{selected_date}.xlsx"
+            if crm_file.exists():
+                os.remove(crm_file)
+                print(f"Removed {crm_file} for {reg.upper()}")
+            # Remove processor files with date
+            for proc in proc_list:
+                for ext in ['xlsx', 'csv', 'xls']:
+                    p_file = dirs['processor_dir'] / f"{proc}_{selected_date}.{ext}"
+                    if p_file.exists():
+                        os.remove(p_file)
+                        print(f"Removed {p_file} for {reg.upper()}")
         rates_data = []
         for key, (input_field, _) in self.rate_inputs.items():
             from_curr, to_curr = key.split('_')
@@ -527,10 +592,6 @@ class ReconciliationWindow(QWidget):
             df.to_csv(file_path, index=False)
             for reg in ['row', 'uk']:
                 dirs = setup_dirs_for_reg(reg, create=True)
-                output_date_dir = dirs['output_dir'] / selected_date
-                if output_date_dir.exists():
-                    shutil.rmtree(output_date_dir)
-                    print(f"Cleared output dir for {selected_date} in {reg.upper()}")
                 reg_rates_path = dirs['rates_dir'] / f"rates_{selected_date}.csv"
                 shutil.copy(file_path, reg_rates_path)
             self.hide()

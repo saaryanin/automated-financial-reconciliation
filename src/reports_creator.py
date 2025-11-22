@@ -13,18 +13,19 @@ from src.withdrawals_matcher import match_withdrawals_for_date,run_cross_process
 from src.cross_regulation_matcher import run_cross_regulation_matching
 from src.files_renamer import run_renamer  # Added import for files_renamer
 
-def setup_regulation_structure(regulation, processors, date_str):
+def setup_regulation_structure(regulation, processors, date_str, require_crm=True):
     start_time = time.time()
     dirs = config.setup_dirs_for_reg(regulation, create=True)
     reg_crm_filepath = dirs['crm_dir'] / f"crm_{date_str}.xlsx"
-    if not reg_crm_filepath.exists():
-        print(f"CRM file not found at {reg_crm_filepath}")
-        exit(1)
+    if require_crm:
+        if not reg_crm_filepath.exists():
+            print(f"CRM file not found at {reg_crm_filepath}")
+            exit(1)
     end_time = time.time()
     print(f"Setup for {regulation.upper()} took {end_time - start_time:.2f} seconds")
     return {
         **dirs,
-        'crm_filepath': reg_crm_filepath
+        'crm_filepath': reg_crm_filepath if require_crm else None
     }
 
 row_processors = [
@@ -40,44 +41,47 @@ def get_processor_home_reg(proc):
     else:
         return 'row'
 
-def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None, date_str=None, processors=None):
+def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None, date_str=None, processors=None, processors_only=False):
     start_time = time.time()
     if processors is None:
         processors = row_processors if regulation == 'row' else uk_processors
     if dirs is None:
-        dirs = setup_regulation_structure(regulation, processors, date_str)
-    crm_df = pd.read_excel(dirs['crm_filepath'], engine="openpyxl")
-    crm_df.columns = crm_df.columns.str.strip()
-    if transaction_type == 'deposit':
-        previous_date_str = get_previous_business_day(date_str)
-        prev_unmatched_path = dirs['lists_dir'] / previous_date_str / f"{regulation}_unmatched_shifted_deposits.xlsx"
-        if prev_unmatched_path.exists():
-            prev_df = pd.read_excel(prev_unmatched_path, engine="openpyxl")
-            prev_df.columns = prev_df.columns.str.strip()
-            crm_df = pd.concat([crm_df, prev_df], ignore_index=True)
-            print(f"Appended {len(prev_df)} rows from previous unmatched shifted deposits for {regulation}")
-    crm_df['regulation'] = crm_df['Site (Account) (Account)'].apply(categorize_regulation)
-    if regulation == 'row':
-        row_regs = ['mauritius', 'cyprus', 'australia']
-        crm_df = crm_df[crm_df['regulation'].isin(row_regs)]
-        mask_aus = crm_df['regulation'] == 'australia'
-        mask_psp = crm_df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
-        crm_df = crm_df[~(mask_aus & mask_psp)]
-    elif regulation == 'uk':
-        crm_df = crm_df[crm_df['regulation'] == 'uk']
-    crm_df["PSP name"] = crm_df["PSP name"].astype(str).str.strip().str.lower().replace(PSP_NAME_MAP)
-    if regulation == 'uk':
-        crm_df["PSP name"] = crm_df["PSP name"].replace({'safecharge': 'safechargeuk'})
-    # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
-    neteller_mask = crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
-    crm_df.loc[neteller_mask, "PSP name"] = "neteller"
-    name_mask = crm_df["Name"].str.lower() == transaction_type
-    unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
-    filtered_processors = [p for p in processors if p in unique_psps]
-    if regulation == 'uk':
-        additional_psps = [p for p in row_processors if p not in ['safecharge'] and p in unique_psps]
-        filtered_processors += additional_psps
-    filtered_processors = list(set(filtered_processors)) # Dedup
+        dirs = setup_regulation_structure(regulation, processors, date_str, require_crm=not processors_only)
+    if not processors_only:
+        crm_df = pd.read_excel(dirs['crm_filepath'], engine="openpyxl")
+        crm_df.columns = crm_df.columns.str.strip()
+        if transaction_type == 'deposit':
+            previous_date_str = get_previous_business_day(date_str)
+            prev_unmatched_path = dirs['lists_dir'] / previous_date_str / f"{regulation}_unmatched_shifted_deposits.xlsx"
+            if prev_unmatched_path.exists():
+                prev_df = pd.read_excel(prev_unmatched_path, engine="openpyxl")
+                prev_df.columns = prev_df.columns.str.strip()
+                crm_df = pd.concat([crm_df, prev_df], ignore_index=True)
+                print(f"Appended {len(prev_df)} rows from previous unmatched shifted deposits for {regulation}")
+        crm_df['regulation'] = crm_df['Site (Account) (Account)'].apply(categorize_regulation)
+        if regulation == 'row':
+            row_regs = ['mauritius', 'cyprus', 'australia']
+            crm_df = crm_df[crm_df['regulation'].isin(row_regs)]
+            mask_aus = crm_df['regulation'] == 'australia'
+            mask_psp = crm_df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
+            crm_df = crm_df[~(mask_aus & mask_psp)]
+        elif regulation == 'uk':
+            crm_df = crm_df[crm_df['regulation'] == 'uk']
+        crm_df["PSP name"] = crm_df["PSP name"].astype(str).str.strip().str.lower().replace(PSP_NAME_MAP)
+        if regulation == 'uk':
+            crm_df["PSP name"] = crm_df["PSP name"].replace({'safecharge': 'safechargeuk'})
+        # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
+        neteller_mask = crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+        crm_df.loc[neteller_mask, "PSP name"] = "neteller"
+        name_mask = crm_df["Name"].str.lower() == transaction_type
+        unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
+        filtered_processors = [p for p in processors if p in unique_psps]
+        if regulation == 'uk':
+            additional_psps = [p for p in row_processors if p not in ['safecharge'] and p in unique_psps]
+            filtered_processors += additional_psps
+        filtered_processors = list(set(filtered_processors)) # Dedup
+    else:
+        filtered_processors = []
     potential_processors = processors
     if regulation == 'uk':
         potential_processors += [p for p in row_processors if p not in ['safecharge']]
@@ -89,27 +93,28 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None,
             if proc_file.exists() and proc not in filtered_processors:
                 filtered_processors.append(proc)
                 break
-    # Data validation: Check for missing 'Name' or 'PSP name'
-    invalid_rows = crm_df[crm_df['Name'].isna() | crm_df['PSP name'].isna()]
-    if not invalid_rows.empty:
-        print(
-            f"Warning: {len(invalid_rows)} CRM rows with missing 'Name' or 'PSP name' in {regulation.upper()} - dropping them.")
-        # Optionally save to a file for review:
-        # invalid_rows.to_excel(dirs['lists_dir'] / f"{regulation}_invalid_crm_rows.xlsx", index=False)
-    crm_df = crm_df.dropna(subset=['Name', 'PSP name'])
-    crm_start = time.time()
-    processed_crm_dfs = []
-    for proc in filtered_processors:
-        mask = crm_df["Name"].str.lower() == transaction_type
-        psp_mask = crm_df["PSP name"] == proc
-        subset = crm_df[mask & psp_mask].copy()
-        if regulation == 'uk' and proc == 'safechargeuk':
-            subset["PSP name"] = 'safecharge'
-        processed_subset = process_crm_subset(subset, proc, regulation, transaction_type, True, dirs['processed_crm_dir'], date_str)
-        if processed_subset is not None:
-            processed_crm_dfs.append(processed_subset)
-    crm_end = time.time()
-    print(f"CRM processing for {regulation.upper()} {transaction_type} took {crm_end - crm_start:.2f} seconds")
+    if not processors_only:
+        # Data validation: Check for missing 'Name' or 'PSP name'
+        invalid_rows = crm_df[crm_df['Name'].isna() | crm_df['PSP name'].isna()]
+        if not invalid_rows.empty:
+            print(
+                f"Warning: {len(invalid_rows)} CRM rows with missing 'Name' or 'PSP name' in {regulation.upper()} - dropping them.")
+            # Optionally save to a file for review:
+            # invalid_rows.to_excel(dirs['lists_dir'] / f"{regulation}_invalid_crm_rows.xlsx", index=False)
+        crm_df = crm_df.dropna(subset=['Name', 'PSP name'])
+        crm_start = time.time()
+        processed_crm_dfs = []
+        for proc in filtered_processors:
+            mask = crm_df["Name"].str.lower() == transaction_type
+            psp_mask = crm_df["PSP name"] == proc
+            subset = crm_df[mask & psp_mask].copy()
+            if regulation == 'uk' and proc == 'safechargeuk':
+                subset["PSP name"] = 'safecharge'
+            processed_subset = process_crm_subset(subset, proc, regulation, transaction_type, True, dirs['processed_crm_dir'], date_str)
+            if processed_subset is not None:
+                processed_crm_dfs.append(processed_subset)
+        crm_end = time.time()
+        print(f"CRM processing for {regulation.upper()} {transaction_type} took {crm_end - crm_start:.2f} seconds")
     proc_start = time.time()
     processor_file_paths = []
     for proc in filtered_processors:
@@ -170,6 +175,10 @@ def main(date_str, reg_choosing='all'):
         regs = ['row', 'uk']
     else:
         regs = [reg_choosing]
+    if reg_choosing == 'uk':
+        row_dirs = setup_regulation_structure('row', row_processors, date_str, require_crm=False)
+        preprocess_for_regulation('row', 'deposit', dirs=row_dirs, date_str=date_str, processors=row_processors, processors_only=True)
+        preprocess_for_regulation('row', 'withdrawal', dirs=row_dirs, date_str=date_str, processors=row_processors, processors_only=True)
     for reg in regs:
         if reg == 'row':
             processors = row_processors + ['safechargeuk']
@@ -206,8 +215,8 @@ def main(date_str, reg_choosing='all'):
 
 if __name__ == "__main__":
     import sys
-    date_str = '2025-10-21'
+    date_str = '2025-10-22'
     if len(sys.argv) > 1:
         date_str = sys.argv[1]
-    reg_choosing = sys.argv[2] if len(sys.argv) > 2 else 'all'
+    reg_choosing = sys.argv[2] if len(sys.argv) > 2 else 'row'
     main(date_str, reg_choosing)

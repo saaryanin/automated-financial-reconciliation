@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 import shutil
 import src.config as config
-from src.preprocess_test import load_crm_file, load_processor_file, combine_processed_files, process_files_in_parallel, PSP_NAME_MAP, process_crm_subset, extract_crm_transaction_id
+from src.preprocess import load_crm_file, load_processor_file, combine_processed_files, process_files_in_parallel, PSP_NAME_MAP, process_crm_subset, extract_crm_transaction_id
 from concurrent.futures import ThreadPoolExecutor
 from src.config import BASE_DIR, TEMP_DIR
 import time
@@ -34,9 +34,16 @@ row_processors = [
 uk_processors = [
     'safechargeuk', 'barclays', 'barclaycard'
 ]
-def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None, date_str=None):
+def get_processor_home_reg(proc):
+    if proc.lower() in uk_processors:
+        return 'uk'
+    else:
+        return 'row'
+
+def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None, date_str=None, processors=None):
     start_time = time.time()
-    processors = row_processors if regulation == 'row' else uk_processors
+    if processors is None:
+        processors = row_processors if regulation == 'row' else uk_processors
     if dirs is None:
         dirs = setup_regulation_structure(regulation, processors, date_str)
     crm_df = pd.read_excel(dirs['crm_filepath'], engine="openpyxl")
@@ -75,8 +82,10 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None,
     if regulation == 'uk':
         potential_processors += [p for p in row_processors if p not in ['safecharge']]
     for proc in potential_processors:
+        home_reg = get_processor_home_reg(proc)
+        proc_raw_dir = config.setup_dirs_for_reg(home_reg)['processor_dir']
         for ext in ['xlsx', 'csv', 'xls']:
-            proc_file = dirs['processor_dir'] / f"{proc}_{date_str}.{ext}"
+            proc_file = proc_raw_dir / f"{proc}_{date_str}.{ext}"
             if proc_file.exists() and proc not in filtered_processors:
                 filtered_processors.append(proc)
                 break
@@ -104,15 +113,19 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None,
     proc_start = time.time()
     processor_file_paths = []
     for proc in filtered_processors:
+        home_reg = get_processor_home_reg(proc)
+        proc_raw_dir = config.setup_dirs_for_reg(home_reg)['processor_dir']
+        found = False
         for ext in ['xlsx', 'csv', 'xls']:
-            proc_file = dirs['processor_dir'] / f"{proc}_{date_str}.{ext}"
+            proc_file = proc_raw_dir / f"{proc}_{date_str}.{ext}"
             if proc_file.exists():
                 processor_file_paths.append(proc_file)
+                found = True
                 break
-        else:
+        if not found:
             processor_file_paths.append(None)
     processed_proc_dfs = process_files_in_parallel(processor_file_paths, processor_names=filtered_processors, is_crm=False, save_clean=True, transaction_type=transaction_type, regulation=regulation,
-                                                   processed_processor_dir=dirs['processed_processor_dir'])
+                                                   processed_processor_dir=None)
     proc_end = time.time()
     print(f"Processor processing for {regulation.upper()} {transaction_type} took {proc_end - proc_start:.2f} seconds")
     # Special combine for zotapay and paymentasia for withdrawals
@@ -148,19 +161,26 @@ def preprocess_for_regulation(regulation, transaction_type='deposit', dirs=None,
     end_time = time.time()
     print(f"Preprocessed and combined {transaction_type}s for {regulation.upper()} regulation saved successfully. Total time: {end_time - start_time:.2f} seconds.")
 
-def main(date_str):
+def main(date_str, reg_choosing='all'):
     # Run the renamer first to process raw files into regulation-specific dirs
     run_renamer(forced_date=date_str)  # Optionally pass forced_date if needed for fallback
 
     overall_start = time.time()
-    for reg in ['row', 'uk']:
-        processors = row_processors if reg == 'row' else uk_processors
+    if reg_choosing == 'all':
+        regs = ['row', 'uk']
+    else:
+        regs = [reg_choosing]
+    for reg in regs:
+        if reg == 'row':
+            processors = row_processors + ['safechargeuk']
+        elif reg == 'uk':
+            processors = row_processors + uk_processors
         dirs = setup_regulation_structure(reg, processors, date_str)
-        preprocess_for_regulation(reg, 'deposit', dirs=dirs, date_str=date_str)
-        preprocess_for_regulation(reg, 'withdrawal', dirs=dirs, date_str=date_str)
+        preprocess_for_regulation(reg, 'deposit', dirs=dirs, date_str=date_str, processors=processors)
+        preprocess_for_regulation(reg, 'withdrawal', dirs=dirs, date_str=date_str, processors=processors)
     overall_end = time.time()
     print(f"Overall processing time: {overall_end - overall_start:.2f} seconds")
-    match_deposits_for_date(date_str)
+    match_deposits_for_date(date_str, reg_choosing)
     matched_sums = handle_shifts(date_str)
     if matched_sums:
         print("Matched Shifted Deposits by Currency:")
@@ -186,7 +206,8 @@ def main(date_str):
 
 if __name__ == "__main__":
     import sys
-    date_str = '2025-10-20'
+    date_str = '2025-10-21'
     if len(sys.argv) > 1:
         date_str = sys.argv[1]
-    main(date_str)
+    reg_choosing = sys.argv[2] if len(sys.argv) > 2 else 'all'
+    main(date_str, reg_choosing)

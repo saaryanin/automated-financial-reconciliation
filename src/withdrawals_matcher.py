@@ -501,9 +501,10 @@ class ReconciliationEngine:
                 if crm_group != proc_group:
                     continue  # Skip if different groups
 
-                # Skip cross for safechargeuk CRM with safecharge proc
-                if crm_row['crm_processor_name'].lower() == 'safechargeuk' and proc_row[
-                    'proc_processor_name'].lower() == 'safecharge':
+                # Skip cross for safechargeuk CRM with safecharge proc or safecharge CRM with safechargeuk proc
+                crm_pname_lower = crm_row['crm_processor_name'].lower()
+                proc_pname_lower = proc_row['proc_processor_name'].lower()
+                if (crm_pname_lower == 'safechargeuk' and proc_pname_lower == 'safecharge') or (crm_pname_lower == 'safecharge' and proc_pname_lower == 'safechargeuk'):
                     continue
                 proc_proc_name = proc_row['proc_processor_name'].lower()
                 proc_config = self.get_processor_config(proc_proc_name)
@@ -1041,8 +1042,9 @@ class ReconciliationEngine:
         if self.config.get('force_skip_proc_check', False) or skip_proc_check:
             indices = [i for i in proc_dict if i not in used]
         else:
+            accepted_proc = ['safecharge', 'safechargeuk'] if crm_proc_name in ['safecharge', 'safechargeuk'] else [crm_proc_name]
             indices = [i for i in proc_dict if
-                       i not in used and proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
+                       i not in used and proc_dict[i].get('proc_processor_name', '').lower() in accepted_proc]
         if crm_last4 and crm_last4_normalized in last4_map and proc_config.require_last4:
             print("crm_last4_normalized: " + crm_last4_normalized)
             print("in_last4_map: " + str(crm_last4_normalized in last4_map))
@@ -2112,8 +2114,9 @@ class ReconciliationEngine:
         if self.config.get('force_skip_proc_check', False) or skip_proc_check:
             indices = [i for i in proc_dict if i not in used]
         else:
+            accepted_proc = ['safecharge', 'safechargeuk'] if crm_proc_name in ['safecharge', 'safechargeuk'] else [crm_proc_name]
             indices = [i for i in proc_dict if
-                       i not in used and proc_dict[i].get('proc_processor_name', '').lower() == 'safechargeuk']
+                       i not in used and proc_dict[i].get('proc_processor_name', '').lower() in accepted_proc]
         if crm_last4 and crm_last4_normalized in last4_map and proc_config.require_last4:
             map_indices = last4_map[crm_last4_normalized]
             print("map_indices: " + str(map_indices))
@@ -2166,12 +2169,6 @@ class ReconciliationEngine:
                         name_fallback = True
                     else:
                         continue
-            # Special logic for safechargeuk when no last4
-            if not valid_last4:
-                if email_sim >= 0.8:
-                    last4_match = False
-                else:
-                    continue
             # SafeCharge-specific logic: If proc_email is blank, rely only on last4
             if getattr(proc_config, 'allow_last4_only_if_email_blank', False) and not proc_email:
                 if not last4_match:
@@ -2293,6 +2290,7 @@ class ReconciliationEngine:
                 print(f"Error building match for crm_email {crm_email}: {str(e)}")
                 print("Not returning match for crm_email: " + str(crm_email) + " - reason: " + str(e))
                 return None, {'failure_reason': str(e)}
+            return match, {}
         except Exception as e:
             print(f"Error building match for crm_email {crm_email}: {str(e)}")
             print("Not returning match for crm_email: " + str(crm_email) + " - reason: " + str(e))

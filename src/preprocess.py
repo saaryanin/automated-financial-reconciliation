@@ -968,18 +968,9 @@ def process_files_in_parallel(file_paths, processor_names=None, is_crm=False, sa
 # ----------------------------
 # Processor File Loader
 # ----------------------------
-def get_processor_home_reg(proc):
-    uk_processors = ['safechargeuk', 'barclays', 'barclaycard']
-    if proc.lower() in uk_processors:
-        return 'uk'
-    else:
-        return 'row'
-
 def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit",
                         processed_processor_dir=None, regulation: str = None) -> pd.DataFrame:
-    if processed_processor_dir is None:
-        home_reg = get_processor_home_reg(processor_name)
-        processed_processor_dir = config.setup_dirs_for_reg(home_reg)['processed_processor_dir']
+    processed_processor_dir = processed_processor_dir or config.PROCESSED_PROCESSOR_DIR
     print(f"Using processed_processor_dir for load_processor_file: {processed_processor_dir}")
     # Check if file exists before processing
     if not Path(filepath).exists():
@@ -1068,9 +1059,7 @@ def combine_processed_files(
         else:
             print(f" CRM processed file not found for {proc}: {crm_f}")
     for proc in all_processors: # Only original processors for processor files
-        home_reg = get_processor_home_reg(proc)
-        proc_processed_dir = config.setup_dirs_for_reg(home_reg)['processed_processor_dir']
-        proc_f = proc_processed_dir / proc / date / proc_file_template.format(proc)
+        proc_f = processed_proc_dir / proc / date / proc_file_template.format(proc)
         print(f"Looking for processor file: {proc_f}")
         if proc_f.exists():
             df = pd.read_excel(proc_f, dtype={'transaction_id': str} if transaction_type == "deposit" else None)

@@ -1213,6 +1213,15 @@ def main(date_str):
                 print(f"Failed to remove {item}: {e}")
         output_dir = OUTPUT_DIR / date_str
         output_dir.mkdir(parents=True, exist_ok=True)
+        # Replace safechargeuk with safecharge in matching files
+        for matching_file in [f"{regulation}_deposits_matching.xlsx", f"{regulation}_withdrawals_matching.xlsx"]:
+            matching_path = LISTS_DIR / date_str / matching_file
+            if matching_path.exists():
+                df = pd.read_excel(matching_path)
+                if 'proc_processor_name' in df.columns:
+                    df['proc_processor_name'] = df['proc_processor_name'].replace('safechargeuk', 'safecharge')
+                    df.to_excel(matching_path, index=False)
+                    print(f"Updated {matching_path} by replacing safechargeuk with safecharge in proc_processor_name")
         if matched_sums and regulation in matched_sums:
             df = pd.DataFrame([matched_sums[regulation]])
             if df.empty:

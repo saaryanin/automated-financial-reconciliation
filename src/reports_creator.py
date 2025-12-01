@@ -152,6 +152,20 @@ def main(date_str):
     # Run the renamer first to process raw files into regulation-specific dirs
     run_renamer(forced_date=date_str)  # Optionally pass forced_date if needed for fallback
 
+    # Copy shared processor files to UK processor_reports (after renamer has placed them in ROW)
+    shared_processors = ['trustpayments', 'shift4', 'skrill', 'powercash', 'paypal', 'neteller']
+    row_processor_dir = TEMP_DIR / 'ROW' / 'data' / 'processor_reports'
+    uk_processor_dir = TEMP_DIR / 'UK' / 'data' / 'processor_reports'
+    uk_processor_dir.mkdir(parents=True, exist_ok=True)
+    for shared in shared_processors:
+        for ext in ['.xlsx', '.csv', '.xls']:
+            src_file = row_processor_dir / f"{shared}_{date_str}{ext}"
+            if src_file.exists():
+                dst_file = uk_processor_dir / src_file.name
+                shutil.copy(src_file, dst_file)
+                print(f"Copied shared processor file: {src_file} to {dst_file}")
+                break
+
     overall_start = time.time()
     for reg in ['row', 'uk']:
         processors = row_processors if reg == 'row' else uk_processors
@@ -186,7 +200,7 @@ def main(date_str):
 
 if __name__ == "__main__":
     import sys
-    date_str = '2025-10-20'
+    date_str = '2025-11-28'
     if len(sys.argv) > 1:
         date_str = sys.argv[1]
     main(date_str)

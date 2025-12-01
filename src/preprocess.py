@@ -1,5 +1,4 @@
-# preprocess_test.py (updated: removed unused previous_date_str in load_crm_file; removed add previous shifted section in combine_processed_files)
-# preprocess_test.py (Corrected with proper print placements, fixed typos, and syntax; added optional path params for flexibility)
+# preprocess.py (updated with empty DF checks to avoid split/access errors on empty filtered data)
 import pandas as pd
 import re
 from pathlib import Path
@@ -58,6 +57,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df = df[keep_cols]
         allowed_types = ["Express Checkout Payment"]
         df = df[(df["Status"] == "Completed") & (df["Type"].isin(allowed_types))]
+        if df.empty:
+            return df
         df = df.rename(columns={"Transaction ID": "transaction_id", "Net": "amount", "From Email Address": "email",
                                 "Currency": "currency"})
         df['amount'] = abs(
@@ -74,6 +75,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
     # In standardize_processor_columns_deposits, change the "safecharge" block to handle both:
     elif processor in ["safecharge", "safechargeuk"]:
         df = df[(df["Transaction Type"].str.lower() == "sale") & (df["Transaction Result"].str.lower() == "approved")]
+        if df.empty:
+            return df
         keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result", "PAN",
                      "Email Address"] # Added "Email Address"
         df = df[keep_cols]
@@ -87,6 +90,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
                               'Email Address']) # Clean up, added 'Email Address' to drop
     elif processor == "powercash":
         df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (~df["Currency"].str.upper().isin(["CAD"]))]
+        if df.empty:
+            return df
         df = df[["Tx-Id", "Date", "Time", "Currency", "Amount", "Firstname", "Lastname", "EMail", "Custom 3",
                  "Credit Card Number"]]
         df = df.rename(
@@ -103,6 +108,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
     elif processor == "shift4":
         df = df[(df["Operation Type"].str.lower() == "sale") & (df["Response"].str.lower() == "completed successfully")]
+        if df.empty:
+            return df
         df = df[["Transaction Date", "Request ID (a1)", "Currency", "Amount", "Card Number", "Card Scheme",
                  "Cardholder Email", "Cardholder Name"]]
         df = df.rename(columns={"Transaction Date": "date", "Request ID (a1)": "transaction_id", "Amount": "amount",
@@ -129,6 +136,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         })
         df = df[(df["Type"].str.lower() == "receive money") & (df["Status"].str.lower() == "processed") & df[
             "amount"].notna()]
+        if df.empty:
+            return df
         df = df[~df["Transaction Details"].str.contains("fee", case=False, na=False)]
         df = df[["date", "transaction_id", "amount", "currency", "Transaction Details"]]
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
@@ -140,6 +149,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df = df.drop(columns=['Transaction Details'])
     elif processor == "trustpayments":
         df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
+        if df.empty:
+            return df
         df = df.rename(columns={
             "transactionreference": "transaction_id",
             "transactionstartedtimestamp": "date",
@@ -165,6 +176,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df.columns = df.iloc[0].str.strip()
         df = df.iloc[1:]
         df = df[(df["Type"].str.upper() == "SALE") & (df["Status"].str.lower() == "approved")]
+        if df.empty:
+            return df
         df = df.rename(columns={
             "ID": "transaction_id",
             "Order Currency": "currency",
@@ -189,6 +202,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
     elif processor == "bitpay":
         df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
         df = df[df["tx_type"].str.lower() == "sale"]
+        if df.empty:
+            return df
         df = df.rename(columns={
             "invoice_id": "transaction_id",
             "payout_amount": "amount",
@@ -227,6 +242,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['processor_name'] = processor
     elif processor == "paymentasia":
         df = df[(df["Type"].str.upper() == "SALE") & (df["Status"].str.upper() == "SUCCESS")]
+        if df.empty:
+            return df
         df = df.rename(columns={
             "Merchant Reference": "transaction_id",
             "Order Amount": "amount",
@@ -240,6 +257,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
     elif processor in ["barclays", "barclaycard"]:
         df = df[df["Current Status"].str.lower() == "captured"]
         df = df[df["Trans Type Code"].str.lower() == "purchase"]
+        if df.empty:
+            return df
         df["transaction_id"] = df["Audit Reference"]
         df["currency"] = df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
         df["amount"] = pd.to_numeric(df["Trans Amount(HUC)"], errors='coerce').abs()
@@ -266,6 +285,8 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
             return pd.DataFrame()
         df = df[(df["Type"].astype(str).str.upper() == "PAYOUT") &
                 (df["Status"].astype(str).str.upper() == "APPROVED")]
+        if df.empty:
+            return df
         df = df.rename(columns={
             "Order Amount": "amount",
             "Order Currency": "currency",
@@ -292,6 +313,8 @@ def patch_standardize_zotapay_paymentasia_withdrawals(df, processor):
         if missing_cols:
             return pd.DataFrame()
         df = df[df["Status"].astype(str).str.upper() == "SUCCESS"]
+        if df.empty:
+            return df
         df = df.rename(columns={
             "Order Amount": "amount",
             "Order Currency": "currency",
@@ -452,6 +475,8 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df = df.drop(index=list(to_remove))
         # 3. Now filter to just "Credit" for final withdrawals output
         df = df[df[colmap['transactiontype']] == credit_type]
+        if df.empty:
+            return pd.DataFrame()
         # --- Standardize columns as before ---
         df = df.rename(columns={
             colmap['amount']: "amount",
@@ -697,6 +722,8 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
     elif processor in ["barclays", "barclaycard"]:
         df = df[df["Current Status"].str.lower() == "captured"]
         df = df[df["Trans Type Code"].str.lower() == "refund"]
+        if df.empty:
+            return df
         df["transaction_id"] = df["Audit Reference"]
         df["currency"] = df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
         df["amount"] = pd.to_numeric(df["Trans Amount(HUC)"], errors='coerce').abs()

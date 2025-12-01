@@ -161,12 +161,15 @@ class ThirdWindow(QWidget):
         self.orig_indices = data_dict['orig_indices']
         self.orig_to_local = data_dict['orig_to_local']
         self.original_matching_df = data_dict['original_matching_df']
-        if data_dict.get('no_warnings', False) or self.warnings_df.empty:
-            QTimer.singleShot(0, self.on_next)
-            return
+
         # Initialise safe defaults (in case of no warnings / empty file)
         self.accepted_rows = {}
         self.other_paired_orig = []
+        self.differ_orig_indices = []  # Add this for safety, though not strictly necessary
+
+        if data_dict.get('no_warnings', False) or self.warnings_df.empty:
+            QTimer.singleShot(0, self.on_next)
+            return
         # (differ_orig_indices is only used for display – safe to leave uninitialised)
 
         # Clean processor columns

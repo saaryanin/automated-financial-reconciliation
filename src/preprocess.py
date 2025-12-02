@@ -866,7 +866,8 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
             "PSP name",
             "CC Last 4 Digits",
             "Name",
-            "Site (Account) (Account)"
+            "Site (Account) (Account)",
+            "Internal Comment"
         ]
         df = df[[col for col in needed_columns if col in df.columns]]
         if "transaction_id" in df.columns:
@@ -927,7 +928,7 @@ def process_crm_subset(df: pd.DataFrame, processor: str, regulation: str, transa
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
     if transaction_type == "withdrawal":
-        needed_columns = ["Created On", "First Name (Account) (Account)", "Last Name (Account) (Account)", "Email (Account) (Account)", "tp", "Amount", "Currency", "Method of Payment", "PSP name", "CC Last 4 Digits", "Name", "Site (Account) (Account)"]
+        needed_columns = ["Created On", "First Name (Account) (Account)", "Last Name (Account) (Account)", "Email (Account) (Account)", "tp", "Amount", "Currency", "Method of Payment", "PSP name", "CC Last 4 Digits", "Name", "Site (Account) (Account)", "Internal Comment"]
         df = df[[col for col in needed_columns if col in df.columns]]
         if "transaction_id" in df.columns:
             df = df.drop(columns=["transaction_id"])
@@ -1106,7 +1107,7 @@ def combine_processed_files(
         df = df.copy()
         # Always clean
         for col in ['Name', 'CC Last 4 Digits', 'PSP name', 'Email (Account) (Account)',
-                    'First Name (Account) (Account)', 'Last Name (Account) (Account)']:
+                    'First Name (Account) (Account)', 'Last Name (Account) (Account)', 'Internal Comment']:
             if col in df.columns:
                 df[col] = df[col].fillna('').astype(str).str.strip().str.lower()
         if 'Currency' not in df.columns:
@@ -1133,9 +1134,9 @@ def combine_processed_files(
             else:
                 base_cols = ['First Name (Account) (Account)', 'Last Name (Account) (Account)']
             if has_canc:
-                group_cols = base_cols + ['Currency']  # FIXED: remove 'abs_amount' to net across amounts
+                group_cols = base_cols + ['Currency', 'Internal Comment']
             else:
-                group_cols = base_cols + ['PSP name']
+                group_cols = base_cols + ['PSP name', 'Currency']
             for keys, sub_group in group.groupby(group_cols):
                 sub_group = sub_group[sub_group['Amount'].notna() & sub_group['Currency'].notna()]
                 if sub_group.empty:
@@ -1371,9 +1372,35 @@ def combine_processed_files(
                     "PSP name",
                     "CC Last 4 Digits",
                     "Name",
-                    "Site (Account) (Account)"
+                    "Site (Account) (Account)",
+                    "Internal Comment"
                 ]
                 df_cancels = df_cancels[[col for col in needed_columns if col in df_cancels.columns]]
+                # Infer PSP name for cancellations based on Internal Comment patterns
+                patterns = {
+                    "paypal": r"PSP TransactionId:([A-Z0-9]+)",
+                    "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
+                    "powercash": r"PSP TransactionId:(\d+)",
+                    "shift4": r"More Comment:[^$]*\$(\w+)",
+                    "skrill": r"More Comment:[^$]*\$(\d+)",
+                    "neteller": r"More Comment:[^$]*\$(\d+)",
+                    "trustpayments": r"PSP TransactionId:([\d\-]+)|More Comment:[^$]*\$(\d{2}-\d{2}-\d+)",
+                    "zotapay": r"PSP TransactionId:(\d+)",
+                    "bitpay": r"PSP TransactionId:([A-Za-z0-9]+)",
+                    "ezeebill": r"(\d{7}-\d{18})",
+                    "paymentasia": r"(\d{7}-\d{18})",
+                    "barclays": r"PSP TransactionId:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
+                    'safechargeuk': r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
+                }
+                for idx, row in df_cancels.iterrows():
+                    comment = str(row.get('Internal Comment', ''))
+                    inferred_proc = None
+                    for proc, pattern in patterns.items():
+                        if re.search(pattern, comment):
+                            inferred_proc = proc
+                            break
+                    if inferred_proc:
+                        df_cancels.at[idx, 'PSP name'] = inferred_proc
                 combined_crm = pd.concat([combined_crm, df_cancels], ignore_index=True)
             combined_crm = group_crm_withdrawals(combined_crm, exchange_rate_map)
         # No grouping for deposits
@@ -1516,6 +1543,46 @@ def combine_processed_files(
         print(f"Combined proc columns: {combined_proc.columns.tolist()}") # Debug print
     else:
         print("No processor files found to combine.")
+def append_unmatched_to_combined(date_str, unmatched_path_str, regulation: str, combined_crm_dir=None):
+    combined_crm_dir = combined_crm_dir or config.COMBINED_CRM_DIR
+    combined_path = combined_crm_dir / date_str / "combined_crm_deposits.xlsx" # Removed regulation.upper()
+    unmatched_path = Path(unmatched_path_str)
+    if not combined_path.exists():
+        logging.info(f"Combined CRM file not found: {combined_path}")
+        return
+    if not unmatched_path.exists():
+        logging.info(f"Unmatched shifted deposits file not found: {unmatched_path}")
+        return
+    df_combined = pd.read_excel(combined_path, dtype={'crm_transaction_id': str})
+    df_unmatched = pd.read_excel(unmatched_path, dtype={'crm_transaction_id': str})
+    combined_cols = set(df_combined.columns)
+    unmatched_cols = set(df_unmatched.columns)
+    if combined_cols != unmatched_cols:
+        logging.warning(f"Column mismatch between combined ({combined_cols}) and unmatched ({unmatched_cols}). Appending anyway.")
+    existing_ids = set(df_combined['crm_transaction_id'].dropna().unique())
+    if 'crm_transaction_id' in df_unmatched.columns:
+        df_unmatched_to_append = df_unmatched[~df_unmatched['crm_transaction_id'].isin(existing_ids)]
+    else:
+        df_unmatched_to_append = df_unmatched
+    logging.info(f"Rows to append after filtering: {df_unmatched_to_append.shape[0]}")
+    if not df_unmatched_to_append.empty:
+        df_updated = pd.concat([df_combined, df_unmatched_to_append], ignore_index=True)
+        if 'crm_date' in df_updated.columns:
+            df_updated['crm_date'] = pd.to_datetime(df_updated['crm_date'], errors='coerce').dt.strftime(
+                '%m/%d/%Y %I:%M:%S %p')
+        key_cols = ['crm_transaction_id', 'crm_tp', 'crm_email', 'crm_amount']
+        df_updated = df_updated.drop_duplicates(subset=[col for col in key_cols if col in df_updated.columns])
+        logging.info(f"Updated combined_crm_deposits shape after append and dedup: {df_updated.shape}")
+        with pd.ExcelWriter(combined_path, engine='openpyxl') as writer:
+            df_updated.to_excel(writer, index=False, sheet_name='Sheet1')
+            if 'crm_transaction_id' in df_updated.columns:
+                worksheet = writer.sheets['Sheet1']
+                trans_col = df_updated.columns.get_loc('crm_transaction_id') + 1
+                for row in range(2, len(df_updated) + 2):
+                    worksheet.cell(row=row, column=trans_col).number_format = '@'
+        logging.info(f"Appended unmatched shifted deposits to {combined_path}")
+    else:
+        logging.info("No new rows to append.")
 def append_unmatched_to_combined(date_str, unmatched_path_str, regulation: str, combined_crm_dir=None):
     combined_crm_dir = combined_crm_dir or config.COMBINED_CRM_DIR
     combined_path = combined_crm_dir / date_str / "combined_crm_deposits.xlsx" # Removed regulation.upper()

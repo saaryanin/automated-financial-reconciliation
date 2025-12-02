@@ -2,8 +2,8 @@ import os
 import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QGridLayout, QFileDialog, QMessageBox, QCalendarWidget,
-                             QToolButton, QSizePolicy)
-from PyQt5.QtCore import Qt, QDate, QRegExp
+                             QToolButton, QSizePolicy, QTableView)
+from PyQt5.QtCore import Qt, QDate, QRegExp, QTimer
 from PyQt5.QtGui import QRegExpValidator
 from second_window import SecondWindow  # NEW: Import the new second window class
 import pandas as pd
@@ -314,6 +314,15 @@ class ReconciliationWindow(QWidget):
         self.calendar.setWindowFlags(Qt.Popup)  # Removed FramelessWindowHint
         self.calendar.clicked.connect(self.calendar_date_selected)
         self.calendar.currentPageChanged.connect(self.update_calendar_layout)  # New: Handle page changes
+        # Temporarily switch to a known 6-row month to compute max height
+        orig_date = self.calendar.selectedDate()
+        self.calendar.setSelectedDate(QDate(2025, 11, 1))  # November 2025 has 6 rows
+        self.calendar.updateGeometry()
+        self.calendar.adjustSize()
+        max_height = self.calendar.sizeHint().height()
+        self.calendar.setFixedHeight(max_height+30)
+        # Restore original date
+        self.calendar.setSelectedDate(orig_date)
 
         self.date_button = QToolButton()
         self.date_button.setAutoFillBackground(True)
@@ -384,8 +393,11 @@ class ReconciliationWindow(QWidget):
 
     def update_calendar_layout(self, year, month):
         """Force layout update when the calendar page changes."""
+        view = self.calendar.findChild(QTableView, "qt_calendar_calendarview")
+        if view:
+            QTimer.singleShot(0, lambda: view.verticalScrollBar().setValue(0))
         self.calendar.updateGeometry()
-        self.calendar.adjustSize()
+        self.calendar.repaint()
 
     def on_date_edited(self):
         """Validate and update date on editing finished."""
@@ -417,6 +429,9 @@ class ReconciliationWindow(QWidget):
             y_pos = min(button_pos.y(), screen.height() - calendar_height - 10)
             self.calendar.move(x_pos, y_pos)
             self.calendar.show()
+            view = self.calendar.findChild(QTableView, "qt_calendar_calendarview")
+            if view:
+                QTimer.singleShot(0, lambda: view.verticalScrollBar().setValue(0))
 
     def show_warning(self, title, text):
         msg = QMessageBox(self)

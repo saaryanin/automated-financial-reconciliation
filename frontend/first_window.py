@@ -422,13 +422,33 @@ class ReconciliationWindow(QWidget):
             self.calendar.hide()
         else:
             button_pos = self.date_button.mapToGlobal(self.date_button.rect().bottomLeft())
+            desktop = QApplication.desktop()
+            screen_index = desktop.screenNumber(button_pos)
+            screen_geom = desktop.screenGeometry(screen_index)
+
             calendar_width = self.calendar.width()
             calendar_height = self.calendar.height()
-            screen = QApplication.desktop().screenGeometry()
-            x_pos = min(button_pos.x() + 5, screen.width() - calendar_width)
-            y_pos = min(button_pos.y(), screen.height() - calendar_height - 10)
+
+            # Position below the button by default
+            x_pos = button_pos.x() + 5
+            y_pos = button_pos.y()
+
+            # Clamp X to screen boundaries
+            if x_pos + calendar_width > screen_geom.right():
+                x_pos = screen_geom.right() - calendar_width
+            if x_pos < screen_geom.left():
+                x_pos = screen_geom.left()
+
+            # Clamp Y to screen boundaries, flipping above button if no space below
+            if y_pos + calendar_height > screen_geom.bottom():
+                y_pos = button_pos.y() - calendar_height - self.date_button.height() - 5  # Flip above
+            if y_pos < screen_geom.top():
+                y_pos = screen_geom.top()
+
             self.calendar.move(x_pos, y_pos)
             self.calendar.show()
+
+            # Existing scroll reset (keep this)
             view = self.calendar.findChild(QTableView, "qt_calendar_calendarview")
             if view:
                 QTimer.singleShot(0, lambda: view.verticalScrollBar().setValue(0))

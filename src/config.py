@@ -2,10 +2,11 @@
 import sys
 from pathlib import Path
 import tempfile
+import os
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
-    TEMP_DIR = BASE_DIR / "temp"
+    TEMP_DIR = Path(tempfile.gettempdir()) / "ReconciliationSystem_temp"
     TEMP_DIR.mkdir(exist_ok=True)
 else:
     BASE_DIR = Path(__file__).resolve().parent.parent

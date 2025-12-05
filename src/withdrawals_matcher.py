@@ -542,7 +542,7 @@ class ReconciliationEngine:
             crm_reg_lower = crm_row['regulation'].lower()
             crm_proc = crm_row.get('crm_processor_name')
             if pd.isna(crm_proc):
-                continue  # Skip this CRM row if processor name is missing (cannot determine cross logic)
+                continue
             crm_proc_lower = str(crm_proc).lower()
             if crm_reg_lower == 'uk':
                 target_proc = 'safecharge'  # UK CRM → ROW safecharge
@@ -550,22 +550,23 @@ class ReconciliationEngine:
             else:
                 target_proc = 'safechargeuk'  # ROW CRM → UK safechargeuk
                 match_func = self._match_safechargeuk_row
-        proc_config = self.get_processor_config(target_proc)
-        indices = [i for i in proc_dict if
-                   proc_dict[i]['proc_processor_name'].lower() == target_proc and i not in used_proc]
-        if not indices:
             proc_config = self.get_processor_config(target_proc)
             indices = [i for i in proc_dict if
                        proc_dict[i]['proc_processor_name'].lower() == target_proc and i not in used_proc]
-            sample_crm_email = str(crm_row.get('crm_email', '')).lower()
-            sample_crm_last4 = str(crm_row.get('crm_last4', ''))
-            if 'bristol' in sample_crm_email or 'ronpierre' in sample_crm_email or sample_crm_last4 in ['824', '476']:
-                print(
-                    f"DEBUG Cross enter: crm_idx={crm_idx}, reg={crm_reg_lower}, crm_proc={crm_proc_lower}, target_proc={target_proc}, indices_len={len(indices)}")
-                if indices:
-                    sample_proc = proc_dict[indices[0]]
+            if not indices:
+                proc_config = self.get_processor_config(target_proc)
+                indices = [i for i in proc_dict if
+                           proc_dict[i]['proc_processor_name'].lower() == target_proc and i not in used_proc]
+                sample_crm_email = str(crm_row.get('crm_email', '')).lower()
+                sample_crm_last4 = str(crm_row.get('crm_last4', ''))
+                if 'bristol' in sample_crm_email or 'ronpierre' in sample_crm_email or sample_crm_last4 in ['824',
+                                                                                                            '476']:
                     print(
-                        f"DEBUG Cross sample proc: last4={sample_proc.get('proc_last4')}, email={sample_proc.get('proc_email')}, proc_name={sample_proc.get('proc_processor_name')}")
+                        f"DEBUG Cross enter: crm_idx={crm_idx}, reg={crm_reg_lower}, crm_proc={crm_proc_lower}, target_proc={target_proc}, indices_len={len(indices)}")
+                    if indices:
+                        sample_proc = proc_dict[indices[0]]
+                        print(
+                            f"DEBUG Cross sample proc: last4={sample_proc.get('proc_last4')}, email={sample_proc.get('proc_email')}, proc_name={sample_proc.get('proc_processor_name')}")
             temp_proc_dict = {k: proc_dict[k] for k in indices}
             temp_last4_map = defaultdict(list)
             for ii in indices:

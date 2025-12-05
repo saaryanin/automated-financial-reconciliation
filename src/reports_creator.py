@@ -200,7 +200,7 @@ def main(date_str):
 
 if __name__ == "__main__":
     import sys
-    date_str = '2025-11-28'
+    date_str = '2025-12-03'
     if len(sys.argv) > 1:
         date_str = sys.argv[1]
     main(date_str)

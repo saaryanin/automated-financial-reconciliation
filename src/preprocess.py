@@ -536,26 +536,37 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df["Response"] = df["Response"].astype(str).str.strip().str.lower()
         df["Cardholder Email"] = df["Cardholder Email"].astype(str).str.strip().str.lower()
         df["Card Number"] = df["Card Number"].astype(str).str.strip()
+        df["Cardholder Name"] = df["Cardholder Name"].astype(str).str.strip().str.lower()
+        df["Merchant Reference Number"] = df["Merchant Reference Number"].astype(
+            str).str.strip() if "Merchant Reference Number" in df.columns else ''
         # Pull all withdrawals and voids first
-        relevant_mask = df["Operation Type"].isin(["referral credit", "sale void", "refund void"]) & (
-                    df["Response"] == "completed successfully")
+        relevant_mask = df["Operation Type"].isin(["referral credit", "sale void", "refund void", "referral cft"]) & (
+                df["Response"] == "completed successfully")
         df = df[relevant_mask].copy()
         if df.empty:
             return pd.DataFrame()
-        # Remove both 'refund void' and its matching 'referral credit' (same email+amount+currency)
+        # Remove both 'refund void' and its matching 'referral credit' (same email+amount+currency+last4+name+merchant_ref)
         to_remove = set()
         refund_voids = df[df["Operation Type"] == "refund void"]
         for idx_rv, refund_row in refund_voids.iterrows():
             email = refund_row["Cardholder Email"]
-            amount = clean_amount(refund_row["Amount"])
+            amount = abs(clean_amount(refund_row["Amount"]))  # Use abs for matching
             currency = refund_row["Currency"]
-            # Scan for matching referral credit rows (above/below), same email/amount+currency
+            card_num = refund_row["Card Number"]
+            name = refund_row["Cardholder Name"]
+            merchant_ref = refund_row["Merchant Reference Number"]
+            # Scan for matching referral credit rows
             mask = (
                     (df["Operation Type"] == "referral credit") &
-                    (df["Cardholder Email"] == email) &
                     (df["Currency"] == currency) &
-                    (df["Amount"].apply(clean_amount) == amount)
+                    (df["Amount"].apply(lambda x: abs(clean_amount(x))) == amount) &
+                    (df["Card Number"] == card_num) &
+                    (df["Cardholder Name"] == name)
             )
+            if pd.notna(email) and str(email).strip() and str(email).lower() != 'nan':
+                mask = mask & (df["Cardholder Email"] == email)
+            if pd.notna(merchant_ref) and str(merchant_ref).strip() and str(merchant_ref).lower() != 'nan':
+                mask = mask & (df["Merchant Reference Number"] == merchant_ref)
             possible_matches = df[mask]
             # Remove first match (if any)
             for idx_ref in possible_matches.index:
@@ -563,14 +574,15 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
                 to_remove.add(idx_ref)
                 break
         df = df.drop(index=list(to_remove))
-        # Only keep real withdrawals ("referral credit" or "sale void")
-        keep_mask = df["Operation Type"].isin(["referral credit", "sale void"])
+        # Only keep real withdrawals ("referral credit" or "sale void" or "referral cft")
+        keep_mask = df["Operation Type"].isin(["referral credit", "sale void", "referral cft"])
         df = df[keep_mask]
         if df.empty:
             return pd.DataFrame()
         # Standardize schema
         df = df[[
-            "Transaction Date", "Card Number", "Currency", "Amount", "Cardholder Name", "Cardholder Email"
+            "Transaction Date", "Card Number", "Currency", "Amount", "Cardholder Name", "Cardholder Email",
+            "Merchant Reference Number"
         ]].copy()
         df = df.rename(columns={
             "Transaction Date": "date",
@@ -578,12 +590,15 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             "Amount": "amount",
             "Cardholder Email": "email"
         })
-        df["amount"] = df["amount"].apply(clean_amount)
-        df["last_4cc"] = df["Card Number"].astype(str).str.extract(r"(\d{4})$").fillna("")
+        df["amount"] = df["amount"].apply(lambda x: -abs(clean_amount(x)))  # Make all negative
+        df["last_4cc"] = df["Card Number"].astype(str).str.replace(r'\D', '', regex=True).str[-4:].str.zfill(4)
         name_split = df["Cardholder Name"].astype(str).str.split(n=1, expand=True)
         df["first_name"] = name_split[0].str.rstrip("*")
         df["last_name"] = name_split[1].str.rstrip("*") if name_split.shape[1] > 1 else ""
         df["processor_name"] = "shift4"
+        # Drop unneeded columns
+        drop_cols = ["Card Number", "Cardholder Name", "Merchant Reference Number"]
+        df = df.drop(columns=[col for col in drop_cols if col in df.columns])
         return df[[
             "amount", "currency", "date", "last_4cc", "email",
             "first_name", "last_name", "processor_name"

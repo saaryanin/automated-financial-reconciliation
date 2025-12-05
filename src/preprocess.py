@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from src.config import PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR, LISTS_DIR, COMBINED_CRM_DIR
+import src.config as config
 from collections import Counter
 from dateutil import parser
 import dateutil.parser
@@ -812,7 +812,12 @@ def clean_crm_amount(amt):
     except ValueError:
         return 0.0
 
-def load_crm_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
+def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clean=False, transaction_type="deposit",
+                  lists_dir=None, processed_crm_dir=None) -> pd.DataFrame:
+    # Get directories from regulation if not provided
+    dirs = config.setup_dirs_for_reg(regulation, create=True)
+    lists_dir = lists_dir or dirs['lists_dir']
+    processed_crm_dir = processed_crm_dir or dirs['processed_crm_dir']
     # Define normalized_processor at the start
     normalized_processor = processor_name.lower()
     # Calculate relevant previous date based on the current day
@@ -829,7 +834,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
     mask_psp = df["PSP name"].str.lower().isin(['paypal', 'inpendium'])
     df = df[~(mask_aus & mask_psp)]
     # Load and process unmatched_shifted_deposits from the previous day
-    previous_unmatched_path = LISTS_DIR / previous_date_str / "unmatched_shifted_deposits.xlsx"
+    previous_unmatched_path = lists_dir / previous_date_str / "unmatched_shifted_deposits.xlsx"
     if previous_unmatched_path.exists():
         unmatched_df = pd.read_excel(previous_unmatched_path, dtype={'crm_transaction_id': str})
         logging.info(
@@ -925,7 +930,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
             logging.info(f"Added {len(new_deposits)} new unmatched deposits from {previous_date_str}")
         # Save the processed unmatched data
         if save_clean:
-            unmatched_out_path = PROCESSED_CRM_DIR / "unmatched_shifted_deposits" / date_str / "unmatched_shifted_deposits.xlsx"
+            unmatched_out_path = processed_crm_dir / "unmatched_shifted_deposits" / date_str / "unmatched_shifted_deposits.xlsx"
             unmatched_out_path.parent.mkdir(parents=True, exist_ok=True)
             unmatched_mapped.to_excel(unmatched_out_path, index=False)
             logging.info(f"Saved unmatched deposits to {unmatched_out_path}")
@@ -1007,7 +1012,7 @@ def load_crm_file(filepath: str, processor_name: str, save_clean=False, transact
         # Save processed CRM file
         folder_name = "zotapay_paymentasia" if normalized_processor in ["zotapay", "paymentasia"] else normalized_processor
         folder = f"{folder_name}_{transaction_type}s.xlsx"
-        out_path = PROCESSED_CRM_DIR / folder_name / date_str / folder
+        out_path = processed_crm_dir / folder_name / date_str / folder
         out_path.parent.mkdir(parents=True, exist_ok=True)
         # If df is empty after filtering, create an empty DataFrame with the needed columns
         if df.empty:
@@ -1071,8 +1076,10 @@ def get_previous_business_day(current_date_str):
 # ----------------------------
 # Parallel Batch Processor
 # ----------------------------
-def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, save_clean=True,
+def process_files_in_parallel(file_paths, processor_name=None, regulation: str = None, is_crm=False, save_clean=True,
                               transaction_type="deposit"):
+    if regulation is None:
+        raise ValueError("regulation parameter is required")
     valid_paths = [str(p) for p in file_paths if Path(p).exists()]
     if not valid_paths:
         return []
@@ -1080,16 +1087,20 @@ def process_files_in_parallel(file_paths, processor_name=None, is_crm=False, sav
         futures = []
         for path in file_paths:
             if is_crm:
-                futures.append(executor.submit(load_crm_file, str(path), processor_name, save_clean, transaction_type))
+                futures.append(executor.submit(load_crm_file, str(path), processor_name, regulation, save_clean, transaction_type))
             else:
-                futures.append(executor.submit(load_processor_file, str(path), processor_name, save_clean, transaction_type=transaction_type))
+                futures.append(executor.submit(load_processor_file, str(path), processor_name, regulation, save_clean, transaction_type=transaction_type))
         results = [f.result() for f in futures]
     return results
 
 # ----------------------------
 # Processor File Loader
 # ----------------------------
-def load_processor_file(filepath: str, processor_name: str, save_clean=False, transaction_type="deposit") -> pd.DataFrame:
+def load_processor_file(filepath: str, processor_name: str, regulation: str, save_clean=False,
+                        transaction_type="deposit", processed_processor_dir=None) -> pd.DataFrame:
+    # Get directories from regulation if not provided
+    dirs = config.setup_dirs_for_reg(regulation, create=True)
+    processed_processor_dir = processed_processor_dir or dirs['processed_processor_dir']
     # Check if file exists before processing
     if not Path(filepath).exists():
         return None  # Return None instead of raising error
@@ -1125,7 +1136,7 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
             date_str = extract_date_from_filename(filepath)
             folder_name = processor_name.lower()
             out_filename = f"{folder_name}_{transaction_type}s.xlsx"
-            out_path = PROCESSED_PROCESSOR_DIR / folder_name / date_str / out_filename
+            out_path = processed_processor_dir / folder_name / date_str / out_filename
             out_path.parent.mkdir(parents=True, exist_ok=True)
             df_clean.to_excel(out_path, index=False)
         else:
@@ -1135,15 +1146,19 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
 
 # Updated combine_processed_files to read with dtype for transaction_id
 def combine_processed_files(
-    date, processors, processor_name=None, # Added processor_name as optional parameter
-    processed_crm_dir=PROCESSED_CRM_DIR,
-    processed_proc_dir=PROCESSED_PROCESSOR_DIR,
+    date, processors, regulation: str, processor_name=None,
+    processed_crm_dir=None,
+    processed_proc_dir=None,
     out_crm_dir=None,
     out_proc_dir=None,
     transaction_type="withdrawal",
     exchange_rate_map=None,
     extra_processors=None
 ):
+    # Get directories from regulation if not provided
+    dirs = config.setup_dirs_for_reg(regulation, create=True)
+    processed_crm_dir = processed_crm_dir or dirs['processed_crm_dir']
+    processed_proc_dir = processed_proc_dir or dirs['processed_processor_dir']
     if extra_processors is None:
         extra_processors = []
     all_processors = list(processors) + list(extra_processors)
@@ -1559,8 +1574,11 @@ def combine_processed_files(
     else:
         print("No processor files found to combine.")
 
-def append_unmatched_to_combined(date_str, unmatched_path_str):
-    combined_path = Path(COMBINED_CRM_DIR) / date_str / "combined_crm_deposits.xlsx"
+def append_unmatched_to_combined(date_str, unmatched_path_str, regulation: str, combined_crm_dir=None):
+    # Get directories from regulation if not provided
+    dirs = config.setup_dirs_for_reg(regulation, create=True)
+    combined_crm_dir = combined_crm_dir or dirs['combined_crm_dir']
+    combined_path = Path(combined_crm_dir) / date_str / "combined_crm_deposits.xlsx"
     unmatched_path = Path(unmatched_path_str)
 
     if not combined_path.exists():

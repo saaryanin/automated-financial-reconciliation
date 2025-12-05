@@ -558,28 +558,42 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df["Card Number"] = df["Card Number"].astype(str).str.strip()
 
         # Pull all withdrawals and voids first
-        relevant_mask = df["Operation Type"].isin(["referral credit", "sale void", "refund void"]) & (
+        # referral credit: withdrawal (negative amount)
+        # referral cft: withdrawal (positive amount, same as referral credit otherwise)
+        # sale void: withdrawal (positive amount)
+        # refund void: cancellation of referral credit
+        relevant_mask = df["Operation Type"].isin(["referral credit", "referral cft", "sale void", "refund void"]) & (
                     df["Response"] == "completed successfully")
         df = df[relevant_mask].copy()
 
         if df.empty:
             return pd.DataFrame()
 
-        # Remove both 'refund void' and its matching 'referral credit' (same email+amount+currency)
+        # Prepare last 4 digits and name columns for matching
+        df["_last4"] = df["Card Number"].astype(str).str[-4:].str.zfill(4)
+        df["_name"] = df["Cardholder Name"].astype(str).str.strip().str.lower()
+
+        # Remove both 'refund void' and its matching 'referral credit'
+        # Match by: last 4 digits, email, name, currency, and absolute amount
+        # (refund void has positive amount, referral credit has negative amount)
         to_remove = set()
         refund_voids = df[df["Operation Type"] == "refund void"]
 
         for idx_rv, refund_row in refund_voids.iterrows():
             email = refund_row["Cardholder Email"]
-            amount = clean_amount(refund_row["Amount"])
+            amount_abs = abs(clean_amount(refund_row["Amount"]))
             currency = refund_row["Currency"]
+            last4 = refund_row["_last4"]
+            name = refund_row["_name"]
 
-            # Scan for matching referral credit rows (above/below), same email/amount/currency
+            # Scan for matching referral credit rows with same last4, email, name, currency, and absolute amount
             mask = (
                     (df["Operation Type"] == "referral credit") &
                     (df["Cardholder Email"] == email) &
                     (df["Currency"] == currency) &
-                    (df["Amount"].apply(clean_amount) == amount)
+                    (df["_last4"] == last4) &
+                    (df["_name"] == name) &
+                    (df["Amount"].apply(lambda x: abs(clean_amount(x))) == amount_abs)
             )
             possible_matches = df[mask]
 
@@ -590,8 +604,11 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
                 break
         df = df.drop(index=list(to_remove))
 
-        # Only keep real withdrawals ("referral credit" or "sale void")
-        keep_mask = df["Operation Type"].isin(["referral credit", "sale void"])
+        # Drop helper columns
+        df = df.drop(columns=["_last4", "_name"])
+
+        # Only keep real withdrawals ("referral credit", "referral cft", or "sale void")
+        keep_mask = df["Operation Type"].isin(["referral credit", "referral cft", "sale void"])
         df = df[keep_mask]
 
         if df.empty:

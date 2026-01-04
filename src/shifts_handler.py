@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from src.config import setup_dirs_for_reg, BASE_DIR # Import BASE_DIR for CRM_DIR
-from src.preprocess_test import extract_crm_transaction_id # Adjusted import based on your file name
+from src.preprocess import extract_crm_transaction_id # Adjusted import based on your file name
 from src.utils import categorize_regulation
 # Define shared CRM_DIR
 CRM_DIR = BASE_DIR / "data" / "crm_reports"

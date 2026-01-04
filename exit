@@ -1,0 +1,353 @@
+[33mcommit 01ed4d775f6880d392b5e145cf6c6a735088ba94[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdocumentation-preparation[m[33m)[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 22 14:56:01 2025 +0300
+
+    Changed both fourth_window and output.py, now it exports Withdrawal matching as well with deposit cancellations and both Matched file, also when executing part data it exports the Matched file, but when doing the same data with full data it exports perfect Matched Deposits, full data Matched Withdrawals and 2 unmatched files, need to work on it, the way is to remove the output dated folder in the beggining, also there is an issue when the selected rows in third_window are being removed the appear in the Withdrawals Matched file but in seperate rows which is bad, they need to match in the same row so working on it
+
+[33mcommit 808a8312e35a01b65b80f355b23f5b17b09703d0[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Sun Sep 21 22:14:31 2025 +0300
+
+    Changed output,fourth_window and third_window so it will output Deposits Matched and changed the third_window method so the warnings will work parallelly saved the old versions in test, because I need to work on the size of the third_window because now its fixed on full size, also need to add the Withrawals Matched and need to work a little bit on these cancellations rows
+
+[33mcommit fb62a440b5e86310539e3e765c4e227f090f32ed[m[33m ([m[1;31morigin/documentation-preparation[m[33m)[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 18 12:47:01 2025 +0300
+
+    edited concole as False in the spec file
+
+[33mcommit 30bcc35bb21b52946ea4cb35350685f6b6be26f9[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 18 12:41:26 2025 +0300
+
+    Now fourth window shows no shifts detected when there are no shifts, and when everything matched there is an alert when clicking the export button
+
+[33mcommit d411a87a22d8c607748e00fc3a0f2268c81eb564[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 18 12:00:38 2025 +0300
+
+    Added the payment method column to the combined_crm_withdrawals, withdrawls_matching, unmatched crm withdrawals and warnings_withdrawals.
+
+[33mcommit daa514bd1741d734c7e1e91c9c60dd53f1aa730c[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 17 13:18:40 2025 +0300
+
+    fixed the calendar bug by changing the min width, need to fix the year visibility bug when clicking on it
+
+[33mcommit e2b72dad99c17a91141a80f46a583ed4e07bf016[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 17 12:55:14 2025 +0300
+
+    Added the correct_proc_date function to output.py and activated it in multiple output files, the Date column format has been fixed
+
+[33mcommit 8382045b5b4214e191cf628b06e8fdac97787b6e[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 16 17:38:50 2025 +0300
+
+    when a daily report have no warnings_withdrawals.xlsx the user will get an alert and it will skip to the fourth window
+
+[33mcommit 6236635c2d7e798096d615d9c9af58b9ded4d322[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 16 17:13:51 2025 +0300
+
+    managed to fix the bug that was taking warnings_withdrwals of the latest date to a date that have no warnings_withdrawls file also in the EXE
+
+[33mcommit 661fd501df989840de100f7caaaae744bec6690d[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 16 15:47:10 2025 +0300
+
+    managed to fix the bug that takes other rows from other dates to others, just need to clear the output folder, will return the main to its original form and do all these cleaning in reports_creator and output.py
+
+[33mcommit 91e382750b9cc5647eaa682cb4ff70655e21ff88[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 16 11:37:21 2025 +0300
+
+    new style to the date section of the first_window, need to add the hovering effect to the date picker button and manage the background somehow
+
+[33mcommit e706a4fe15b342c0f0ea61c954a6c5f09b20145e[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 16 11:22:13 2025 +0300
+
+    Edited first_window so the date picker button icon will be integrated in the EXE as well
+
+[33mcommit bc77ca8a7320a499bd0dfdf3bc14095dce4a88ce[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 15 19:36:37 2025 +0300
+
+    Remove data/ and output/ from tracking (now ignored)
+
+[33mcommit 50dd7c6f14dad2e4f78a01aa1fea7d11a1ceb46f[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 15 19:36:27 2025 +0300
+
+    Simplify .gitignore: fully ignore data/ and output/ folders
+
+[33mcommit e89e9aac1c4b645286eb4c668a84f6e0df89e934[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 15 19:34:19 2025 +0300
+
+    fixed all the formats of the added unselected rows in the unmatched processors withdrawals, changed the name of processor_renamer to files_renamer, added to gitignore to ignore data and output folders since they are already being created in the temp folder, moved some unused and test scripts to the tests folder and removed some empty scripts, and added the files_renamer to the spec file
+
+[33mcommit 5a9b23477dae6bb53d1060ca17d1494fe2b625d9[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 15 18:59:55 2025 +0300
+
+    fixed all the formats to fit for all the file to be %M/%D/YYYY 00:00:00 PM/AM
+
+[33mcommit 5d5717977523a39f7846d0eb08da9be8915b439d[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 15 14:22:43 2025 +0300
+
+    excluded the withdrawals_matching_updated.xlsx from the export, need to work on the formats of the dates of the exported files
+
+[33mcommit 7438f30ef20c5122c1cc343a48026303f603950f[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 15 13:36:16 2025 +0300
+
+    Initial commit for documentation preparation branch, managed to fix the core issue of the overwriting by the third_window script of the withdrawals_matching file while keeping everything else the same.
+
+[33mcommit 7f84d1e1300a752b3386790b3ae1382dd9b75c9e[m[33m ([m[1;31morigin/third_window_integration[m[33m, [m[1;32mthird_window_integration[m[33m)[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Fri Sep 12 01:41:08 2025 +0300
+
+    third_window completely destroys the withdrawals_matching file, kept a version that makes the file look good of withdrawals_matcher_test
+
+[33mcommit 1f652183924f063b18f897cb65f2621481230ce1[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 18:25:50 2025 +0300
+
+    fixed the last 4 digits format in all the reports
+
+[33mcommit 2b62a3f7ea1286f14252ee196034f769b71a005d[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 17:45:10 2025 +0300
+
+    deployment works, just need to fix the calender icon and the last 4 digits format in all the reports
+
+[33mcommit c6e5fc45a18fa46eb9e4f5b5355c1d5d9b773d4a[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 14:41:44 2025 +0300
+
+    Fourth Window is now complete, its width changes by the currencies that are in the shifts file
+
+[33mcommit abd7bbd5940fae7d445c3f8f63de1b321f420868[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 13:08:42 2025 +0300
+
+    Changed the fourth_window, made it look smaller,put the table of the total shifts, and it looks nice, just need to center it
+
+[33mcommit a3d31a851efea77d9ed481f5e568edd16275eeb0[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 12:21:37 2025 +0300
+
+    the order of the rows in both CRM and Processors side in the third window are now aligned with each other.
+
+[33mcommit 3e0b4e39394cdc92d4d3d08defe23645219a2e28[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 12:11:02 2025 +0300
+
+    Centered and changed the formats of the values in the third window so it would look more friendly
+
+[33mcommit c31a9c8a64a6fd5bad143ce3db01ff6b305b676a[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 11:26:35 2025 +0300
+
+    Added the comment column to the unmatched processors withdrawals and fixed in both unmatched crm/processors withdrawals reports
+
+[33mcommit e50e22e0e08162752756438b009ed8b306391a1a[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Thu Sep 11 11:09:29 2025 +0300
+
+    third_window functuality works really well, just need to add and remove some details in the unmatched CRM/Processors Withdrawals report, and make the warning withdrawals columns naming better for the third_window appearance
+
+[33mcommit 25e62796295bc88c494fb2fea59f188c237ee6af[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 10 18:23:38 2025 +0300
+
+    started the functunality of the third_window in output.py, got a lot of work
+
+[33mcommit bef8981351d0e92e9c732e94b7b42317bc0e8f0d[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 10 17:40:49 2025 +0300
+
+    Made so that the labels will always stay close to their tables and their size stay like in the default but the whole program window stays the same, so can be better but I will be fine with as it is right now
+
+[33mcommit f5f102e38b9ae507f480b826cd334f54cce35900[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 10 17:18:17 2025 +0300
+
+    The removal button works well, not buggy anymore and its grayed when there are no X stated rows, need to work on the whole window program when we remove because now the labels of the tables get bigger
+
+[33mcommit 9ada357f8917ec2eea54e3c3cc96ba914e29c03e[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 10 16:39:14 2025 +0300
+
+    adjusted the size of the window program perfectly
+
+[33mcommit 9f8fcf19f724901eb9f286e7499bafad145e9401[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 10 16:27:02 2025 +0300
+
+    adjust the size of the window to be adjusted according to the number of the rows, need some further work
+
+[33mcommit 43f536158df57f82df18894fbe2564458f25a211[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Wed Sep 10 14:54:34 2025 +0300
+
+    created the third_window, have a lot to work on it, plus making its functuality better in output.py and repair bugs
+
+[33mcommit 5345db8b218e7714029316442c153565459c672e[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 16:45:55 2025 +0300
+
+    removed the rates alert from the first_window, added a new second_window which have a progress bar and in its end reports_creator.py finishes, the old second_window is now called fourth_window because that window will only be responsible for exporting
+
+[33mcommit 73d8ffe363f3653fa0b670e084885fc8932f9cc0[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 15:28:54 2025 +0300
+
+    updated requirments.txt
+
+[33mcommit d6efe43dc2651d1a49823a24febf812b4136afef[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 13:22:22 2025 +0300
+
+    Fixed the output.py so it would remove the reports in the dated folder so it wont export old reports
+
+[33mcommit eebab07054f2f9e133bc9c0149c637f6efce930e[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 12:30:56 2025 +0300
+
+    Change the formats and names of unmatched proc withdrawals, so all the format are corrent besides warning_withdrawals
+
+[33mcommit 1f0e8bb38611f200e82304c2a6e9d87a1a96e1f5[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 11:56:05 2025 +0300
+
+    All the output of output.py is now stretched so all the data will be immidietly visible to the user
+
+[33mcommit c8a237bc5cea326db2b43b4c06b58d69a39162b5[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 11:52:22 2025 +0300
+
+    Edited the columns names,order and the names of the reports them selves in output.py of:unmatched_crm_withdrawals and unmatched proc deposits
+
+[33mcommit 63e878f1e4a8901b07527b05775c36fbea6ecf5d[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 11:30:37 2025 +0300
+
+    Edited the columns names,order and the names of the reports them selves in output.py of:unmatched_crm_deposits and unapproved crm deposits
+
+[33mcommit 281c57776084a8ec1daf01d35ddd284ce087bc2d[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 11:10:30 2025 +0300
+
+    Added crm_type column to withdrawals_matching
+
+[33mcommit 0dda52ea5c96ee37e3c657fa360e74fc5541bfa9[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 10:47:55 2025 +0300
+
+    Added crm_type column to deposits_matching
+
+[33mcommit 16e0c7e8d5ac42efe13478a9849030d8f5280a54[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 00:40:28 2025 +0300
+
+    Untrack all files in temp/ folder
+
+[33mcommit 5b31b465ac471806e4d137a912fc5cc4de17eb89[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 00:40:20 2025 +0300
+
+    Update .gitignore to properly ignore temp/ contents
+
+[33mcommit 7beb21a2c840f4b7d2d6a599adccac71bb29933e[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 00:31:29 2025 +0300
+
+    ignoring the files in temp folder as well
+
+[33mcommit 81640cefc2f3a506b9ba5c3c505f5b88facb8f65[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Tue Sep 9 00:30:12 2025 +0300
+
+    ignoring the files in temp folder as well
+
+[33mcommit 029f393d392c5dd42ba7b38b63edba0b8ced5f17[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 23:49:35 2025 +0300
+
+    Update .gitignore to ignore build and dist
+
+[33mcommit c37ab2558a4bc92bf5d2e4c0c86d492fbc1bb7c6[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 23:45:38 2025 +0300
+
+    now the calendar icon shows but only when running the main script, will try to update the reconciliationsystem.spec, delete the build and dist folders to force clean rebuild
+
+[33mcommit f4fcb3d601007113f30c3aebd8679a651f868d88[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 23:28:37 2025 +0300
+
+    EXE depoloyment works and running the main.py normally works as well, only missing the calender_icon.img, need to work on it.
+
+[33mcommit e363d28cb4e8509953f5090fe9b847e4b5804a35[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 16:55:56 2025 +0300
+
+    Added a unapproved_crm_deposits report, fixed the rule 4 of _flag_warning function in withdrawals_matcher so it would only warn about shift4 crm deposits and not about all the processors, fixed the processor_renamer so it would handle bitpay and paypal well, fixed the grabbing in first_window so it would make the files disapear and fixed the path in output.py
+
+[33mcommit f78b978e5598ce577d9c6f3889b9b27aacdae5f2[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 11:48:24 2025 +0300
+
+    removed many unnesssery files and folders, main.py is in the root folder and works really well now
+
+[33mcommit cac2a0b30e801e488083632f10494960d625e9e0[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 10:54:11 2025 +0300
+
+    changed the name of frontend.py to main.py
+
+[33mcommit d655b4d3b6bd31e66a5cb29f40a77489df7ec95c[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 10:52:33 2025 +0300
+
+    processors files draggable area returns to its default state after the alert
+
+[33mcommit b609ff3438eb92f25661c93222dcde0fa047a37d[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 10:43:11 2025 +0300
+
+    fixed the ugly alert, and all the alerts of the first window, just need to fix that the processors files draggable area will return to its default first state after the alert
+
+[33mcommit f7d66f52ea29a6bb176547819970c82bf9297ab9[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 10:21:40 2025 +0300
+
+    styled the second window and fixed the dragging of the crm file to the processors reports draggable area, but the alert is really ugly and I need to fix it
+
+[33mcommit b83c15b4db0fd7d9748a437fe15e31ca7db33d20[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 09:49:17 2025 +0300
+
+    Finished the first prototyle of the program and the frontend succesfully, need to fix the crm file to processor reports draggable area dissapearence and style the second window
+
+[33mcommit eb3b75bccbbd57d09ee20d911f473f802bc52487[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Mon Sep 8 09:08:45 2025 +0300
+
+    Added and refined the unmatched_crm_withdrawals to include underpays and overpays and withdrawal cancellations, also refind unmatched_crm_deposits so it will sort by date from newest or oldest
+
+[33mcommit c9ef32626d4175c6bc278f54fb228a1320c384ae[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Sun Sep 7 23:24:03 2025 +0300
+
+    removed shifted deposits from the unmatched_crm_deposits
+
+[33mcommit c039c923f3f63b75106ce88eab31c84135a11319[m
+Author: saaryanin <yaninsahar@gmail.com>
+Date:   Sun Sep 7 23:15:20 2025 +0300
+
+    deposits that have been cancelled within the same day removed from both unmatched_proc_withdrawals and unmatched_proc_deposits files

@@ -7,12 +7,6 @@ sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / 'src'))
 sys.path.insert(0, str(root_dir / 'frontend'))
 
-import os  # Optional: For debugging
-
-# Optional debug print (remove after testing)
-print("sys.path:", sys.path)
-print("Current dir:", os.getcwd())
-
 from PyQt5.QtWidgets import QApplication
 from frontend.first_window import ReconciliationWindow  # Adjusted import from frontend folder
 

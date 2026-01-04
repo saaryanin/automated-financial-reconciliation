@@ -1,39 +1,50 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+block_cipher = None
+
 a = Analysis(
     ['main.py'],
     pathex=['.', 'src', 'frontend'],
     binaries=[],
     datas=[
         ('data', 'data'),
-        ('frontend/calendar_icon.png', '.'),  # Copies to bundle root
+        ('frontend/calendar_icon.png', '.'),
     ],
     hiddenimports=[
         'PyQt5.sip',
         'src',
         'src.config',
-        'src.processor_renamer',
-        'src.reports_creator',
-        'src.deposits_matcher',
+        'src.files_renamer',
+        'src.preprocess_test',  # NEW: For reports_creator.py's process_files_in_parallel/combine_processed_files
+        'src.preprocess',       # Keep for any legacy/aliases
         'src.withdrawals_matcher',
-        'src.preprocess',
+        'src.deposits_matcher',
+        'src.reports_creator',
+        'src.output',
         'src.utils',
         'src.shifts_handler',
-        'src.output',
+        'src.processor_renamer',
+        'src.cross_regulation_matcher',  # Added for the new script
+        'tempfile',             # For config's gettempdir() in frozen mode
+        'shutil',               # For cleanup in reports_creator/output
+        'pathlib',              # Explicit for Path usage in output.py cleanup
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
     noarchive=False,
-    optimize=0,
 )
-pyz = PYZ(a.pure)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
+    a.zipfiles,
     a.datas,
     [],
     name='ReconciliationSystem',
@@ -43,7 +54,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Change to True for debugging (shows console with prints)
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

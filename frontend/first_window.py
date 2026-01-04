@@ -1,24 +1,16 @@
-# Modified first_window.py
-# Changes:
-# - Removed self.show_info("Success", f"Rates saved to {file_path}") to eliminate the rates alert.
-
-import sys
 import os
 import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QPushButton, QGridLayout, QFileDialog, QDateEdit, QMessageBox, QCalendarWidget,
-                             QToolButton)
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt, QDate, QMimeData, QProcess, QTimer
-from fourth_window import FourthWindow  # Import the fourth window class
+                             QPushButton, QGridLayout, QFileDialog, QMessageBox, QCalendarWidget,
+                             QToolButton, QSizePolicy, QTableView)
+from PyQt5.QtCore import Qt, QDate, QRegExp, QTimer
+from PyQt5.QtGui import QRegExpValidator
 from second_window import SecondWindow  # NEW: Import the new second window class
 import pandas as pd
 import re
 from pathlib import Path
-# Use direct import from src.config
-from src.config import RATES_DIR, CRM_DIR, PROCESSOR_DIR, RAW_ATTACHED_FILES
-from src.processor_renamer import run_renamer
-from src import reports_creator  # Direct import for bundled call (not used here anymore)
+from src.config import RATES_DIR, RAW_ATTACHED_FILES, setup_dirs_for_reg
+from src.files_renamer import PROCESSOR_PATTERNS
 
 
 class DropButton(QPushButton):
@@ -26,18 +18,18 @@ class DropButton(QPushButton):
         super().__init__(text, parent)
         self.window = window
         self.setAcceptDrops(True)
-        self.setMinimumSize(200, 100)
+        self.setMinimumHeight(250)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setStyleSheet("""
-                border: 4px dashed #4a90e2;
-                background: #e6f0fa;
-                min-height: 100px;
-                min-width: 200px;
-                border-radius: 8px;
-            """)
+            if not self.window.crm_file and not self.window.processor_files:
+                self.setStyleSheet("""
+                    border: 4px dashed #4a90e2;
+                    background: #e6f0fa;
+                    min-height: 250px;
+                    border-radius: 8px;
+                """)
             print("Drag enter accepted")
 
     def dropEvent(self, event):
@@ -45,83 +37,37 @@ class DropButton(QPushButton):
         if mime_data.hasUrls():
             file_paths = [u.toLocalFile() for u in mime_data.urls()]
             try:
-                if self.objectName() == "crm-button":  # CRM button
-                    success = False
-                    if len(file_paths) == 1:
-                        source_path = file_paths[0]
-                        file_name = os.path.basename(source_path)
-                        if file_name in self.window.moved_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
-                            self.setStyleSheet("")
-                            return
-                        dest_path = RAW_ATTACHED_FILES / file_name
-                        shutil.copy(str(source_path), str(dest_path))
-                        self.window.crm_file = str(dest_path)
-                        self.setText(f"📊 {file_name}")
-                        self.window.moved_files.add(file_name)
-                        success = True
-                    else:
-                        self.window.show_warning("Invalid Drop", "Please drop only one file for CRM.")
-                        self.setStyleSheet("")
-                    if success:
-                        self.setStyleSheet("""
-                            border: 4px dashed #003366;
-                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
-                            min-height: 100px;
-                            min-width: 200px;
-                            border-radius: 8px;
-                        """)
-                else:  # Processors button
-                    new_files = []
-                    for source_path in file_paths:
-                        file_name = os.path.basename(source_path)
-                        if file_name.startswith("crm_"):  # Detect CRM file
-                            self.window.show_warning("Invalid Drop", "CRM files should be dropped in the CRM area.")
-                            self.setStyleSheet("")
-                            continue  # Reject drop for CRM files
-                        if file_name in self.window.moved_files:
-                            self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
+                for source_path in file_paths:
+                    file_name = os.path.basename(source_path)
+                    if file_name in self.window.moved_files:
+                        self.window.show_warning("Duplicate Drop", f"{file_name} already moved.")
+                        continue
+                    if file_name.startswith("crm_"):
+                        if self.window.crm_file:
+                            self.window.show_warning("Duplicate CRM", "CRM file already set. Only one allowed.")
                             continue
                         dest_path = RAW_ATTACHED_FILES / file_name
                         shutil.copy(str(source_path), str(dest_path))
+                        self.window.crm_file = str(dest_path)
                         self.window.moved_files.add(file_name)
-                        new_files.append(str(dest_path))
-                    self.window.processor_files += new_files
-                    if new_files:
-                        names = [os.path.basename(p) for p in self.window.processor_files]
-                        self.setText(f"💳 {', '.join(names)}")
-                    if len(self.window.processor_files) > 0:
-                        self.setStyleSheet("""
-                            border: 4px dashed #006600;
-                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
-                            min-height: 100px;
-                            min-width: 200px;
-                            border-radius: 8px;
-                        """)
                     else:
-                        self.setStyleSheet("")
-                self.window.check_files_ready()
+                        dest_path = RAW_ATTACHED_FILES / file_name
+                        shutil.copy(str(source_path), str(dest_path))
+                        self.window.processor_files.append(str(dest_path))
+                        self.window.moved_files.add(file_name)
+                self.window.update_upload_button()
             except Exception as e:
                 print(f"Drop error: {e}")
                 self.window.show_error("Error", f"Failed to process drop: {e}")
                 self.setStyleSheet("")
         event.accept()
 
-    def _detect_processor(self, filename):
-        """Detect processor name from filename based on patterns."""
-        filename_lower = filename.lower()
-        for processor in ["safecharge", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
-                          "trustpayments", "paysafe"]:
-            if processor in filename_lower:
-                return processor
-        return "unknown"  # Default if no match
-
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet("")
+        self.window.update_upload_button()
         if event is not None:
             event.accept()
 
@@ -132,18 +78,28 @@ class ReconciliationWindow(QWidget):
         self.crm_file = None
         self.processor_files = []
         self.date_button = None  # Add this for the custom calendar button
+        self.valid_date_str = None  # Track valid date string
         self.initUI()
         self.moved_files = set()  # Track moved file names to avoid duplicates
 
-    def initUI(self):
-        print(os.path.abspath("frontend/calendar_icon.png"))  # Adjusted debug print to verify full path
-        self.setWindowTitle('CRM-Processor Reconciliation System')
+    def _detect_processor(self, filename):
+        """Detect processor name from filename based on keywords."""
+        filename_lower = filename.lower()
+        if filename_lower.startswith("crm_"):
+            return "crm"
+        if "transactionlog" in filename_lower:
+            return "powercash"
+        processors = [
+            "safecharge", "safechargeuk", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
+            "trustpayments", "paysafe", "skrill", "neteller", "shift4", "barclays", "barclaycard"
+        ]
+        for processor in processors:
+            if processor in filename_lower:
+                return processor
+        return "unknown"
 
-        # Dynamic icon path for stylesheet (works in script and EXE)
-        if getattr(sys, 'frozen', False):
-            icon_path = "calendar_icon.png"  # Bundled to root via spec datas
-        else:
-            icon_path = "frontend/calendar_icon.png"  # Relative to root in script mode
+    def initUI(self):
+        self.setWindowTitle('CRM-Processor Reconciliation System')
 
         app = QApplication.instance()
         app.setStyleSheet("""
@@ -194,50 +150,51 @@ class ReconciliationWindow(QWidget):
                 margin-bottom: 15px;
                 box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
             }
-            #crm-button, #processor-button {
-                min-height: 100px;
-                min-width: 200px;
+            #upload-button {
+                min-height: 200px;
+                font-size: 24px;
+                font-weight: bold;
+            }
+            #date-lineedit {
+                padding: 8px;
+                border: 2px solid #dfe6e9;
+                border-radius: 4px 0 0 4px;
                 font-size: 14px;
-            }
-            QDateEdit {
-                padding: 4px;
-                border: 2px solid #e9ecef;
-                border-radius: 4px;
-                font-size: 12px;
-                background: #f8f9fa;
+                background: #ffffff;
                 color: #2c3e50;
-                min-width: 90px; /* Increased from 90px to ensure full year visibility */
+                min-width: 80px;
             }
-            QDateEdit::drop-down {
-                width: 22px;
-                border-left: 1px solid #e9ecef;
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                background: #f1f3f5; /* Light gray background */
-                border-radius: 0 4px 4px 0; /* Rounded corner on the right */
+            #date-lineedit:focus {
+                border-color: #4a90e2;
+                box-shadow: 0 0 5px rgba(74, 144, 226, 0.3);
             }
-            QDateEdit::drop-down:hover {
-                background: #d1d7e0; /* Darker gray on hover for feedback */
-                border-left: 1px solid #667eea; /* Blue border on hover */
+            #date-button {
+                padding: 8px 6px;
+                border: 2px solid #dfe6e9;
+                border-left: none;
+                border-radius: 0 4px 4px 0;
+                background: #ffffff;
+                font-size: 14px;
+                min-width: 14px;
+                color: #1e90ff;
+                font-weight: bold;
             }
-            QDateEdit::down-arrow {
-                image: url(%s);  /* Dynamic path */
-                width: 16px;
-                height: 16px;
+            #date-button:hover {
+                background: #e1f5fe;
             }
             QCalendarWidget {
-                background: #ffffff;
+                background: #4a90e2;
                 border: 1px solid #e9ecef;
                 border-radius: 4px;
-                min-width: 270px;
+                min-width: 280px;
             }
             QCalendarWidget QAbstractItemView {
                 background: #ffffff;
-                color: #1e90ff; /* Blue for all numbers */
+                color: #1e90ff;
             }
             QCalendarWidget QToolButton {
                 background: #f0f0f0;
-                color: #1e90ff; /* Blue for tool buttons */
+                color: #1e90ff;
                 font-size: 12px;
                 padding: 4px;
                 border: none;
@@ -245,50 +202,44 @@ class ReconciliationWindow(QWidget):
             QCalendarWidget QToolButton:hover {
                 background: #d1d7e0;
                 color: #1a252f;
-
             }
             QCalendarWidget QMenu {
                 background: #ffffff;
                 color: #1e90ff;
-
             }
             QCalendarWidget QMenu::item:selected {
                 background: #4a90e2;
                 color: #ffffff;
-
             }
-QMessageBox {
-    background-color: #ffffff;
-    border: 2px solid #4a90e2;
-    border-radius: 8px;
-    padding: 10px;
-}
-QMessageBox QLabel {
-    color: #1a252f;
-}
-QMessageBox QPushButton {
-    background: #4a90e2;
-    color: #ffffff;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-}
-QMessageBox QPushButton:hover {
-    background: #357abd;
-}
-""" % icon_path)  # Format the dynamic path into the stylesheet
+            QMessageBox {
+                background-color: #ffffff;
+                border: 2px solid #4a90e2;
+                border-radius: 8px;
+                padding: 10px;
+            }
+            QMessageBox QLabel {
+                color: #1a252f;
+            }
+            QMessageBox QPushButton {
+                background: #4a90e2;
+                color: #ffffff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QMessageBox QPushButton:hover {
+                background: #357abd;
+            }
+        """)
 
-        # Adjust window position and size
         screen = QApplication.desktop().screenGeometry()
-        self.setGeometry((screen.width() - 900) // 2, 50, 900, 600)
+        self.setGeometry((screen.width() - 500) // 2, 50, 500, 600)
 
-        # Main layout
         main_layout = QVBoxLayout()
         main_layout.setSpacing(20)
         main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
 
-        # Header
         header = QLabel('CRM-Processor Reconciliation System')
         header.setAlignment(Qt.AlignCenter)
         header.setStyleSheet("""
@@ -301,7 +252,6 @@ QMessageBox QPushButton:hover {
         """)
         main_layout.addWidget(header)
 
-        # Currency Section
         currency_section = QWidget()
         currency_section.setObjectName("section")
         currency_layout = QVBoxLayout()
@@ -330,57 +280,88 @@ QMessageBox QPushButton:hover {
             currency_grid.addWidget(calc_label, i, 2)
         currency_layout.addLayout(currency_grid)
 
-        # Date Picker (Compact) - Centered
-        date_widget = QWidget()
+        date_container = QWidget()
+        date_container.setStyleSheet("""
+            background: #ffffff;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 5px 0;
+        """)
+
         date_layout = QHBoxLayout()
-        date_widget.setLayout(date_layout)
         date_label = QLabel("Date:")
-        date_label.setStyleSheet("font-size: 12px; margin-right: 0px;")
-        self.date_edit = QDateEdit()
+        date_label.setStyleSheet("font-size: 12px; margin-right: 5px;")
+        self.date_lineedit = QLineEdit()
+        self.date_lineedit.setObjectName("date-lineedit")
         today = QDate.currentDate()
         yesterday = today.addDays(-1)
         if today.dayOfWeek() == 1:  # Monday (Qt: 1=Mon)
             yesterday = today.addDays(-3)  # Last Friday
-        self.date_edit.setDate(yesterday)
-        self.date_edit.setCalendarPopup(True)
-        self.date_edit.setDisplayFormat("dd/MM/yyyy")
-        self.date_edit.setMaximumWidth(90)
+        selected_date = yesterday.toString("dd/MM/yyyy")
+        self.date_lineedit.setText(selected_date)
+        self.date_lineedit.setMaximumWidth(90)
+        self.valid_date_str = selected_date
+
+        self.date_lineedit.setReadOnly(False)
+        date_regex = QRegExp(r'^\d{1,2}/\d{1,2}/\d{4}$')
+        validator = QRegExpValidator(date_regex)
+        self.date_lineedit.setValidator(validator)
+        self.date_lineedit.editingFinished.connect(self.on_date_edited)
+
+        self.calendar = QCalendarWidget()
+        self.calendar.setGridVisible(True)
+        self.calendar.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
+        self.calendar.setWindowFlags(Qt.Popup)  # Removed FramelessWindowHint
+        self.calendar.clicked.connect(self.calendar_date_selected)
+        self.calendar.currentPageChanged.connect(self.update_calendar_layout)  # New: Handle page changes
+        # Temporarily switch to a known 6-row month to compute max height
+        orig_date = self.calendar.selectedDate()
+        self.calendar.setSelectedDate(QDate(2025, 11, 1))  # November 2025 has 6 rows
+        self.calendar.updateGeometry()
+        self.calendar.adjustSize()
+        max_height = self.calendar.sizeHint().height()
+        self.calendar.setFixedHeight(max_height+30)
+        # Restore original date
+        self.calendar.setSelectedDate(orig_date)
+
+        self.date_button = QToolButton()
+        self.date_button.setAutoFillBackground(True)
+        self.date_button.setObjectName("date-button")
+        self.date_button.setText("📅")
+        self.date_button.clicked.connect(self.show_calendar_popup)
+
         date_layout.addWidget(date_label, alignment=Qt.AlignRight)
-        date_layout.addWidget(self.date_edit)
-        date_layout.setSpacing(0)
+        date_layout.addWidget(self.date_lineedit)
+        date_layout.addWidget(self.date_button)
+        date_layout.setSpacing(2)
         date_layout.setContentsMargins(0, 0, 0, 0)
-        date_layout.setAlignment(Qt.AlignCenter)  # Center the date picker
-        currency_layout.addWidget(date_widget)
+
+        date_widget = QWidget()
+        date_widget.setLayout(date_layout)
+        date_container_layout = QVBoxLayout()
+        date_container_layout.addWidget(date_widget, alignment=Qt.AlignHCenter)
+        date_container_layout.setContentsMargins(0, 0, 0, 0)
+        date_container.setLayout(date_container_layout)
+
+        currency_layout.addWidget(date_container, alignment=Qt.AlignHCenter)
 
         main_layout.addWidget(currency_section)
 
-        # File Upload Section
         file_section = QWidget()
         file_section.setObjectName("section")
         file_layout = QVBoxLayout()
         file_section.setLayout(file_layout)
-        file_label = QLabel('📁 Upload Files')
-        file_label.setStyleSheet("font-size: 18px; margin-bottom: 10px;")
-        file_layout.addWidget(file_label)
 
-        file_grid = QHBoxLayout()
-        file_grid.setSpacing(20)
-        self.crm_file_btn = DropButton('📊 CRM File', self)
-        self.crm_file_btn.setObjectName("crm-button")
-        self.crm_file_btn.clicked.connect(lambda: self.select_file('crm'))
-        file_grid.addWidget(self.crm_file_btn)
-
-        self.processor_file_btn = DropButton('💳 Processors Files', self)
-        self.processor_file_btn.setObjectName("processor-button")
-        self.processor_file_btn.clicked.connect(lambda: self.select_file('processor'))
-        file_grid.addWidget(self.processor_file_btn)
-        file_layout.addLayout(file_grid)
+        self.upload_btn = DropButton('📁 Attach Files Here', self)
+        self.upload_btn.setObjectName("upload-button")
+        self.upload_btn.clicked.connect(lambda: self.select_file('all'))
+        self.upload_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        file_layout.addWidget(self.upload_btn)
 
         main_layout.addWidget(file_section)
 
-        # Process and Reset Buttons
         button_layout = QHBoxLayout()
-        button_layout.addStretch(1)  # Stretch to center the buttons
+        button_layout.addStretch(1)
         self.process_btn = QPushButton('Start Processing')
         self.process_btn.setEnabled(False)
         self.process_btn.clicked.connect(self.save_rates_and_process)
@@ -389,8 +370,88 @@ QMessageBox QPushButton:hover {
         self.reset_btn = QPushButton('Reset')
         self.reset_btn.clicked.connect(self.reset_fields)
         button_layout.addWidget(self.reset_btn)
-        button_layout.addStretch(1)  # Stretch to center the buttons
+        button_layout.addStretch(1)
         main_layout.addLayout(button_layout)
+
+    def update_upload_button(self):
+        if self.crm_file or self.processor_files:
+            num_files = len(self.processor_files) + (1 if self.crm_file else 0)
+            self.upload_btn.setText(f"{num_files} Files Were Attached")
+            self.upload_btn.setStyleSheet("""
+                border: none;
+                background: #2c3e50;
+                color: #ffffff;
+                font-size: 24px;
+                font-weight: bold;
+                min-height: 250px;
+                border-radius: 8px;
+            """)
+        else:
+            self.upload_btn.setText("📁 Attach Files Here")
+            self.upload_btn.setStyleSheet("")
+        self.check_files_ready()
+
+    def update_calendar_layout(self, year, month):
+        """Force layout update when the calendar page changes."""
+        view = self.calendar.findChild(QTableView, "qt_calendar_calendarview")
+        if view:
+            QTimer.singleShot(0, lambda: view.verticalScrollBar().setValue(0))
+        self.calendar.updateGeometry()
+        self.calendar.repaint()
+
+    def on_date_edited(self):
+        """Validate and update date on editing finished."""
+        text = self.date_lineedit.text()
+        date = QDate.fromString(text, "dd/MM/yyyy")
+        if date.isValid():
+            self.valid_date_str = text
+            self.calendar.setSelectedDate(date)
+        else:
+            self.date_lineedit.setText(self.valid_date_str)
+            self.show_warning("Invalid Date", "Invalid date entered. Please use dd/MM/yyyy format and a valid date.")
+
+    def calendar_date_selected(self, date):
+        """Handle date selection from calendar popup."""
+        self.date_lineedit.setText(date.toString("dd/MM/yyyy"))
+        self.valid_date_str = date.toString("dd/MM/yyyy")
+        self.calendar.hide()
+
+    def show_calendar_popup(self):
+        """Show the calendar popup at the button position."""
+        if self.calendar.isVisible():
+            self.calendar.hide()
+        else:
+            button_pos = self.date_button.mapToGlobal(self.date_button.rect().bottomLeft())
+            desktop = QApplication.desktop()
+            screen_index = desktop.screenNumber(button_pos)
+            screen_geom = desktop.screenGeometry(screen_index)
+
+            calendar_width = self.calendar.width()
+            calendar_height = self.calendar.height()
+
+            # Position below the button by default
+            x_pos = button_pos.x() + 5
+            y_pos = button_pos.y()
+
+            # Clamp X to screen boundaries
+            if x_pos + calendar_width > screen_geom.right():
+                x_pos = screen_geom.right() - calendar_width
+            if x_pos < screen_geom.left():
+                x_pos = screen_geom.left()
+
+            # Clamp Y to screen boundaries, flipping above button if no space below
+            if y_pos + calendar_height > screen_geom.bottom():
+                y_pos = button_pos.y() - calendar_height - self.date_button.height() - 5  # Flip above
+            if y_pos < screen_geom.top():
+                y_pos = screen_geom.top()
+
+            self.calendar.move(x_pos, y_pos)
+            self.calendar.show()
+
+            # Existing scroll reset (keep this)
+            view = self.calendar.findChild(QTableView, "qt_calendar_calendarview")
+            if view:
+                QTimer.singleShot(0, lambda: view.verticalScrollBar().setValue(0))
 
     def show_warning(self, title, text):
         msg = QMessageBox(self)
@@ -425,55 +486,28 @@ QMessageBox QPushButton:hover {
 
     def select_file(self, file_type):
         file_dialog = QFileDialog()
-        if file_type == 'crm':
-            file_path, _ = file_dialog.getOpenFileName(self, "Select CRM File", "", "CSV Files (*.csv *.xlsx *.xls)")
-            if file_path:
-                # To make consistent with drop, copy the file
-                file_name = os.path.basename(file_path)
-                if file_name in self.moved_files:
-                    self.show_warning("Duplicate", f"{file_name} already selected.")
-                    return
-                dest_path = RAW_ATTACHED_FILES / file_name
-                shutil.copy(file_path, str(dest_path))
-                self.crm_file = str(dest_path)
-                self.crm_file_btn.setText(f"📊 {file_name}")
-                self.moved_files.add(file_name)
-                self.crm_file_btn.setStyleSheet("""
-                    border: 4px dashed #003366;
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #c1e7f0);
-                    min-height: 100px;
-                    min-width: 200px;
-                    border-radius: 8px;
-                """)
-        else:
-            file_paths, _ = file_dialog.getOpenFileNames(self, "Select Processors Files", "",
-                                                         "CSV Files (*.csv *.xlsx *.xls)")
+        if file_type == 'all':
+            file_paths, _ = file_dialog.getOpenFileNames(self, "Select Files", "", "CSV Files (*.csv *.xlsx *.xls)")
             if file_paths:
-                new_files = []
                 for source_path in file_paths:
                     file_name = os.path.basename(source_path)
-                    if file_name.startswith("crm_"):
-                        self.show_warning("Invalid File", "CRM files should be selected in CRM area.")
-                        continue
                     if file_name in self.moved_files:
                         self.show_warning("Duplicate", f"{file_name} already selected.")
                         continue
-                    dest_path = RAW_ATTACHED_FILES / file_name
-                    shutil.copy(source_path, str(dest_path))
-                    self.moved_files.add(file_name)
-                    new_files.append(str(dest_path))
-                self.processor_files += new_files
-                if new_files:
-                    names = [os.path.basename(p) for p in self.processor_files]
-                    self.processor_file_btn.setText(f"💳 {', '.join(names)}")
-                    self.processor_file_btn.setStyleSheet("""
-                        border: 4px dashed #006600;
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e9, stop:1 #c8e6c9);
-                        min-height: 100px;
-                        min-width: 200px;
-                        border-radius: 8px;
-                    """)
-        self.check_files_ready()
+                    if file_name.startswith("crm_"):
+                        if self.crm_file:
+                            self.show_warning("Duplicate CRM", "CRM file already set. Only one allowed.")
+                            continue
+                        dest_path = RAW_ATTACHED_FILES / file_name
+                        shutil.copy(source_path, str(dest_path))
+                        self.crm_file = str(dest_path)
+                        self.moved_files.add(file_name)
+                    else:
+                        dest_path = RAW_ATTACHED_FILES / file_name
+                        shutil.copy(source_path, str(dest_path))
+                        self.processor_files.append(str(dest_path))
+                        self.moved_files.add(file_name)
+                self.update_upload_button()
 
     def check_files_ready(self):
         files_ready = bool(self.crm_file and self.processor_files)
@@ -482,8 +516,101 @@ QMessageBox QPushButton:hover {
 
         self.process_btn.setEnabled(files_ready and rates_entered)
 
+    def is_recognized(self, filename):
+        filename_lower = filename.lower()
+        if self._detect_processor(filename) != "unknown":
+            return True
+        for config in PROCESSOR_PATTERNS.values():
+            if re.match(config["pattern"], filename_lower):
+                return True
+        return False
+
     def save_rates_and_process(self):
-        selected_date = self.date_edit.date().toString("yyyy-MM-dd")
+        unrecognized = []
+        attached_files = []
+        if self.crm_file:
+            attached_files.append(self.crm_file)
+        attached_files.extend(self.processor_files)
+        for file_path in attached_files:
+            file_name = os.path.basename(file_path)
+            if not self.is_recognized(file_name):
+                unrecognized.append(file_name)
+        if unrecognized:
+            if len(unrecognized) == 1:
+                msg = f"The file {unrecognized[0]} has not been recognized by the system. Please change its name according to the following format: processor name_YYYY-MM-DD for example: safecharge_2025-10-17."
+            else:
+                files_list = ", ".join(unrecognized)
+                msg = f"The files {files_list} have not been recognized by the system. Please change their names according to the following format: processor name_YYYY-MM-DD for example: safecharge_2025-10-17."
+            self.show_warning("Unrecognized Files", msg + "\nResetting the attached window. Please attach again after renaming.")
+            self.reset_attachments()
+            return
+
+        selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
+        row_processors = [
+            'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
+            'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
+        ]
+        uk_processors = [
+            'safechargeuk', 'barclays', 'barclaycard'
+        ]
+        for reg in ['row', 'uk']:
+            dirs = setup_dirs_for_reg(reg, create=True)
+            proc_list = row_processors if reg == 'row' else uk_processors
+            # Clear output dir for selected date
+            output_date_dir = dirs['output_dir'] / selected_date
+            if output_date_dir.exists():
+                shutil.rmtree(output_date_dir)
+                print(f"Cleared output dir for {selected_date} in {reg.upper()}")
+            # Clear lists date folder
+            lists_date = dirs['lists_dir'] / selected_date
+            if lists_date.exists():
+                shutil.rmtree(lists_date)
+                print(f"Cleared lists/{selected_date} for {reg.upper()}")
+            # Clear processed crm processor date folders
+            for proc in proc_list:
+                proc_date = dirs['processed_crm_dir'] / proc / selected_date
+                if proc_date.exists():
+                    shutil.rmtree(proc_date)
+                    print(f"Cleared processed/crm/{proc}/{selected_date} for {reg.upper()}")
+            # Clear processed crm combined date folder
+            combined_date = dirs['combined_crm_dir'] / selected_date
+            if combined_date.exists():
+                shutil.rmtree(combined_date)
+                print(f"Cleared processed/crm/combined/{selected_date} for {reg.upper()}")
+            # Clear processed crm unmatched_shifted_deposits date folder
+            unmatched_date = dirs['processed_unmatched_shifted_deposits_dir'] / selected_date
+            if unmatched_date.exists():
+                shutil.rmtree(unmatched_date)
+                print(f"Cleared processed/crm/unmatched_shifted_deposits/{selected_date} for {reg.upper()}")
+            # Clear processed processors processor date folders
+            for proc in proc_list:
+                proc_date = dirs['processed_processor_dir'] / proc / selected_date
+                if proc_date.exists():
+                    shutil.rmtree(proc_date)
+                    print(f"Cleared processed/processors/{proc}/{selected_date} for {reg.upper()}")
+            # Clear processed processors combined date folder
+            combined_proc_date = dirs['processed_processor_dir'] / 'combined' / selected_date
+            if combined_proc_date.exists():
+                shutil.rmtree(combined_proc_date)
+                print(f"Cleared processed/processors/combined/{selected_date} for {reg.upper()}")
+            # Extra for row: zotapay_paymentasia
+            if reg == 'row':
+                zota_pa_date = dirs['processed_processor_dir'] / 'zotapay_paymentasia' / selected_date
+                if zota_pa_date.exists():
+                    shutil.rmtree(zota_pa_date)
+                    print(f"Cleared processed/processors/zotapay_paymentasia/{selected_date} for {reg.upper()}")
+            # Remove crm file with date
+            crm_file = dirs['crm_dir'] / f"crm_{selected_date}.xlsx"
+            if crm_file.exists():
+                os.remove(crm_file)
+                print(f"Removed {crm_file} for {reg.upper()}")
+            # Remove processor files with date
+            for proc in proc_list:
+                for ext in ['xlsx', 'csv', 'xls']:
+                    p_file = dirs['processor_dir'] / f"{proc}_{selected_date}.{ext}"
+                    if p_file.exists():
+                        os.remove(p_file)
+                        print(f"Removed {p_file} for {reg.upper()}")
         rates_data = []
         for key, (input_field, _) in self.rate_inputs.items():
             from_curr, to_curr = key.split('_')
@@ -498,61 +625,80 @@ QMessageBox QPushButton:hover {
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
             file_path = RATES_DIR / f"rates_{selected_date}.csv"
             df.to_csv(file_path, index=False)
-            # Removed: self.show_info("Success", f"Rates saved to {file_path}")
-
-            # NEW: Hide and open second window instead of running reports_creator
+            for reg in ['row', 'uk']:
+                dirs = setup_dirs_for_reg(reg, create=True)
+                reg_rates_path = dirs['rates_dir'] / f"rates_{selected_date}.csv"
+                shutil.copy(file_path, reg_rates_path)
             self.hide()
             self.open_second_window()
         else:
             self.show_warning("Error", "No valid rates entered.")
 
-    def rename_processor_files(self, file_paths):
-        selected_date = self.date_edit.date().toString("yyyy-MM-dd")
-        for source_path in file_paths:
-            file_name = os.path.basename(source_path)
-            dest_path = PROCESSOR_DIR / file_name
-            if not re.match(r"^[a-zA-Z]+_\d{4}-\d{2}-\d{2}\.(csv|xlsx|xls)$", file_name):
-                processor = self.crm_file_btn._detect_processor(file_name)
-                new_name = f"{processor}_{selected_date}{Path(source_path).suffix}"
-                dest_path = PROCESSOR_DIR / new_name
-            shutil.move(str(source_path), str(dest_path))
-        self.processor_files = [str(PROCESSOR_DIR / n) for n in [os.path.basename(p) for p in file_paths]]
-
-    def reset_fields(self):
-        # Reset exchange rates
-        for _, (input_field, calc_label) in self.rate_inputs.items():
-            input_field.clear()
-            calc_label.setText("0.0000")
-
-        # Reset attached files and delete from directories
+    def reset_attachments(self):
         if self.crm_file and os.path.exists(self.crm_file):
             os.remove(self.crm_file)
         self.crm_file = None
-        self.crm_file_btn.setText("📊 CRM File")
-        self.crm_file_btn.setStyleSheet("")  # Reset button style to remove hover look
 
         for file_path in self.processor_files:
             if os.path.exists(file_path):
                 os.remove(file_path)
         self.processor_files = []
-        self.processor_file_btn.setText("💳 Processors Files")
-        self.processor_file_btn.setStyleSheet("")  # Reset button style to remove hover look
 
-        # Disable process button
-        self.process_btn.setEnabled(False)
-
-        # Optional: Clear RAW_ATTACHED_FILES if needed
         for file in RAW_ATTACHED_FILES.glob("*.*"):
             if file.is_file() and file.name != ".gitkeep":
                 file.unlink()
 
         self.moved_files.clear()
 
+        self.update_upload_button()
+
+    def reset_fields(self):
+        for _, (input_field, calc_label) in self.rate_inputs.items():
+            input_field.clear()
+            calc_label.setText("0.0000")
+
+        today = QDate.currentDate()
+        yesterday = today.addDays(-1)
+        if today.dayOfWeek() == 1:  # Monday (Qt: 1=Mon)
+            yesterday = today.addDays(-3)  # Last Friday
+        date_str = yesterday.toString("dd/MM/yyyy")
+        self.date_lineedit.setText(date_str)
+        self.valid_date_str = date_str
+        self.calendar.setSelectedDate(yesterday)
+
+        if self.crm_file and os.path.exists(self.crm_file):
+            os.remove(self.crm_file)
+        self.crm_file = None
+
+        for file_path in self.processor_files:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        self.processor_files = []
+
+        self.process_btn.setEnabled(False)
+
+        for file in RAW_ATTACHED_FILES.glob("*.*"):
+            if file.is_file() and file.name != ".gitkeep":
+                file.unlink()
+
+        self.moved_files.clear()
+
+        self.upload_btn.setText("📁 Attach Files Here")
+        self.upload_btn.setStyleSheet("")
+
         self.show_info("Reset", "All fields and attachments have been reset.")
 
     def open_second_window(self):
         print("Debug: Creating SecondWindow")
-        self.second_window = SecondWindow(self.date_edit.date().toString("yyyy-MM-dd"))
+        selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
+        self.second_window = SecondWindow(selected_date)
         self.second_window.show()
         print("Debug: SecondWindow shown")
-        self.close()  # Close first window
+        self.close()
+
+if __name__ == "__main__":
+    import sys
+    app = QApplication(sys.argv)
+    window = ReconciliationWindow()
+    window.show()
+    sys.exit(app.exec_())

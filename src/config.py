@@ -1,10 +1,9 @@
-# config.py (Updated to remove automatic dir creation at top-level; dirs are created per regulation in scripts)
+# config.py
 import sys
 from pathlib import Path
 import tempfile
-import os
 
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys._MEIPASS)
     TEMP_DIR = Path(tempfile.gettempdir()) / "ReconciliationSystem_temp"
     TEMP_DIR.mkdir(exist_ok=True)
@@ -15,12 +14,13 @@ else:
 # Read-only dirs stay under BASE_DIR
 MODEL_DIR = BASE_DIR / "model"
 FRONTEND_DIR = BASE_DIR / "frontend"
-RAW_ATTACHED_FILES = TEMP_DIR / "raw_attached_files"   # ← Global shared folder
+RAW_ATTACHED_FILES = TEMP_DIR / "raw_attached_files"  # ← Global shared folder
 RAW_ATTACHED_FILES.mkdir(parents=True, exist_ok=True)
 CRM_DIR = BASE_DIR / "data" / "crm_reports"
 PROCESSOR_DIR = BASE_DIR / "data" / "processor_reports"
 RATES_DIR = BASE_DIR / "data" / "rates"
 RATES_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def setup_dirs_for_reg(regulation, create=True):
     """Return a dict of directories for a given regulation and optionally create them."""
@@ -40,30 +40,32 @@ def setup_dirs_for_reg(regulation, create=True):
     reg_rates_dir = reg_data_dir / "rates"
     reg_lists_dir = reg_data_dir / "lists"
     reg_combined_crm_dir = reg_processed_crm_dir / "combined"
-    reg_processed_unmatched_shifted_deposits_dir = reg_processed_crm_dir / "unmatched_shifted_deposits"
+    reg_processed_unmatched_shifted_deposits_dir = (
+        reg_processed_crm_dir / "unmatched_shifted_deposits"
+    )
     reg_training_dataset_dir = reg_data_dir / "training_dataset"
     reg_true_training_dir = reg_training_dataset_dir / "check_newversion_datasets"
     reg_false_training_dir = reg_training_dataset_dir / "false_training_datasets"
     reg_test_model_dir = reg_training_dataset_dir / "model_testing"
 
     dirs = {
-        'root': reg_root,
-        'data_dir': reg_data_dir,
-        'output_dir': reg_output_dir,
-        'crm_dir': reg_crm_dir,
-        'processor_dir': reg_processor_dir,
-        'raw_tracking_dir': reg_raw_tracking_dir,
-        'processed_dir': reg_processed_dir,
-        'processed_crm_dir': reg_processed_crm_dir,
-        'processed_processor_dir': reg_processed_processor_dir,
-        'rates_dir': reg_rates_dir,
-        'lists_dir': reg_lists_dir,
-        'combined_crm_dir': reg_combined_crm_dir,
-        'processed_unmatched_shifted_deposits_dir': reg_processed_unmatched_shifted_deposits_dir,
-        'training_dataset_dir': reg_training_dataset_dir,
-        'true_training_dir': reg_true_training_dir,
-        'false_training_dir': reg_false_training_dir,
-        'test_model_dir': reg_test_model_dir,
+        "root": reg_root,
+        "data_dir": reg_data_dir,
+        "output_dir": reg_output_dir,
+        "crm_dir": reg_crm_dir,
+        "processor_dir": reg_processor_dir,
+        "raw_tracking_dir": reg_raw_tracking_dir,
+        "processed_dir": reg_processed_dir,
+        "processed_crm_dir": reg_processed_crm_dir,
+        "processed_processor_dir": reg_processed_processor_dir,
+        "rates_dir": reg_rates_dir,
+        "lists_dir": reg_lists_dir,
+        "combined_crm_dir": reg_combined_crm_dir,
+        "processed_unmatched_shifted_deposits_dir": reg_processed_unmatched_shifted_deposits_dir,
+        "training_dataset_dir": reg_training_dataset_dir,
+        "true_training_dir": reg_true_training_dir,
+        "false_training_dir": reg_false_training_dir,
+        "test_model_dir": reg_test_model_dir,
     }
 
     if create:

@@ -5,8 +5,6 @@ import re
 from src.reports_creator import main as reports_main
 from src.output import main as output_main
 from third_window import ThirdWindow
-from fourth_window import FourthWindow
-from src.config import setup_dirs_for_reg
 
 class StdoutRedirector(object):
     def __init__(self, progress_bar):
@@ -72,30 +70,20 @@ class SecondWindow(QWidget):
 
     def initUI(self):
         print("Debug: initUI started")
+        self._setup_window()
+        self._setup_stylesheet()
+        self._setup_layout()
+        print("Debug: initUI finished")
+
+    def _setup_window(self):
         self.setWindowTitle('Reports Creator Processing')
         self.resize(600, 150)  # Set smaller size
         qr = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
-        layout = QVBoxLayout()
-        # Continue button (initially disabled; enabled when processing done)
-        self.continue_btn = QPushButton('Next')
-        self.continue_btn.setEnabled(False)
-        self.continue_btn.clicked.connect(self.open_next_window)
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMinimum(0)
-        self.progress_bar.setMaximum(100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p%")
-        # Add to layout: progress and button (no console)
-        layout.addStretch(1)  # Center vertically
-        layout.addWidget(self.progress_bar)
-        layout.addWidget(self.continue_btn)
-        layout.addStretch(1)
-        self.setLayout(layout)
+
+    def _setup_stylesheet(self):
         self.setStyleSheet("""
             QWidget {
                 font-family: 'Segoe UI', Arial, sans-serif;
@@ -135,7 +123,26 @@ class SecondWindow(QWidget):
                 border-radius: 4px;
             }
         """)
-        print("Debug: initUI finished")
+
+    def _setup_layout(self):
+        layout = QVBoxLayout()
+        # Continue button (initially disabled; enabled when processing done)
+        self.continue_btn = QPushButton('Next')
+        self.continue_btn.setEnabled(False)
+        self.continue_btn.clicked.connect(self.open_next_window)
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
+        # Add to layout: progress and button (no console)
+        layout.addStretch(1)  # Center vertically
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.continue_btn)
+        layout.addStretch(1)
+        self.setLayout(layout)
 
     def run_processing_scripts(self):
         print("Debug: run_processing_scripts started")
@@ -144,8 +151,8 @@ class SecondWindow(QWidget):
         redirector = StdoutRedirector(self.progress_bar)
         sys.stdout = redirector
         try:
-            reports_main(self.date_str)  # Run reports_creator.main
-            output_main(self.date_str)   # Run output.main
+            reports_main(self.date_str)  # Run reports_creator.main without reg (handles both internally)
+            output_main(self.date_str)   # Run output.main without reg (assuming it handles both internally)
             self.continue_btn.setEnabled(True)
         except Exception as e:
             print(f"Error executing processing: {e}")

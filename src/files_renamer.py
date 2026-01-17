@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 INCOMING_DIR = RAW_ATTACHED_FILES
 logging.info(f"Scanning directory: {INCOMING_DIR}")
 
-# Processor patterns dictionary
+# Processor patterns dictionary (formatted for readability)
 PROCESSOR_PATTERNS = {
     "safecharge": {
         "pattern": r"126728__transaction-search_[0-9]+_[a-z0-9]+(?i:\.csv|\.xlsx|\.xls)",
@@ -84,7 +84,7 @@ PROCESSOR_PATTERNS = {
     },
     "powercash": {
         "pattern": r"(report-[a-zA-Z0-9]+|transactionlog(\s*\(\d+\))?)(?i:\.csv|\.xlsx|\.xls)",
-        "date_format": "%d.%m.%Y", # Specify input format for Date column
+        "date_format": "%d.%m.%Y",  # Specify input format for Date column
         "type_group": None,
         "date_column": "Date",
         "header_row": 0
@@ -274,6 +274,7 @@ PROCESSOR_PATTERNS.update({
 
 UK_ONLY_PROCESSORS = {"barclays", "barclaycard", "safechargeuk"}
 
+
 def detect_processor_from_name(filename):
     """Detect processor name from filename based on keywords."""
     filename_lower = filename.lower()
@@ -292,6 +293,7 @@ def detect_processor_from_name(filename):
             return processor
     return "unknown"
 
+
 def extract_date_from_file(file_path: Path, date_column: str = None, header_row: int = 0, processor=None, config=None):
     """
     Extract the most recent date from the file content if no date in filename.
@@ -307,13 +309,13 @@ def extract_date_from_file(file_path: Path, date_column: str = None, header_row:
                 df = pd.read_excel(file_path, engine='openpyxl', header=header_row)
             except Exception as e:
                 logging.error(f"Initial read failed for {file_path} with openpyxl: {e}")
-                df = pd.read_excel(file_path, engine='xlrd', header=header_row) # Requires xlrd
+                df = pd.read_excel(file_path, engine='xlrd', header=header_row)  # Requires xlrd
         else:
             df = pd.read_csv(file_path, header=header_row)
         logging.info(f"Processing file: {file_path}")
         logging.info(f"Columns in {file_path}: {df.columns.tolist()}")
         if date_column in df.columns:
-            date_format = config.get("date_format") if config else None # Use date_format from config
+            date_format = config.get("date_format") if config else None  # Use date_format from config
             if date_format:
                 dates = pd.to_datetime(df[date_column], format=date_format, errors='coerce')
             else:
@@ -351,11 +353,14 @@ def extract_date_from_file(file_path: Path, date_column: str = None, header_row:
         logging.error(f"Date extraction failed for {file_path}: {e}")
     return None
 
+
 def get_regulation_from_processor(processor_name: str) -> str:
+    """Determine regulation (UK or ROW) based on processor name."""
     processor_lower = processor_name.lower()
     if processor_lower in UK_ONLY_PROCESSORS:
         return "uk"
     return "row"  # Default to ROW for shared processors
+
 
 def rename_raw_file(file_path: Path, forced_date: str = None):
     """
@@ -390,8 +395,9 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
                     else:
                         date_str = date_raw  # already in format
                 elif config["date_column"] and config["header_row"] is not None:
-                    date_str = extract_date_from_file(file_path, config["date_column"], config["header_row"], processor_original,
-                                                      config)
+                    date_str = extract_date_from_file(
+                        file_path, config["date_column"], config["header_row"], processor_original, config
+                    )
                     if not date_str:
                         logging.warning(f"No date found for {filename} with {processor_original}, skipping")
                         continue
@@ -447,13 +453,14 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
             continue
     return False
 
+
 def run_renamer(incoming_dir: Path = INCOMING_DIR, forced_date: str = None):
     """
     Scan incoming_dir for raw files, rename where needed, and move to regulation-specific dirs.
     """
     renamed_count = 0
     incoming_dir.mkdir(parents=True, exist_ok=True)
-    files_found = [str(f) for f in incoming_dir.glob("*.*")] # Log full paths
+    files_found = [str(f) for f in incoming_dir.glob("*.*")]  # Log full paths
     logging.info(f"Files found in {incoming_dir}: {files_found}")
     if not files_found:
         logging.info("No files found in the directory to process.")
@@ -504,6 +511,7 @@ def run_renamer(incoming_dir: Path = INCOMING_DIR, forced_date: str = None):
                         logging.info(f"Fallback renamed {file.name} to {dest_path} for {reg.upper()}")
                         renamed_count += 1
     logging.info(f"Processed {renamed_count} files. Unrecognized files remain in {incoming_dir}.")
+
 
 if __name__ == "__main__":
     run_renamer()

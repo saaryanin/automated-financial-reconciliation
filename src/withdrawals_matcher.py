@@ -1081,6 +1081,13 @@ class ReconciliationEngine:
             proc_amt_crm_cur, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
             if proc_amt_crm_cur is None:
                 continue
+            # Loose tolerance for candidate inclusion
+            accept_abs_tol = 0.1
+            accept_rel_tol = proc_config.tolerance * abs(crm_amt) * 2
+            accept_tol = max(accept_abs_tol, 500) if proc_cur == crm_cur else max(accept_rel_tol, 500)
+            abs_diff = abs(proc_amt_crm_cur - abs(crm_amt))
+            if abs_diff > accept_tol:
+                continue
             proc_email = str(row.get('proc_email', '')) if not pd.isna(row.get('proc_email')) else ''
             proc_email = proc_email.strip()
             email_sim = self.enhanced_email_similarity(crm_email, proc_email)
@@ -1503,6 +1510,12 @@ class ReconciliationEngine:
                 continue
             proc_amt_crm, rate = self.convert_amount(proc_amt_raw, proc_cur, crm_cur)
             if proc_amt_crm is None:
+                continue
+            # Loose tolerance for candidate inclusion
+            accept_abs_tol = 0.1
+            accept_rel_tol = proc_config.tolerance * crm_amt * 2
+            accept_tol = max(accept_abs_tol, 500) if proc_cur == crm_cur else max(accept_rel_tol, 500)
+            if abs(proc_amt_crm - crm_amt) > accept_tol:
                 continue
             proc_last4_raw = str(row.get('proc_last4', '')).strip()
             proc_last4 = normalize_string(proc_last4_raw)
@@ -2145,9 +2158,12 @@ class ReconciliationEngine:
             proc_amt_crm_cur, rate = self.convert_amount(proc_amt, proc_cur, crm_cur)
             if proc_amt_crm_cur is None:
                 continue
+            # Loose tolerance for candidate inclusion
+            accept_abs_tol = 0.1
+            accept_rel_tol = proc_config.tolerance * abs(crm_amt) * 2
+            accept_tol = max(accept_abs_tol, 500) if proc_cur == crm_cur else max(accept_rel_tol, 500)
             abs_diff = abs(proc_amt_crm_cur - abs(crm_amt))
-            tolerance = max(0.1, proc_config.tolerance * abs(crm_amt))
-            if abs_diff > tolerance:
+            if abs_diff > accept_tol:
                 continue
             proc_email = str(row.get('proc_email', '')) if not pd.isna(row.get('proc_email')) else ''
             proc_email = proc_email.strip()

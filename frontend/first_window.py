@@ -1,14 +1,15 @@
 import os
 import shutil
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QPushButton, QGridLayout, QFileDialog, QMessageBox, QCalendarWidget,
-                             QToolButton, QSizePolicy, QTableView)
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QGridLayout, QFileDialog, QMessageBox, QCalendarWidget,
+    QToolButton, QSizePolicy, QTableView
+)
 from PyQt5.QtCore import Qt, QDate, QRegExp, QTimer
 from PyQt5.QtGui import QRegExpValidator
-from second_window import SecondWindow  # NEW: Import the new second window class
+from second_window import SecondWindow
 import pandas as pd
 import re
-from pathlib import Path
 from src.config import RATES_DIR, RAW_ATTACHED_FILES, setup_dirs_for_reg
 from src.files_renamer import PROCESSOR_PATTERNS
 
@@ -79,8 +80,8 @@ class ReconciliationWindow(QWidget):
         self.processor_files = []
         self.date_button = None  # Add this for the custom calendar button
         self.valid_date_str = None  # Track valid date string
-        self.initUI()
         self.moved_files = set()  # Track moved file names to avoid duplicates
+        self.initUI()
 
     def _detect_processor(self, filename):
         """Detect processor name from filename based on keywords."""
@@ -100,7 +101,20 @@ class ReconciliationWindow(QWidget):
 
     def initUI(self):
         self.setWindowTitle('CRM-Processor Reconciliation System')
+        self._setup_stylesheet()
+        self._setup_geometry()
 
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        self.setLayout(main_layout)
+
+        self._setup_header(main_layout)
+        self._setup_currency_section(main_layout)
+        self._setup_file_section(main_layout)
+        self._setup_button_layout(main_layout)
+
+    def _setup_stylesheet(self):
         app = QApplication.instance()
         app.setStyleSheet("""
             QWidget {
@@ -232,14 +246,11 @@ class ReconciliationWindow(QWidget):
             }
         """)
 
+    def _setup_geometry(self):
         screen = QApplication.desktop().screenGeometry()
         self.setGeometry((screen.width() - 500) // 2, 50, 500, 600)
 
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(20)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        self.setLayout(main_layout)
-
+    def _setup_header(self, main_layout):
         header = QLabel('CRM-Processor Reconciliation System')
         header.setAlignment(Qt.AlignCenter)
         header.setStyleSheet("""
@@ -252,10 +263,12 @@ class ReconciliationWindow(QWidget):
         """)
         main_layout.addWidget(header)
 
+    def _setup_currency_section(self, main_layout):
         currency_section = QWidget()
         currency_section.setObjectName("section")
         currency_layout = QVBoxLayout()
         currency_section.setLayout(currency_layout)
+
         currency_label = QLabel('💱 Currency Exchange Rates')
         currency_label.setStyleSheet("font-size: 18px; margin-bottom: 10px;")
         currency_layout.addWidget(currency_label)
@@ -270,7 +283,8 @@ class ReconciliationWindow(QWidget):
             label.setStyleSheet("font-size: 12px;")
             input_field = QLineEdit()
             input_field.setPlaceholderText(
-                f"{0.8706 if from_curr == 'USD' and to_curr == 'EUR' else 0.7561 if from_curr == 'USD' and to_curr == 'GBP' else 4.6800 if from_curr == 'USD' and to_curr == 'MYR' else 7.2450 if from_curr == 'USD' and to_curr == 'CNY' else 0.8687}")
+                f"{0.8706 if from_curr == 'USD' and to_curr == 'EUR' else 0.7561 if from_curr == 'USD' and to_curr == 'GBP' else 4.6800 if from_curr == 'USD' and to_curr == 'MYR' else 7.2450 if from_curr == 'USD' and to_curr == 'CNY' else 0.8687}"
+            )
             input_field.textChanged.connect(self.update_reciprocal_rates)
             calc_label = QLabel(f"{to_curr}/{from_curr}: 0.0000")
             calc_label.setStyleSheet("font-size: 10px; color: #6c757d; font-style: italic;")
@@ -280,6 +294,10 @@ class ReconciliationWindow(QWidget):
             currency_grid.addWidget(calc_label, i, 2)
         currency_layout.addLayout(currency_grid)
 
+        self._setup_date_container(currency_layout)
+        main_layout.addWidget(currency_section)
+
+    def _setup_date_container(self, currency_layout):
         date_container = QWidget()
         date_container.setStyleSheet("""
             background: #ffffff;
@@ -320,7 +338,7 @@ class ReconciliationWindow(QWidget):
         self.calendar.updateGeometry()
         self.calendar.adjustSize()
         max_height = self.calendar.sizeHint().height()
-        self.calendar.setFixedHeight(max_height+30)
+        self.calendar.setFixedHeight(max_height + 30)
         # Restore original date
         self.calendar.setSelectedDate(orig_date)
 
@@ -345,8 +363,7 @@ class ReconciliationWindow(QWidget):
 
         currency_layout.addWidget(date_container, alignment=Qt.AlignHCenter)
 
-        main_layout.addWidget(currency_section)
-
+    def _setup_file_section(self, main_layout):
         file_section = QWidget()
         file_section.setObjectName("section")
         file_layout = QVBoxLayout()
@@ -360,6 +377,7 @@ class ReconciliationWindow(QWidget):
 
         main_layout.addWidget(file_section)
 
+    def _setup_button_layout(self, main_layout):
         button_layout = QHBoxLayout()
         button_layout.addStretch(1)
         self.process_btn = QPushButton('Start Processing')
@@ -511,9 +529,10 @@ class ReconciliationWindow(QWidget):
 
     def check_files_ready(self):
         files_ready = bool(self.crm_file and self.processor_files)
-        rates_entered = any(float(input_field.text()) if input_field.text() else 0 > 0
-                            for input_field, _ in self.rate_inputs.values())
-
+        rates_entered = any(
+            float(input_field.text()) if input_field.text() else 0 > 0
+            for input_field, _ in self.rate_inputs.values()
+        )
         self.process_btn.setEnabled(files_ready and rates_entered)
 
     def is_recognized(self, filename):
@@ -554,63 +573,8 @@ class ReconciliationWindow(QWidget):
             'safechargeuk', 'barclays', 'barclaycard'
         ]
         for reg in ['row', 'uk']:
-            dirs = setup_dirs_for_reg(reg, create=True)
-            proc_list = row_processors if reg == 'row' else uk_processors
-            # Clear output dir for selected date
-            output_date_dir = dirs['output_dir'] / selected_date
-            if output_date_dir.exists():
-                shutil.rmtree(output_date_dir)
-                print(f"Cleared output dir for {selected_date} in {reg.upper()}")
-            # Clear lists date folder
-            lists_date = dirs['lists_dir'] / selected_date
-            if lists_date.exists():
-                shutil.rmtree(lists_date)
-                print(f"Cleared lists/{selected_date} for {reg.upper()}")
-            # Clear processed crm processor date folders
-            for proc in proc_list:
-                proc_date = dirs['processed_crm_dir'] / proc / selected_date
-                if proc_date.exists():
-                    shutil.rmtree(proc_date)
-                    print(f"Cleared processed/crm/{proc}/{selected_date} for {reg.upper()}")
-            # Clear processed crm combined date folder
-            combined_date = dirs['combined_crm_dir'] / selected_date
-            if combined_date.exists():
-                shutil.rmtree(combined_date)
-                print(f"Cleared processed/crm/combined/{selected_date} for {reg.upper()}")
-            # Clear processed crm unmatched_shifted_deposits date folder
-            unmatched_date = dirs['processed_unmatched_shifted_deposits_dir'] / selected_date
-            if unmatched_date.exists():
-                shutil.rmtree(unmatched_date)
-                print(f"Cleared processed/crm/unmatched_shifted_deposits/{selected_date} for {reg.upper()}")
-            # Clear processed processors processor date folders
-            for proc in proc_list:
-                proc_date = dirs['processed_processor_dir'] / proc / selected_date
-                if proc_date.exists():
-                    shutil.rmtree(proc_date)
-                    print(f"Cleared processed/processors/{proc}/{selected_date} for {reg.upper()}")
-            # Clear processed processors combined date folder
-            combined_proc_date = dirs['processed_processor_dir'] / 'combined' / selected_date
-            if combined_proc_date.exists():
-                shutil.rmtree(combined_proc_date)
-                print(f"Cleared processed/processors/combined/{selected_date} for {reg.upper()}")
-            # Extra for row: zotapay_paymentasia
-            if reg == 'row':
-                zota_pa_date = dirs['processed_processor_dir'] / 'zotapay_paymentasia' / selected_date
-                if zota_pa_date.exists():
-                    shutil.rmtree(zota_pa_date)
-                    print(f"Cleared processed/processors/zotapay_paymentasia/{selected_date} for {reg.upper()}")
-            # Remove crm file with date
-            crm_file = dirs['crm_dir'] / f"crm_{selected_date}.xlsx"
-            if crm_file.exists():
-                os.remove(crm_file)
-                print(f"Removed {crm_file} for {reg.upper()}")
-            # Remove processor files with date
-            for proc in proc_list:
-                for ext in ['xlsx', 'csv', 'xls']:
-                    p_file = dirs['processor_dir'] / f"{proc}_{selected_date}.{ext}"
-                    if p_file.exists():
-                        os.remove(p_file)
-                        print(f"Removed {p_file} for {reg.upper()}")
+            self._clear_directories_for_reg(reg, selected_date, row_processors if reg == 'row' else uk_processors)
+
         rates_data = []
         for key, (input_field, _) in self.rate_inputs.items():
             from_curr, to_curr = key.split('_')
@@ -633,6 +597,73 @@ class ReconciliationWindow(QWidget):
             self.open_second_window()
         else:
             self.show_warning("Error", "No valid rates entered.")
+
+    def _clear_directories_for_reg(self, reg, selected_date, proc_list):
+        dirs = setup_dirs_for_reg(reg, create=True)
+        # Clear output dir for selected date
+        output_date_dir = dirs['output_dir'] / selected_date
+        if output_date_dir.exists():
+            shutil.rmtree(output_date_dir)
+            print(f"Cleared output dir for {selected_date} in {reg.upper()}")
+
+        # Clear lists date folder
+        lists_date = dirs['lists_dir'] / selected_date
+        if lists_date.exists():
+            shutil.rmtree(lists_date)
+            print(f"Cleared lists/{selected_date} for {reg.upper()}")
+
+        # Clear processed crm processor date folders
+        for proc in proc_list:
+            proc_date = dirs['processed_crm_dir'] / proc / selected_date
+            if proc_date.exists():
+                shutil.rmtree(proc_date)
+                print(f"Cleared processed/crm/{proc}/{selected_date} for {reg.upper()}")
+
+        # Clear processed crm combined date folder
+        combined_date = dirs['combined_crm_dir'] / selected_date
+        if combined_date.exists():
+            shutil.rmtree(combined_date)
+            print(f"Cleared processed/crm/combined/{selected_date} for {reg.upper()}")
+
+        # Clear processed crm unmatched_shifted_deposits date folder
+        unmatched_date = dirs['processed_unmatched_shifted_deposits_dir'] / selected_date
+        if unmatched_date.exists():
+            shutil.rmtree(unmatched_date)
+            print(f"Cleared processed/crm/unmatched_shifted_deposits/{selected_date} for {reg.upper()}")
+
+        # Clear processed processors processor date folders
+        for proc in proc_list:
+            proc_date = dirs['processed_processor_dir'] / proc / selected_date
+            if proc_date.exists():
+                shutil.rmtree(proc_date)
+                print(f"Cleared processed/processors/{proc}/{selected_date} for {reg.upper()}")
+
+        # Clear processed processors combined date folder
+        combined_proc_date = dirs['processed_processor_dir'] / 'combined' / selected_date
+        if combined_proc_date.exists():
+            shutil.rmtree(combined_proc_date)
+            print(f"Cleared processed/processors/combined/{selected_date} for {reg.upper()}")
+
+        # Extra for row: zotapay_paymentasia
+        if reg == 'row':
+            zota_pa_date = dirs['processed_processor_dir'] / 'zotapay_paymentasia' / selected_date
+            if zota_pa_date.exists():
+                shutil.rmtree(zota_pa_date)
+                print(f"Cleared processed/processors/zotapay_paymentasia/{selected_date} for {reg.upper()}")
+
+        # Remove crm file with date
+        crm_file = dirs['crm_dir'] / f"crm_{selected_date}.xlsx"
+        if crm_file.exists():
+            os.remove(crm_file)
+            print(f"Removed {crm_file} for {reg.upper()}")
+
+        # Remove processor files with date
+        for proc in proc_list:
+            for ext in ['xlsx', 'csv', 'xls']:
+                p_file = dirs['processor_dir'] / f"{proc}_{selected_date}.{ext}"
+                if p_file.exists():
+                    os.remove(p_file)
+                    print(f"Removed {p_file} for {reg.upper()}")
 
     def reset_attachments(self):
         if self.crm_file and os.path.exists(self.crm_file):

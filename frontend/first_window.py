@@ -277,13 +277,13 @@ class ReconciliationWindow(QWidget):
         currency_grid.setHorizontalSpacing(10)
         currency_grid.setVerticalSpacing(5)
         self.rate_inputs = {}
-        rates = [('USD', 'EUR'), ('USD', 'GBP'), ('USD', 'MYR'), ('USD', 'CNY'), ('EUR', 'GBP')]
+        rates = [('USD', 'EUR'), ('USD', 'GBP'), ('USD', 'MYR'), ('USD', 'CNY')]
         for i, (from_curr, to_curr) in enumerate(rates):
             label = QLabel(f"{from_curr}/{to_curr}")
             label.setStyleSheet("font-size: 12px;")
             input_field = QLineEdit()
             input_field.setPlaceholderText(
-                f"{0.8706 if from_curr == 'USD' and to_curr == 'EUR' else 0.7561 if from_curr == 'USD' and to_curr == 'GBP' else 4.6800 if from_curr == 'USD' and to_curr == 'MYR' else 7.2450 if from_curr == 'USD' and to_curr == 'CNY' else 0.8687}"
+                f"{0.8706 if from_curr == 'USD' and to_curr == 'EUR' else 0.7561 if from_curr == 'USD' and to_curr == 'GBP' else 4.6800 if from_curr == 'USD' and to_curr == 'MYR' else 7.2450 if from_curr == 'USD' and to_curr == 'CNY' else ''}"
             )
             input_field.textChanged.connect(self.update_reciprocal_rates)
             calc_label = QLabel(f"{to_curr}/{from_curr}: 0.0000")
@@ -584,6 +584,16 @@ class ReconciliationWindow(QWidget):
                 reciprocal_rate = 1 / rate
                 if (to_curr, from_curr) not in [k.split('_') for k in self.rate_inputs.keys()]:
                     rates_data.append([to_curr, from_curr, reciprocal_rate])
+
+        # Calculate EUR/GBP from USD/EUR and USD/GBP
+        usd_eur_text = self.rate_inputs.get('USD_EUR', (QLineEdit(), None))[0].text()
+        usd_gbp_text = self.rate_inputs.get('USD_GBP', (QLineEdit(), None))[0].text()
+        usd_eur = float(usd_eur_text) if usd_eur_text else 0
+        usd_gbp = float(usd_gbp_text) if usd_gbp_text else 0
+        if usd_eur > 0 and usd_gbp > 0:
+            eur_gbp = usd_gbp / usd_eur
+            rates_data.append(['EUR', 'GBP', eur_gbp])
+            # The reciprocal GBP/EUR will be added in the existing logic if not present
 
         if rates_data:
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])

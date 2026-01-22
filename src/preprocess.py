@@ -1156,6 +1156,34 @@ def load_processor_file(filepath: str, processor_name: str, save_clean=False, tr
             df_clean['currency'] = df_clean['currency'].astype(str).str.upper()
     else:
         df_clean = standardize_processor_columns_withdrawals(df, processor_name)
+        # Special handling for Barclays declined refunds (UK only, withdrawals)
+        if transaction_type == "withdrawal" and processor_name.lower() in ["barclays", "barclaycard"]:
+            declined_raw = df[
+                (df["Current Status"].str.lower() == "declined") &
+                (df["Trans Type Code"].str.lower() == "refund")
+                ].copy()
+            if not declined_raw.empty:
+                declined_df = declined_raw.copy()
+                declined_df["currency"] = declined_df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
+                declined_df["amount"] = pd.to_numeric(declined_df["Trans Amount(HUC)"], errors='coerce').abs()
+                declined_df["date"] = declined_df["Transaction Date"]
+                declined_df["tp"] = declined_df["Sales Details"].astype(str).apply(
+                    lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
+                declined_df['last_4cc'] = declined_df['Online Token'].astype(str).str[-4:]
+                declined_df['processor_name'] = processor_name.lower()
+                declined_df['first_name'] = ''
+                declined_df['last_name'] = ''
+                declined_df['email'] = ''
+                keep_cols = ["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name",
+                             "processor_name", "tp"]
+                declined_df = declined_df[[col for col in keep_cols if col in declined_df.columns]]
+                date_str = extract_date_from_filename(filepath)
+                folder_name = processor_name.lower()
+                out_filename = f"{folder_name}_declined_withdrawals.xlsx"
+                out_path = processed_processor_dir / folder_name / date_str / out_filename
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                declined_df.to_excel(out_path, index=False)
+                print(f"Saved Barclays declined withdrawals to {out_path}")
         if 'currency' in df_clean.columns:
             df_clean['currency'] = df_clean['currency'].astype(str).str.upper()
     if not df_clean.empty and 'currency' in df_clean.columns:

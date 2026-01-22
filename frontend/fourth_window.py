@@ -7,10 +7,11 @@ import sys
 from src.output import (generate_unmatched_crm_deposits, generate_unapproved_crm_deposits,
                 generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals,
                 remove_compensated_entries, generate_unmatched_crm_withdrawals,generate_matched_deposits, generate_matched_withdrawals,
-                save_unmatched_to_excel,save_matched_to_excel)
+                save_unmatched_to_excel,save_matched_to_excel, format_date, pad_last4)
 from src.shifts_handler import main as handle_shifts
 from src.config import setup_dirs_for_reg
 from pathlib import Path
+import numpy as np
 
 
 class FourthWindow(QWidget):
@@ -370,6 +371,74 @@ class FourthWindow(QWidget):
                 proc_wds_df = generate_unmatched_proc_withdrawals(self.date_str, lists_dir, output_dir, regulation)
                 proc_deps_df, proc_wds_df, compensated_deps, compensated_wds = remove_compensated_entries(proc_deps_df, proc_wds_df)
                 crm_wds_df = generate_unmatched_crm_withdrawals(self.date_str, lists_dir, output_dir, regulation)
+
+                # Add UK declined processing here (copied from output.py)
+                declined_df = None
+                if regulation == 'uk':
+                    print("Starting Barclays declined processing for UK")
+                    processed_processor_dir = dirs['processed_processor_dir']
+                    declined_dfs = []
+                    for folder in ['barclays', 'barclaycard', 'barclay card']:
+                        declined_path = processed_processor_dir / folder / self.date_str / f"{folder}_declined_withdrawals.xlsx"
+                        print(f"Checking declined file: {declined_path}")
+                        if declined_path.exists():
+                            print(f"Found {declined_path} - loading...")
+                            declined_raw = pd.read_excel(declined_path)
+                            print(f"Loaded raw declined rows: {len(declined_raw)}")
+                            declined_temp = declined_raw.copy()
+                            declined_temp['amount'] = pd.to_numeric(declined_temp['amount'], errors='coerce')
+                            declined_temp['amount'] = declined_temp['amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
+                            declined_temp['date'] = declined_temp['date'].apply(lambda x: format_date(x, is_proc=True))
+                            pad_last4(declined_temp, 'last_4cc')
+                            declined_temp = declined_temp.rename(columns={
+                                'date': 'Date',
+                                'first_name': 'First Name',
+                                'last_name': 'Last Name',
+                                'email': 'Email',
+                                'amount': 'Amount',
+                                'currency': 'Currency',
+                                'tp': 'TP',
+                                'processor_name': 'Processor Name',
+                                'last_4cc': 'Last 4 Digits'
+                            })
+                            declined_temp['Type'] = 'Withdrawal'
+                            declined_temp['Processor Name'] = 'Barclays'  # Standardize name
+                            declined_temp['Comment'] = 'Withdrawal Declined'
+                            declined_temp = declined_temp[[
+                                'Type', 'Date', 'First Name', 'Last Name', 'Email',
+                                'Amount', 'Currency', 'TP', 'Processor Name', 'Last 4 Digits', 'Comment'
+                            ]]
+                            declined_dfs.append(declined_temp)
+                            print(f"Appended processed declined for {folder}: {len(declined_temp)} rows")
+                        else:
+                            print(f"No file at {declined_path}")
+                    if declined_dfs:
+                        declined_df = pd.concat(declined_dfs, ignore_index=True)
+                        declined_df['Date'] = pd.to_datetime(declined_df['Date'], errors='coerce')
+                        declined_df = declined_df.sort_values(by='Date', ascending=False)
+                        print(f"Loaded and prepared Barclays Declined WDs: {len(declined_df)} rows")
+                        # Append to proc_wds_df
+                        if proc_wds_df is not None and not proc_wds_df.empty:
+                            proc_wds_df['Date'] = pd.to_datetime(proc_wds_df['Date'], errors='coerce')
+                            proc_wds_df = proc_wds_df.sort_values(by='Date', ascending=False)
+                            print(f"Pre-append: proc_wds_df rows = {len(proc_wds_df)}")
+                            print(proc_wds_df.tail(3))
+                        else:
+                            print("proc_wds_df is empty or None before append")
+                            proc_wds_df = pd.DataFrame()
+                        proc_wds_df = pd.concat([proc_wds_df, declined_df], ignore_index=True)
+                        print(f"Post-append: proc_wds_df rows = {len(proc_wds_df)}")
+                        print(proc_wds_df.tail(3))
+                        # Force declined last
+                        proc_wds_df['Date'] = pd.to_datetime(proc_wds_df['Date'], errors='coerce')
+                        proc_wds_df['is_declined'] = np.where(proc_wds_df['Comment'] == 'Withdrawal Declined', 1, 0)
+                        proc_wds_df = proc_wds_df.sort_values(by=['is_declined', 'Date'], ascending=[True, False])
+                        proc_wds_df = proc_wds_df.drop(columns=['is_declined'])
+                        print(f"Final proc_wds_df after sort: {len(proc_wds_df)} rows")
+                        print(proc_wds_df.tail(3))
+                    else:
+                        print("No Barclays declined withdrawals file found; skipping tab.")
+
                 deps_df = generate_matched_deposits(self.date_str, lists_dir, regulation, compensated_deps)
                 wds_df = generate_matched_withdrawals(self.date_str, regulation, lists_dir, output_dir, compensated_wds)
                 save_matched_to_excel(self.date_str, regulation, deps_df, wds_df, output_dir)

@@ -1,13 +1,20 @@
-#cross_regulation_matcher.py
 """
-Cross-regulation matching for withdrawals.
+Script: cross_regulation_matcher.py
+Description: This script conducts cross-regulation matching for unmatched withdrawal records between ROW and UK datasets. It loads withdrawal matching files, extracts unmatched CRM and processor rows, performs directional matching using the ReconciliationEngine, removes matched entries from original files, and saves cross-matched results to new Excel files specific to each regulation.
 
-* Reads row_withdrawals_matching.xlsx  (ROW)
-* Reads uk_withdrawals_matching.xlsx   (UK)
-* Takes every unmatched CRM row from UK  → tries to match it with every unmatched PROC row from ROW
-* Takes every unmatched CRM row from ROW → tries to match it with every unmatched PROC row from UK
-* Successful matches are written to separate cross-regulation files: uk_cross_regulation.xlsx and row_cross_regulation.xlsx
-* The matched rows are removed from the original *_withdrawals_matching.xlsx files (transfer).
+Key Features:
+- File writing: Saves cross-matches to row/uk_cross_reg_withdrawals_matching.xlsx with a standardized column order, cleaning proc_last4 by removing trailing '.0' using clean_last4.
+- Directional matching: Prepares unmatched pools (CRM with crm_date not NaN, PROC with crm_date NaN), adjusts processor names (safechargeuk to safecharge for compatibility), excludes UK-specific processors (barclays/barclaycard) in ROW CRM to UK PROC matching, utilizes ReconciliationEngine for matching, and maps matches back to original indices.
+- Main process: Loads ROW and UK matching files, extracts unmatched subsets, runs UK CRM to ROW PROC and ROW CRM to UK PROC matches, collects indices to drop from originals, overwrites original files without the matched rows, and writes cross-match files if matches found.
+- Debugging: Prints pool sizes, match counts, and final unmatched counts for verification.
+- Edge cases: Handles empty pools or no matches by skipping file writes; ensures column consistency and data types during concatenation and saving.
+
+Dependencies:
+- pandas (for DataFrame operations, loading, saving, and manipulation)
+- typing (for type hints like List and Dict)
+- src.withdrawals_matcher (for ReconciliationEngine class)
+- src.config (for TEMP_DIR constant)
+- src.utils (for clean_last4 and clean_field functions)
 """
 import pandas as pd
 from typing import List, Dict

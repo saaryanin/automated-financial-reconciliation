@@ -1,4 +1,21 @@
-# deposits_matcher.py
+"""
+Script: deposits_matcher.py
+Description: This script matches deposit records between combined CRM and processor data for both ROW and UK regulations on a specified date. It conducts local matching based on transaction_id and processor_name, addresses mismatches like safecharge/safechargeuk, performs cross-regulation matching for remaining unmatched CRM records, combines matched and unmatched rows with status flags, and generates regulation-specific deposit matching reports.
+
+Key Features:
+- Data loading: Reads combined CRM and processor Excel files for ROW and UK, specifying string dtype for transaction_ids to preserve leading zeros.
+- UK matching: Performs general local matching (excluding safecharge) on transaction_id and processor_name; specific matching for safecharge CRM to safechargeuk PROC on transaction_id; cross-matches remaining unmatched UK CRM to ROW processors on transaction_id.
+- ROW matching: First excludes ROW processors already matched to UK CRM; then local matching on transaction_id and processor_name; cross-matches remaining unmatched ROW CRM to available UK processors on transaction_id.
+- Result combination: Assigns match_status=1 to matched rows, fills missing columns with NaN for unmatched CRM/PROC rows, sets match_status=0; sorts by match_status descending for prioritization.
+- Column adjustments: Moves 'crm_type' to the front if present; saves combined results to row/uk_deposits_matching.xlsx in the lists directory for the given date.
+- Edge cases: Gracefully handles missing or empty files by skipping and using empty DataFrames; ensures no duplicate matches across regulations.
+
+Dependencies:
+- pandas (for DataFrame loading, merging, filtering, and saving)
+- numpy (for NaN handling and potential array operations)
+- src.config (for setup_dirs_for_reg function to get directory paths)
+"""
+
 import pandas as pd
 import numpy as np
 from src.config import setup_dirs_for_reg

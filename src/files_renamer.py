@@ -1,5 +1,25 @@
-# files_renamer.py (Updated: Made barclays pattern case-insensitive and handled optional space before download suffix; added 'transactionreport' to detect_processor_from_name for fallback)
+"""
+Script: files_renamer.py
+Description: This script scans the incoming raw files directory for processor and CRM files, identifies processors using regex patterns, extracts dates either from filenames or by inspecting file contents, renames files to a standardized format (e.g., processor_date.extension), and moves or copies them to appropriate regulation-specific directories (ROW or UK) for CRM or processors. It ensures CRM files are duplicated to both regulations, handles pre-renamed files, and allows for forced date overrides.
 
+Key Features:
+- Uses processor-specific regex patterns to match filenames, extract dates, transaction types (deposits/withdrawals), and identify processors like paypal, safecharge, barclays.
+- Fallback date extraction: If date not in filename, loads file with pandas and finds the maximum date from processor-specific columns (e.g., 'Transaction Date' for paypal), handling various date formats and headers.
+- Regulation determination: Classifies as UK for specific processors (barclays, barclaycard, safechargeuk), defaulting to ROW; uses categorize_regulation for site-based logic.
+- File handling: Copies CRM files to both ROW and UK directories, moves processor files to the determined regulation directory, and removes originals only after successful operations.
+- Supports already-renamed files by checking destination existence, skips duplicates, and logs all renames, moves, and errors.
+- Forced date override: Allows specifying a date to use for renaming when automatic extraction fails or for testing.
+- Edge cases: Handles multiple date formats in content (e.g., DD/MM/YYYY, YYYY-MM-DD), skips non-matching files, manages file extensions (xlsx, xls, csv), and warns on extraction failures.
+
+Dependencies:
+- re (for regex pattern matching in filenames and content)
+- pathlib (for path manipulation and file existence checks)
+- datetime (for date parsing and formatting)
+- shutil (for file copying and moving)
+- pandas (for loading and inspecting file contents for date extraction)
+- logging (for detailed logging of actions and errors)
+- src.config (for RAW_ATTACHED_FILES directory and setup_dirs_for_reg function)
+"""
 import re
 from pathlib import Path
 from datetime import datetime

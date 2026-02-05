@@ -1,3 +1,29 @@
+"""
+Script: first_window.py
+Description: This script creates the initial GUI window for the CRM-Processor Reconciliation System using PyQt5. It allows users to input currency exchange rates, select a date (defaulting to the previous business day), attach CRM and processor files via drag-and-drop or file dialog, validates inputs, saves rates to CSV files for both ROW and UK regulations, clears previous processing directories for the selected date in both regulations, and transitions to the second window for further processing.
+
+Key Features:
+- GUI setup: Configures window with header, currency rate inputs with reciprocal calculations, date selector with calendar popup and validation (dd/MM/yyyy format), file attachment button supporting drag-and-drop and multi-file selection.
+- File handling: Copies attached files to a shared raw directory (RAW_ATTACHED_FILES), detects processors using keyword matching and regex patterns from PROCESSOR_PATTERNS, prevents duplicates and multiple CRM files, checks for unrecognized files and prompts renaming.
+- Date management: Defaults to previous business day (skipping weekends), uses QCalendarWidget for selection with layout adjustments for 6-row months, positions popup relative to screen boundaries.
+- Rate inputs: Handles USD to EUR/GBP/MYR/CNY with placeholders, auto-updates reciprocal labels, calculates EUR/GBP from USD rates if available, includes reciprocals in saved data.
+- Processing initiation: Validates attachments and rates, clears regulation-specific directories (output, lists, processed crm/processors) for ROW and UK using setup_dirs_for_reg, copies rates CSV to both regulations' rates_dir, opens SecondWindow with selected date.
+- Reset functionality: Clears inputs, attachments, and raw directory files, resets UI.
+- Edge cases: Handles invalid dates with warnings, unrecognized files by resetting attachments, duplicate drops/selections with messages, stylesheet for disabled buttons and focus effects, logging for debug (e.g., drag events, window transitions).
+- Processor lists: Defines ROW-specific (e.g., paypal, safecharge) and UK-specific (e.g., safechargeuk, barclays, barclaycard) processors for directory clearing.
+
+Dependencies:
+- os (for path operations)
+- shutil (for file copying and directory removal)
+- PyQt5 (QtWidgets, QtCore, QtGui for GUI components, layouts, validators, timers)
+- pandas (for DataFrame creation and CSV saving of rates)
+- re (for regex in processor detection)
+- src.config (for RATES_DIR, RAW_ATTACHED_FILES, setup_dirs_for_reg)
+- src.files_renamer (for PROCESSOR_PATTERNS)
+- sys (for app execution)
+- second_window (for SecondWindow class)
+"""
+
 import os
 import shutil
 from PyQt5.QtWidgets import (
@@ -12,6 +38,7 @@ import pandas as pd
 import re
 from src.config import RATES_DIR, RAW_ATTACHED_FILES, setup_dirs_for_reg
 from src.files_renamer import PROCESSOR_PATTERNS
+import sys
 
 
 class DropButton(QPushButton):
@@ -738,7 +765,7 @@ class ReconciliationWindow(QWidget):
         self.close()
 
 if __name__ == "__main__":
-    import sys
+
     app = QApplication(sys.argv)
     window = ReconciliationWindow()
     window.show()

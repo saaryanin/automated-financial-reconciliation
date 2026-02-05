@@ -1,14 +1,43 @@
-# withdrawals_matcher_test.py (updated with crm_idx in _match_standard_row and _match_safechargeuk_row)
+"""
+Script: withdrawals_matcher.py
+Description: This script executes the matching of CRM withdrawal records against processor withdrawal data for reconciliation. It incorporates processor-specific matching rules, currency conversions, similarity assessments for emails and names, fallback strategies for unmatched entries including cross-processor and cross-regulation options, warning flags for potential discrepancies, and generates comprehensive matched reports for ROW and UK, including handling for cancelled withdrawals.
+
+Key Features:
+- Matching rules: Processor-configurable thresholds for email similarity, name matching, last4 requirements, with fallbacks like checking names in emails or using exact matches.
+- Currency handling: Converts amounts using exchange rates, applies tolerance for differences, determines payment status (e.g., overpaid/underpaid) based on comparisons.
+- Similarity: Uses SequenceMatcher to compute email and name similarities, handles multiple emails by averaging max similarities.
+- Advanced matching: Groups for combo records (multi-matches), performs last-chance cross-processor matching, integrates cross-regulation fallbacks.
+- Warnings: Flags issues like low email similarity, duplicate last4/transaction pairs, processor name mismatches, partial emails in Shift4.
+- Parallel processing: Handles ROW and UK independently, appends cross matches to final reports, cleans fields like last4 normalization.
+- Performance: Estimates runtime, auto-adjusts parameters, provides diagnostics for unmatched reasons.
+- Output: Saves matched/unmatched to Excel, includes cancelled rows via create_cancelled_row.
+- Edge cases: Caches similarity computations with lru_cache, thread-safe logging, regex for field cleaning.
+
+Dependencies:
+- pandas (for DataFrame handling and I/O)
+- numpy (for numerical operations)
+- datetime and timedelta (for date handling)
+- lru_cache (from functools) (for caching similarities)
+- logging (for detailed logs)
+- threading (for potential concurrency)
+- time (for timing)
+- SequenceMatcher (from difflib) (for similarity scores)
+- defaultdict (from collections) (for grouping)
+- re (for regex cleaning)
+- src.config (for setup_dirs_for_reg)
+- src.utils (for create_cancelled_row, normalize_string, clean_last4, clean_field)
+- pd.read_excel and pd.to_datetime (specific pandas imports)
+"""
 from datetime import datetime, timedelta
 from functools import lru_cache
 import pandas as pd
+import numpy as np
 import logging, threading, time
 from src.utils import create_cancelled_row, normalize_string, clean_last4, clean_field
 from difflib import SequenceMatcher
 from collections import defaultdict
 import re
 from src.config import setup_dirs_for_reg
-
 
 class ProcessorConfig:
     def __init__(self,
@@ -2201,12 +2230,6 @@ class ReconciliationEngine:
         remaining_rows = total - done
         eta_seconds = avg_time_per_row * remaining_rows
         self.logger.info(f"Processed {done}/{total} rows. ETA: {timedelta(seconds=eta_seconds)}")
-
-
-import pandas as pd
-import numpy as np
-from src.config import setup_dirs_for_reg
-from src.utils import load_excel_if_exists, drop_cols
 
 
 def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):

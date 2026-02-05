@@ -1,3 +1,29 @@
+"""
+Script: third_window.py
+Description: This script implements a PyQt5-based GUI window for reviewing and accepting/rejecting warning withdrawals from the reconciliation process for a specific regulation (UK or ROW). It loads warnings and original matching data in a background thread, displays categorized tables (cross-processor and other warnings like similar emails or same last4), allows users to toggle acceptance via buttons, updates the matching DataFrame by accepting matches (updating comments, status, and handling under/overpaid with currency conversions) or splitting unmatched into separate CRM/PSP rows with prefixed comments, saves the updated matching file, and transitions to the next window (FourthWindow for export or another ThirdWindow for the other regulation if warnings exist).
+
+Key Features:
+- Background loading: Uses QThread (LoadWarningsThread) to load warnings_withdrawals.xlsx and withdrawals_matching.xlsx without freezing UI, emitting signals for data loaded or errors; cleans data (amounts, dates, comments, strings) and handles missing files with no_warnings flag.
+- Data preparation: Cleans warnings_df (applies clean_value, format_date, process_comment, negative amounts); renames columns for display; splits into differ (cross-processor) and other warnings; merges paired other warnings by extracting match keys (last4/email) via regex, sorting, and combining CRM/PSP data.
+- Table display: Creates separate QTableWidgets for differ and other warnings with toggle buttons (✅/X), hidden orig_index columns (and crm/psp_orig for other), centered/formatted cells (e.g., amounts to 1 decimal, integers for TP/last4); populates with display comments (simplified for UI).
+- UI adjustments: Dynamically hides empty tables/labels, resizes rows/columns to contents with min/max widths per column type (e.g., 250-400 for comments, 150-250 for emails), caps visible rows (3 for differ, 5 for other) with scrollbars, calculates total height/width considering headers/margins/scrollbars/frame, caps to screen size, and centers window on showEvent with QTimer for post-show adjustments.
+- Acceptance handling: Toggles row state with button style changes, enables remove button on selections; removes selected rows from tables on click, clearing accepted sets.
+- Next processing: Collects remaining (unselected) orig_indices, computes removed (accepted); loads exchange rates for conversions; updates matching_df for accepted rows/pairs (sets match_status=1, warning=False, payment_status based on amount diffs/currencies, simplified comments); drops unselected rows and appends split unmatched (CRM-only or PSP-only with NaN fills, match_status=0, prefixed comments); saves to withdrawals_matching_updated.xlsx.
+- Regulation flow: For 'uk', checks if 'row' has warnings and opens ThirdWindow('row') or directly FourthWindow; for 'row', opens FourthWindow.
+- Edge cases: Handles no warnings by auto-proceeding to next; empty DFs with empty tables; missing orig_index by generating; currency mismatches without rates (fallback comments); no data in splits (forces both to prevent loss); frozen Windows stdout/stderr redirection to null; error messages on load failures closing window.
+- Static methods: has_warnings checks if warnings file exists and non-empty for a regulation/date.
+
+Dependencies:
+- PyQt5 (QtWidgets for QWidget, layouts, buttons, labels, tables, message boxes, desktop widget, app, headers, scrolls, styles; QtCore for Qt, QThread, pyqtSignal, QTimer)
+- pandas (for Excel loading, DataFrame manipulations, cleaning, merging, concatenating)
+- numpy (for NaN handling)
+- re (for regex in match key extraction)
+- sys (for frozen app detection and stdout/stderr redirection)
+- src.config (for setup_dirs_for_reg)
+- src.output (for clean_value, format_date, process_comment)
+- fourth_window (for FourthWindow class)
+"""
+
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QMessageBox, QDesktopWidget, QApplication, QHeaderView, QScrollArea, QStyle
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 import pandas as pd
@@ -5,8 +31,8 @@ import numpy as np
 import re
 import sys
 from src.config import setup_dirs_for_reg, RATES_DIR
-from src.output import clean_value, format_date, process_comment, generate_warning_withdrawals
-from fourth_window import FourthWindow  # Import to open next window
+from src.output import clean_value, format_date, process_comment
+from fourth_window import FourthWindow
 
 class DevNull:
     """Redirect stdout/stderr to null in frozen Windows app."""

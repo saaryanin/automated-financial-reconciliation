@@ -1,3 +1,27 @@
+"""
+Script: second_window.py
+Description: This script creates a secondary GUI window using PyQt5 to display a progress bar during the execution of backend processing scripts (reports_creator and output). It redirects stdout to parse log messages and update the progress bar incrementally based on specific processing milestones. Upon successful completion, it enables a "Next" button to transition to the third window (ThirdWindow) for the 'uk' regulation, passing the date string.
+
+Key Features:
+- Window setup: Resizes to 600x150, centers on screen using QDesktopWidget, sets title 'Reports Creator Processing'.
+- Stylesheet: Applies gradients, borders, and hover effects for widgets like QPushButton and QProgressBar.
+- Layout: Vertical layout with progress bar (0-100, text visible as %p%) and initially disabled "Next" button, stretched for centering.
+- Stdout redirection: Uses StdoutRedirector class to capture and parse cleaned messages; increments progress based on counts for preprocessing (up to 18%), deposits matching (22-26%), shifts (30%), zotapay/paymentasia (34%), withdrawals matching (38-42%), cross-regulation/processor (46-50%), overall time (54%), and output steps (54-100% in 3% increments).
+- Processing delay: Uses QTimer.singleShot(0) to run processing after window is shown, preventing UI freeze.
+- Execution: Runs reports_main(date_str) and output_main(date_str) in try-except; restores stdout afterward; shows critical QMessageBox on errors.
+- Button logic: "Next" button connects to open_next_window, which instantiates ThirdWindow(date_str, 'uk'), shows it, and closes the current window.
+- UI updates: Calls QApplication.processEvents() after progress updates for immediate UI refresh.
+- Edge cases: Handles exceptions with error messages; flush method for stdout compatibility; caps progress at 100; regex for specific log patterns (e.g., zotapay/paymentasia, output saves/removals).
+
+Dependencies:
+- PyQt5 (QtWidgets for QWidget, layouts, buttons, progress bar, message box, desktop widget; QtCore for QTimer)
+- sys (for stdout redirection)
+- re (for regex in message parsing)
+- src.reports_creator (for main function as reports_main)
+- src.output (for main function as output_main)
+- third_window (for ThirdWindow class)
+"""
+
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMessageBox, QDesktopWidget, QApplication, QProgressBar
 from PyQt5.QtCore import QTimer
 import sys

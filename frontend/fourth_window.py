@@ -1,3 +1,29 @@
+"""
+Script: fourth_window.py
+Description: This script creates the final GUI window using PyQt5 for exporting daily reconciliation reports after processing. It runs the second phase of output generation to create unmatched/matched Excel files for deposits and withdrawals (handling compensated entries and UK Barclays declined), displays shifts by currency in tables or labels for ROW and UK, allows selecting regulations via checkboxes, and exports selected files (excluding warnings and updated matching) to a user-chosen directory with regulation prefixes. It checks for perfect matches (no unmatched rows or shifts) and shows appropriate messages.
+
+Key Features:
+- UI setup: Centers window, adds ROW/UK checkboxes (default checked), disabled export button until ready, dynamic shifts layout with labels/tables styled for gradients, borders, and hover effects.
+- Output generation: Calls handle_shifts for matched sums, clears output dir (keeping warnings/updated), saves regulation-specific shifts, generates unmatched CRM/proc deposits/withdrawals DFs with compensation removal, appends UK Barclays declined withdrawals (loading/processing/standardizing/sorting), creates matched deposits/withdrawals, saves to multi-sheet Excels using save_unmatched_to_excel and save_matched_to_excel.
+- Shifts display: Loads total_shifts_by_currency.xlsx per regulation, shows centered labels/tables with currencies as headers and amounts in single row (formatted without decimals if integer), resizes columns uniformly (min 120px), handles no shifts with labels.
+- Window adjustment: Calculates max width/height from buttons, checkboxes, shifts content (headers/rows/margins/scrollbars), caps to screen size, resizes/fixes table heights (60px rows), re-centers window.
+- Perfect match check: Verifies no match_status=0 in deposits/withdrawals_matching.xlsx and empty/no shifts file, shows congrats message if true during export if no files.
+- Export logic: Validates at least one regulation selected, chooses folder via dialog, copies files from output/date dir (prefixing with ROW/UK_ if missing), counts exported, shows success/info/warning messages (e.g., no files for perfect match).
+- Edge cases: Handles missing paths/empty DFs with skips/empty displays; UK-specific Barclays declined from multiple folders (barclays/barclaycard/barclay card), concatenating/renaming/sorting/appending to proc_wds_df; numeric cleaning/formatting with format_date/pad_last4; no shifts/regs selected warnings; error handling with tracebacks and critical QMessageBox.
+- Standalone run: If __name__=='__main__', creates app and shows window with sample date.
+
+Dependencies:
+- PyQt5 (QtWidgets for QWidget, layouts, buttons, labels, tables, dialogs, message boxes, desktop widget, headers, app, size policy, style, checkboxes; QtCore for Qt)
+- shutil (for file copying and directory removal)
+- pandas (for Excel reading/writing, DataFrame operations, concatenation, sorting, numeric coercion)
+- sys (for app execution)
+- src.output (for generate_unmatched_crm_deposits, generate_unapproved_crm_deposits, generate_unmatched_proc_deposits, generate_unmatched_proc_withdrawals, remove_compensated_entries, generate_unmatched_crm_withdrawals, generate_matched_deposits, generate_matched_withdrawals, save_unmatched_to_excel, save_matched_to_excel, format_date, pad_last4)
+- src.shifts_handler (for main as handle_shifts)
+- src.config (for setup_dirs_for_reg)
+- pathlib (for Path operations)
+- numpy (for np.where in declined processing)
+"""
+
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QFileDialog, \
     QMessageBox, QDesktopWidget, QHeaderView, QApplication, QHBoxLayout, QSizePolicy, QStyle, QCheckBox
 from PyQt5.QtCore import Qt
@@ -12,7 +38,7 @@ from src.shifts_handler import main as handle_shifts
 from src.config import setup_dirs_for_reg
 from pathlib import Path
 import numpy as np
-
+import traceback
 
 class FourthWindow(QWidget):
     def __init__(self, date_str):
@@ -455,7 +481,6 @@ class FourthWindow(QWidget):
                 self.table_container.hide()
         except Exception as e:
             print(f"Error executing output phase 2: {e}")
-            import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to run output phase 2: {e}")
         print("Debug: run_output_script finished")

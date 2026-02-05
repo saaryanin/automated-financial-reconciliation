@@ -1,4 +1,28 @@
-# utils.py
+"""
+Script: utils.py
+Description: This utility module provides a collection of helper functions for data cleaning, logging setup, file handling, date manipulation, and API interactions used throughout the financial reconciliation project. It supports tasks such as normalizing strings and currencies, loading and concatenating data files safely, fetching and caching UK bank holidays, categorizing regulations based on site names, extracting dates from filenames, and calculating previous business days while skipping weekends and holidays.
+
+Key Features:
+- Data cleaning: Functions like clean_field, normalize_string, clean_amount, clean_last4, and normalize_currency handle string stripping, quote removal, negative amount parsing in accounting format, zero-padding for last4 digits, and currency standardization (e.g., 'US Dollar' to 'USD').
+- Logging: setup_logger configures a logger with stream handler for consistent logging across scripts.
+- File handling: load_excel_if_exists and load_csv_if_exists load files only if they exist; safe_concat concatenates non-empty DataFrames to avoid errors with empty data.
+- Specialized row creation: create_cancelled_row generates a dictionary for cancelled withdrawal entries with default values.
+- Column management: drop_cols safely drops columns if they exist, ignoring errors.
+- API and caching: fetch_uk_holidays_from_api retrieves UK bank holidays from GOV.UK API; load_uk_holidays uses caching (JSON file) to avoid repeated API calls, with a one-year freshness check.
+- Regulation categorization: categorize_regulation maps site names to regulatory categories (e.g., 'uk', 'row', 'mauritius') with fallback to 'unknown'.
+- Date utilities: extract_date_from_filename parses dates from various filename formats (e.g., YYYY-MM-DD, DD.MM.YYYY, DD_MM_YYYY); get_previous_business_day computes the prior business day, skipping weekends and cached holidays, with logging for skipped dates.
+- Edge cases: Handles non-string inputs, NaN values, lists in cleaning functions; robust error handling in API fetches and date parsing; supports multiple date formats in filenames.
+
+Dependencies:
+- pandas (for DataFrame operations)
+- logging (for logger setup)
+- pathlib (for path handling)
+- re (for regular expressions in date extraction and amount cleaning)
+- requests (for API calls to fetch holidays)
+- json (for caching holiday data)
+- datetime and timedelta (for date calculations)
+- numpy (for handling arrays and NaN checks)
+"""
 import pandas as pd
 import logging
 from pathlib import Path

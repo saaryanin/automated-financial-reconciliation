@@ -1,4 +1,25 @@
-# shifts_handler.py
+"""
+Script: shifts_handler.py
+Description: This script processes unmatched shifted deposits that occur after a specified cutoff time for both ROW and UK regulations on a given date. It loads deposit matching files, filters for post-cutoff deposits, calculates the sum of matched amounts by currency using crm_amount, extracts and saves unmatched shifted rows in their raw CRM format by pulling from the original CRM files via transaction_ids, and updates the matching files by removing those shifted rows.
+
+Key Features:
+- Calculates the BST/GMT-aware cutoff time (9 PM BST or 10 PM GMT) based on the date to identify shifted deposits.
+- Loads deposits_matching.xlsx for each regulation, converts crm_date to datetime for accurate filtering of post-cutoff unmatched deposits (match_status==0).
+- Computes sums of crm_amount for matched shifted deposits (match_status==1) grouped by crm_currency, providing a dictionary of matched sums per regulation and currency.
+- Extracts original unmatched shifted rows from raw CRM files using transaction_ids, with processor-specific extraction for IDs like skrill_id or neteller_id; saves these rows without additional computed columns to unmatched_shifted_deposits.xlsx.
+- Removes the shifted unmatched rows from the original matching file by dropping corresponding indices and saves the updated file.
+- Handles logging for key actions, warnings for missing files or columns (e.g., crm_date, crm_amount), and errors during file operations.
+- Edge cases: Skips processing if matching file is missing or empty; ensures date consistency by using the file's extracted date; supports both ROW and UK regulations independently.
+
+Dependencies:
+- logging (for detailed action and error logging)
+- datetime and timedelta (for date and cutoff calculations)
+- pandas (for DataFrame loading, filtering, grouping, and saving)
+- relativedelta (from dateutil) (for potential date adjustments, though not directly used in core logic)
+- src.config (for setup_dirs_for_reg and BASE_DIR constants)
+- src.preprocess (for extract_crm_transaction_id function)
+- src.utils (for categorize_regulation function)
+"""
 import logging
 from datetime import datetime
 import pandas as pd

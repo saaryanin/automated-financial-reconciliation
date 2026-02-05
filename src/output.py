@@ -1,3 +1,31 @@
+"""
+Script: output.py
+Description: This script produces various unmatched, matched, unapproved, and warning reports for deposits and withdrawals based on matching files for ROW and UK regulations. It processes comments for enhanced readability, cleans and formats data elements like dates, amounts, and last4 digits, identifies and removes compensated cancellations from unmatched datasets, appends declined Barclays withdrawals for UK, and outputs formatted Excel files with multiple sheets for different report categories.
+
+Key Features:
+- Unmatched generation: Filters matching DFs by match_status for CRM (crm_date not NaN) and processors (crm_date NaN), applies sorting/cutoffs, cleans values (e.g., removes lists, handles NaN), formats dates without leading zeros, pads last4 to 4 digits, adjusts amounts to negative for withdrawals/positive for deposits.
+- Comment processing: Extracts and reformats details like similar emails, last4 matches, rejection reasons; for underpaid/overpaid, recalculates amounts in CRM currency and creates client-oriented comments.
+- Compensated handling: Merges deposits and withdrawals on key fields (amount, currency, last4, processor, email) to identify compensated pairs, removes them from unmatched DFs, and includes in matched reports with 'compensated' comments.
+- Cross data inclusion: Appends cross-regulation and cross-processor matches to unmatched CRM and matched withdrawals, standardizing names (e.g., safechargeuk to safecharge).
+- Barclays append: For UK unmatched processor withdrawals, appends declined rows from Barclays files, standardizes columns, and sorts to place at the end.
+- File saving: Uses ExcelWriter with text formatting for IDs/last4, auto-adjusts column widths; combines matched deposits/withdrawals into one file with sheets, unmatched into multi-sheet files.
+- Main execution: Clears output directory, processes shifts using handle_shifts, generates all reports for each regulation with loaded and updated matching DFs.
+- Edge cases: Handles literal evaluation for list-like strings, regex for comment extraction, warnings suppression for pandas operations.
+
+Dependencies:
+- sys (for script execution checks)
+- pathlib (for path handling)
+- shutil (for directory clearing)
+- warnings (for suppressing pandas warnings)
+- re (for regex in comment processing)
+- OrderedDict (from collections) (for ordered data structures)
+- ast (for literal evaluation of strings)
+- datetime (for date formatting)
+- numpy (for NaN and array operations)
+- pandas (for core DataFrame manipulations and Excel I/O)
+- src.config (for directory setups)
+- src.shifts_handler (for main as handle_shifts and get_cutoff_time functions)
+"""
 import sys
 from pathlib import Path
 import shutil

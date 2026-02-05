@@ -1,3 +1,30 @@
+"""
+Script: reports_creator.py
+Description: This script coordinates the entire reconciliation workflow for deposits and withdrawals across ROW and UK regulations. It executes file renaming, copies shared processors, preprocesses CRM and processor files in parallel, combines processed data, performs matching for deposits and withdrawals, handles shifted deposits, and conducts cross-regulation and cross-processor matching, utilizing exchange rates from a CSV file.
+
+Key Features:
+- Workflow orchestration: Calls run_renamer to organize raw files, copies shared processors (e.g., trustpayments, shift4) from ROW to UK.
+- Preprocessing: Processes CRM subsets and processor files in parallel for deposits/withdrawals, applies PSP name mapping, filters by regulation, appends previous unmatched shifted deposits.
+- Combining: Merges processed files with special logic for zotapay and paymentasia withdrawals (grouping by email/last4).
+- Matching: Invokes match_deposits_for_date and match_withdrawals_for_date, followed by handle_shifts for shifted deposits, run_cross_regulation_matching, and run_cross_processor_matching.
+- Rates handling: Loads exchange rates from rates CSV into a map for currency conversions.
+- Validation: Checks CRM for required fields (e.g., 'Name', 'PSP name'), drops invalid rows, logs warnings.
+- Date management: Uses forced_date if provided via sys.argv, otherwise extracts from directories; gets previous business day for shifted deposits.
+- Edge cases: Handles missing directories/files, time tracking for performance, regulation-specific paths.
+
+Dependencies:
+- pandas (for rates loading and data operations)
+- shutil (for file copying)
+- time (for performance timing)
+- src.config (for BASE_DIR, TEMP_DIR, setup_dirs_for_reg)
+- src.preprocess (for combine_processed_files, process_files_in_parallel, PSP_NAME_MAP, process_crm_subset)
+- src.utils (for categorize_regulation, get_previous_business_day)
+- src.deposits_matcher (for match_deposits_for_date)
+- src.shifts_handler (for main as handle_shifts)
+- src.withdrawals_matcher (for match_withdrawals_for_date, run_cross_processor_matching)
+- src.cross_regulation_matcher (for run_cross_regulation_matching)
+- src.files_renamer (for run_renamer)
+"""
 import pandas as pd
 import shutil
 import src.config as config
@@ -15,6 +42,7 @@ from src.shifts_handler import main as handle_shifts
 from src.withdrawals_matcher import match_withdrawals_for_date, run_cross_processor_matching
 from src.cross_regulation_matcher import run_cross_regulation_matching
 from src.files_renamer import run_renamer
+import sys
 
 
 def setup_regulation_structure(regulation, processors, date_str):
@@ -288,7 +316,6 @@ def main(date_str):
 
 
 if __name__ == "__main__":
-    import sys
 
     date_str = "2025-12-03"
     if len(sys.argv) > 1:

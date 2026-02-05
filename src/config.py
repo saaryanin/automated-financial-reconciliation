@@ -1,4 +1,20 @@
-# config.py
+"""
+Script: config.py
+Description: This script establishes the base and temporary directory structures for the reconciliation application, accommodating both development and frozen (e.g., PyInstaller) environments. It defines global read-only directories and includes a function to set up and return regulation-specific directory paths for data, output, and processing, ensuring organized file management across ROW and UK regulations.
+
+Key Features:
+- Environment detection: Sets BASE_DIR to the executable's directory in frozen mode (using sys._MEIPASS) or the script's parent in development; configures TEMP_DIR as a system temporary subdirectory in frozen mode or a local 'temp' folder in dev.
+- Global directories: Defines paths like RAW_ATTACHED_FILES (creates if missing), CRM_DIR, PROCESSOR_DIR, and RATES_DIR for shared resources.
+- setup_dirs_for_reg function: Takes a regulation ('ROW' or 'UK'), optionally creates directories, and returns a dictionary of paths including root, data, output, crm, processors, processed subdirs for crm and processors, rates, lists (with date subdir), combined_crm, unmatched_shifted_deposits, and training datasets.
+- Regulation handling: Converts regulation input to uppercase for consistent folder naming (e.g., 'row' becomes 'ROW').
+- Edge cases: Ensures all directories are created only if create=True, handles path resolution for consistency across environments.
+
+Dependencies:
+- sys (for frozen environment detection via _MEIPASS)
+- pathlib (for robust path creation and manipulation)
+- tempfile (for creating temporary directories in frozen mode)
+"""
+
 import sys
 from pathlib import Path
 import tempfile

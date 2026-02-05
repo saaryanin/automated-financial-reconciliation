@@ -1,8 +1,35 @@
-# preprocess.py
-# This script handles preprocessing of processor and CRM files for deposits and withdrawals.
-# It standardizes columns, filters data, and combines files for reconciliation.
-# Updated with empty DF checks to avoid split/access errors on empty filtered data.
+"""
+Script: preprocess.py
+Description: This script preprocesses raw data from various payment processors and CRM files for deposits and withdrawals, standardizing formats, cleaning data, handling voids/cancellations, and combining files for reconciliation. It supports parallel processing, regulation-specific filtering, currency conversions, and appending prior unmatched shifted deposits, ensuring data readiness for matching across ROW and UK.
 
+Key Features:
+- Standardization: Renames columns, converts data types, filters for approved/completed statuses per processor (e.g., PayPal, SafeCharge, Skrill), and normalizes fields like emails, amounts, and dates.
+- Edge case handling: Identifies and removes paired reversals/voids/refunds by grouping and netting amounts; treats cancellations as zero-net by dropping pairs.
+- Grouping: Aggregates withdrawals by email/last4 or names, summing amounts with optional conversion to a target currency using exchange rates.
+- ID extraction: Uses regex to pull transaction IDs from CRM comments, tailored to processors like skrill, neteller, paypal.
+- Parallel processing: Employs ThreadPoolExecutor for concurrent file loading and preprocessing to improve efficiency.
+- Cleaning: Robust amount cleaning (handles strings/formats), email normalization, date parsing with dateutil for mixed formats.
+- Regulation filtering: Applies UK/ROW filters based on PSP/site, excludes specific PSPs for regions (e.g., barclays for ROW).
+- Shifted deposits: Appends previous unmatched shifted deposits to combined CRM, checking for duplicates via transaction_id.
+- Saving: Preserves string formats for IDs in Excel outputs using openpyxl.
+- Edge cases: Uses SequenceMatcher for similarity checks in pairings, logs counts/warnings, handles various file formats (xlsx, xls, csv).
+
+Dependencies:
+- pandas (for DataFrame operations and file I/O)
+- re (for regex in ID extraction and cleaning)
+- pathlib (for file path handling)
+- datetime (for date manipulations)
+- concurrent.futures (for ThreadPoolExecutor parallel processing)
+- Counter (from collections) (for counting occurrences)
+- parser (from dateutil) (for flexible date parsing)
+- numpy (for NaN handling)
+- logging (for process logging)
+- SequenceMatcher (from difflib) (for similarity computations)
+- openpyxl (for Excel writing with formatting)
+- xlrd (for reading older Excel formats)
+- src.config (for directory setups)
+- src.utils (for clean_amount, clean_last4, load_uk_holidays, categorize_regulation, extract_date_from_filename functions)
+"""
 import pandas as pd
 import re
 from pathlib import Path
@@ -13,8 +40,9 @@ from collections import Counter
 from dateutil import parser
 import dateutil.parser
 from src.utils import clean_amount, clean_last4, load_uk_holidays, categorize_regulation, extract_date_from_filename
-import numpy as np
 import logging
+from difflib import SequenceMatcher
+from collections import defaultdict
 
 # Mapping for standardizing PSP names
 PSP_NAME_MAP = {
@@ -52,7 +80,7 @@ def enhance_email_similarity(e1, e2):
     Compute similarity between two emails, focusing on the part before '@'.
     Uses SequenceMatcher as a fallback.
     """
-    from difflib import SequenceMatcher
+
     e1 = '' if pd.isna(e1) else str(e1).strip().lower()
     e2 = '' if pd.isna(e2) else str(e2).strip().lower()
     if not e1 or not e2:
@@ -1430,7 +1458,7 @@ def combine_processed_files(
                             grouped_rows.extend([row.copy() for _, row in subg.iterrows()])
                             continue
                         # Build graph for connected components
-                        from collections import defaultdict
+
                         graph = defaultdict(list)
                         for i, j, _ in high_similar:
                             graph[i].append(j)

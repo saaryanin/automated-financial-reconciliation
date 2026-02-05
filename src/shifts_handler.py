@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: shifts_handler.py
 Description: This script processes unmatched shifted deposits that occur after a specified cutoff time for both ROW and UK regulations on a given date. It loads deposit matching files, filters for post-cutoff deposits, calculates the sum of matched amounts by currency using crm_amount, extracts and saves unmatched shifted rows in their raw CRM format by pulling from the original CRM files via transaction_ids, and updates the matching files by removing those shifted rows.
 

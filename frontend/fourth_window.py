@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: fourth_window.py
 Description: This script creates the final GUI window using PyQt5 for exporting daily reconciliation reports after processing. It runs the second phase of output generation to create unmatched/matched Excel files for deposits and withdrawals (handling compensated entries and UK Barclays declined), displays shifts by currency in tables or labels for ROW and UK, allows selecting regulations via checkboxes, and exports selected files (excluding warnings and updated matching) to a user-chosen directory with regulation prefixes. It checks for perfect matches (no unmatched rows or shifts) and shows appropriate messages.
 

@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: main.py
 Description: This script serves as the entry point for the CRM-Processor Reconciliation System application. It sets up the Python path to include the project root, src, and frontend directories for module imports (useful in script mode, ignored in executable), initializes the PyQt5 QApplication, creates and shows the initial ReconciliationWindow (first_window.py), and executes the application event loop.
 

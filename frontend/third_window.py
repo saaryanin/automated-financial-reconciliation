@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: third_window.py
 Description: This script implements a PyQt5-based GUI window for reviewing and accepting/rejecting warning withdrawals from the reconciliation process for a specific regulation (UK or ROW). It loads warnings and original matching data in a background thread, displays categorized tables (cross-processor and other warnings like similar emails or same last4), allows users to toggle acceptance via buttons, updates the matching DataFrame by accepting matches (updating comments, status, and handling under/overpaid with currency conversions) or splitting unmatched into separate CRM/PSP rows with prefixed comments, saves the updated matching file, and transitions to the next window (FourthWindow for export or another ThirdWindow for the other regulation if warnings exist).
 

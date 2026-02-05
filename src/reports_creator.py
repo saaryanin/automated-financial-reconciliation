@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: reports_creator.py
 Description: This script coordinates the entire reconciliation workflow for deposits and withdrawals across ROW and UK regulations. It executes file renaming, copies shared processors, preprocesses CRM and processor files in parallel, combines processed data, performs matching for deposits and withdrawals, handles shifted deposits, and conducts cross-regulation and cross-processor matching, utilizing exchange rates from a CSV file.
 

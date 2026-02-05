@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: first_window.py
 Description: This script creates the initial GUI window for the CRM-Processor Reconciliation System using PyQt5. It allows users to input currency exchange rates, select a date (defaulting to the previous business day), attach CRM and processor files via drag-and-drop or file dialog, validates inputs, saves rates to CSV files for both ROW and UK regulations, clears previous processing directories for the selected date in both regulations, and transitions to the second window for further processing.
 

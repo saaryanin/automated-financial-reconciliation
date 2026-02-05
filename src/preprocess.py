@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: preprocess.py
 Description: This script preprocesses raw data from various payment processors and CRM files for deposits and withdrawals, standardizing formats, cleaning data, handling voids/cancellations, and combining files for reconciliation. It supports parallel processing, regulation-specific filtering, currency conversions, and appending prior unmatched shifted deposits, ensuring data readiness for matching across ROW and UK.
 

@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: cross_regulation_matcher.py
 Description: This script conducts cross-regulation matching for unmatched withdrawal records between ROW and UK datasets. It loads withdrawal matching files, extracts unmatched CRM and processor rows, performs directional matching using the ReconciliationEngine, removes matched entries from original files, and saves cross-matched results to new Excel files specific to each regulation.
 

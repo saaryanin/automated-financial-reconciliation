@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: utils.py
 Description: This utility module provides a collection of helper functions for data cleaning, logging setup, file handling, date manipulation, and API interactions used throughout the financial reconciliation project. It supports tasks such as normalizing strings and currencies, loading and concatenating data files safely, fetching and caching UK bank holidays, categorizing regulations based on site names, extracting dates from filenames, and calculating previous business days while skipping weekends and holidays.
 

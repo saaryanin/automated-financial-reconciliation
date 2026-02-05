@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: withdrawals_matcher.py
 Description: This script executes the matching of CRM withdrawal records against processor withdrawal data for reconciliation. It incorporates processor-specific matching rules, currency conversions, similarity assessments for emails and names, fallback strategies for unmatched entries including cross-processor and cross-regulation options, warning flags for potential discrepancies, and generates comprehensive matched reports for ROW and UK, including handling for cancelled withdrawals.
 

@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: files_renamer.py
 Description: This script scans the incoming raw files directory for processor and CRM files, identifies processors using regex patterns, extracts dates either from filenames or by inspecting file contents, renames files to a standardized format (e.g., processor_date.extension), and moves or copies them to appropriate regulation-specific directories (ROW or UK) for CRM or processors. It ensures CRM files are duplicated to both regulations, handles pre-renamed files, and allows for forced date overrides.
 

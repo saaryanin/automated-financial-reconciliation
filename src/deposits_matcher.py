@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: deposits_matcher.py
 Description: This script matches deposit records between combined CRM and processor data for both ROW and UK regulations on a specified date. It conducts local matching based on transaction_id and processor_name, addresses mismatches like safecharge/safechargeuk, performs cross-regulation matching for remaining unmatched CRM records, combines matched and unmatched rows with status flags, and generates regulation-specific deposit matching reports.
 

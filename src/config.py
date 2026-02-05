@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: config.py
 Description: This script establishes the base and temporary directory structures for the reconciliation application, accommodating both development and frozen (e.g., PyInstaller) environments. It defines global read-only directories and includes a function to set up and return regulation-specific directory paths for data, output, and processing, ensuring organized file management across ROW and UK regulations.
 

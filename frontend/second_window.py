@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: second_window.py
 Description: This script creates a secondary GUI window using PyQt5 to display a progress bar during the execution of backend processing scripts (reports_creator and output). It redirects stdout to parse log messages and update the progress bar incrementally based on specific processing milestones. Upon successful completion, it enables a "Next" button to transition to the third window (ThirdWindow) for the 'uk' regulation, passing the date string.
 

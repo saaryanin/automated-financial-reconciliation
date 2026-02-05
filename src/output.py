@@ -1,4 +1,8 @@
 """
+Copyright 2026 Saar Yanin
+Licensed under the Apache License 2.0 with Commons Clause
+See LICENSE for details.
+
 Script: output.py
 Description: This script produces various unmatched, matched, unapproved, and warning reports for deposits and withdrawals based on matching files for ROW and UK regulations. It processes comments for enhanced readability, cleans and formats data elements like dates, amounts, and last4 digits, identifies and removes compensated cancellations from unmatched datasets, appends declined Barclays withdrawals for UK, and outputs formatted Excel files with multiple sheets for different report categories.
 

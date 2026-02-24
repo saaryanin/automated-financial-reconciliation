@@ -939,7 +939,7 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
     df['regulation'] = df['Site (Account) (Account)'].apply(categorize_regulation)
     # Filter for the specified regulation
     if regulation == 'row':
-        row_regs = ['mauritius', 'cyprus', 'australia']
+        row_regs = ['mauritius', 'cyprus', 'australia','dubai']
         df = df[df['regulation'].isin(row_regs)]
     elif regulation == 'uk':
         df = df[df['regulation'] == 'uk']
@@ -1545,7 +1545,7 @@ def combine_processed_files(
                         ~df_cancels['Method of Payment'].astype(str).str.strip().str.lower().eq('wire transfer')]
                 df_cancels['regulation'] = df_cancels['Site (Account) (Account)'].apply(categorize_regulation)
                 # FIXED: Use isin for ROW regulation (mauritius/cyprus/australia), exact match for UK
-                row_regs = ['mauritius', 'cyprus', 'australia'] if regulation == 'row' else [regulation]
+                row_regs = ['mauritius', 'cyprus', 'australia','dubai'] if regulation == 'row' else [regulation]
                 df_cancels = df_cancels[df_cancels['regulation'].isin(row_regs)]
                 mask_aus = df_cancels['regulation'] == 'australia'
                 mask_psp = df_cancels["PSP name"].str.lower().isin(['paypal', 'inpendium'])

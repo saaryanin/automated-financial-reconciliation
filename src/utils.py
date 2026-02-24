@@ -218,16 +218,20 @@ def load_uk_holidays(use_cache=True):
 
 def categorize_regulation(site):
     site = str(site).lower().strip()
+
     # Accept already-categorized values
-    known_regs = ["uk", "row", "mauritius", "cyprus", "australia", "belarus", "canada", "unknown"]
+    known_regs = ["uk", "row", "mauritius", "cyprus", "australia", "belarus", "canada", "unknown", "dubai"]
     if site in known_regs:
         return site
+
     if site in ["fortrade.by", "gcmasia by", "kapitalrs by"]:
         return "belarus"
     elif site in ["kapitalrs au", "fortrade.au", "gcmasia asic"]:
         return "australia"
     elif site in ["fortrade.eu", "gcmforex", "gcmasia fsc", "fortrade fsc", "kapitalrs fsc"]:
         return "mauritius"
+    elif site in ["fortrade dfsa", "fortrade dsfa", "fortrade DSFA"]:   # ← UPDATED
+        return "dubai"
     elif site == "fortrade.ca":
         return "canada"
     elif site == "fortrade.cy":

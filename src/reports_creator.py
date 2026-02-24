@@ -103,7 +103,7 @@ def preprocess_for_regulation(
             )
     crm_df["regulation"] = crm_df["Site (Account) (Account)"].apply(categorize_regulation)
     if regulation == "row":
-        row_regs = ["mauritius", "cyprus", "australia"]
+        row_regs = ["mauritius", "cyprus", "australia","dubai"]
         crm_df = crm_df[crm_df["regulation"].isin(row_regs)]
         mask_aus = crm_df["regulation"] == "australia"
         mask_psp = crm_df["PSP name"].str.lower().isin(["paypal", "inpendium"])

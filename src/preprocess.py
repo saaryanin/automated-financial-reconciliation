@@ -226,30 +226,40 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['processor_name'] = processor
         df = df.drop(columns=['Transaction Details'])
 
+
     elif processor == "trustpayments":
-        df = df[(df["errorcode"] == 0) & (df["requesttypedescription"].str.upper() == "AUTH")]
+        df = df[
+            (df["Transaction Type"].astype(str).str.strip() == "Purchase") &
+            (df["Status"].astype(str).str.strip() == "Cleared")
+            ].copy()
         if df.empty:
             return df
         df = df.rename(columns={
-            "transactionreference": "transaction_id",
-            "transactionstartedtimestamp": "date",
-            "mainamount": "amount",
-            "currencyiso3a": "currency"
+            "Posting Date (UTC)": "date",
+            "Transaction Currency": "currency",
+            "Transaction Amount": "amount",
+            "Gateway Transaction Reference": "transaction_id",
+            "Card Number": "Card Number"  # will extract last4 below
         })
-        df = df[["transaction_id", "billingfullname", "date", "currency", "amount", "maskedpan",
-                 "orderreference"]]  # Removed "paymenttypedescription"
+        df = df[["date", "currency", "amount", "transaction_id", "Card Number"]]
+
+        # Amount
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        # Split billingfullname into first_name and last_name
-        name_split = df['billingfullname'].astype(str).str.strip().str.split(n=1, expand=True)
-        df['first_name'] = name_split[0].fillna('')
-        df['last_name'] = name_split[1].fillna('')
-        df['last_4digits'] = df['maskedpan'].astype(str).str[-4:].str.zfill(
-            4)  # Extract last 4, zfill for leading zeros
-        df['tp'] = df['orderreference'].astype(str).str.split('-').str[0].str.strip()  # Extract tp before '-'
+
+        # Last 4 digits (531157******5627 → 5627)
+        df['last_4digits'] = df['Card Number'].astype(str).str.extract(r'(\d{4})$').fillna('')
+        # Transaction ID: 57-137175118 → 57-70-137175118
+        df['transaction_id'] = df['transaction_id'].astype(str).str.strip().apply(
+            lambda x: re.sub(r'^(\d+)-', r'\1-70-', x) if '-' in x else x
+        )
+
+        # No name columns in new format → empty
+        df['first_name'] = ''
+        df['last_name'] = ''
         df['processor_name'] = processor
-        # Drop unneeded columns
-        drop_cols = ["billingfullname", "maskedpan", "orderreference"]
-        df = df.drop(columns=[col for col in drop_cols if col in df.columns])
+        # Drop temp column
+        df = df.drop(columns=['Card Number'])
+        return df
 
     elif processor == "zotapay":
         df = df.copy()
@@ -812,56 +822,47 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
     elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
         return patch_standardize_zotapay_paymentasia_withdrawals(df, processor)
 
-    elif processor.lower() == "trustpayments":
-        print(f"Entering standardize_processor_columns_withdrawals for trustpayments")
-        print(f"Initial df columns: {df.columns.tolist()}")
-        print(f"Initial df shape: {df.shape}")
-        # Check if required columns exist
-        required_cols = ["requesttypedescription", "errorcode", "billingfullname", "transactionstartedtimestamp",
-                         "maskedpan", "currencyiso3a", "mainamount", "orderreference"]
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            print(f"Missing required columns: {missing_cols}")
-            return pd.DataFrame()
-        # Filter to only REFUND type and errorcode == 0
+
+    elif processor == "trustpayments":
+        # NEW TrustPayments format (processed-transactions-report-...)
         df = df[
-            (df["requesttypedescription"].str.upper() == "REFUND") &
-            (df["errorcode"] == 0)
+            (df["Transaction Type"].astype(str).str.strip() == "Refund (Credit)") &
+            (df["Status"].astype(str).str.strip() == "Cleared")
             ].copy()
-        print(f"After REFUND and errorcode filter: df shape {df.shape}")
+
         if df.empty:
-            print("DataFrame is empty after filtering. Sample raw data before filter:")
-            print(df.head(5))  # Print sample of original df if empty after filter
             return pd.DataFrame()
 
-        def split_billingfullname(name):
-            if pd.isna(name):
-                return "", ""
-            parts = str(name).strip().split(" ", 1)
-            first = parts[0]
-            last = parts[1] if len(parts) > 1 else ""
-            return first, last
+        df = df.rename(columns={
+            "Posting Date (UTC)": "date",
+            "Transaction Currency": "currency",
+            "Transaction Amount": "amount",
+            "Gateway Transaction Reference": "transaction_id",
+            "Card Number": "Card Number"
+        })
+        df = df[["date", "currency", "amount", "transaction_id", "Card Number"]]
 
-        df["first_name"], df["last_name"] = zip(*df["billingfullname"].apply(split_billingfullname))
-        df["date"] = pd.to_datetime(df["transactionstartedtimestamp"], errors="coerce")
-        df["last_4cc"] = df["maskedpan"].astype(str).str[-4:]
-        df["currency"] = df["currencyiso3a"]
-        df["amount"] = pd.to_numeric(df["mainamount"], errors='coerce')
-        # --- Robustly clean TP as str, remove decimals, strip spaces ---
-        df["tp"] = df["orderreference"].astype(str).str.split("-").str[0].str.strip().str.replace(r"\.0$", "",
-                                                                                                  regex=True)
-        # Remove any accidental non-digit chars, just in case
-        df["tp"] = df["tp"].str.replace(r"[^\d]", "", regex=True)
+        # Amount (positive for withdrawals)
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+
+        # Last 4 digits
+        df['last_4cc'] = df['Card Number'].astype(str).str.extract(r'(\d{4})$').fillna('')
+
+        # Transaction ID: 57-137175118 → 57-70-137175118
+        df['transaction_id'] = df['transaction_id'].astype(str).str.strip().apply(
+            lambda x: re.sub(r'^(\d+)-', r'\1-70-', x) if '-' in x else x
+        )
+
+        # No names/email in new format
+        df["first_name"] = ""
+        df["last_name"] = ""
         df["email"] = ""
         df["processor_name"] = "trustpayments"
-        keep = [
-            "amount", "currency", "date", "last_4cc", "email",
-            "first_name", "last_name", "processor_name", "tp"
-        ]
-        final_df = df[keep]
-        print(f"Final df shape after processing: {final_df.shape}")
-        print(f"Sample processed rows: {final_df.head(2)}")
-        return final_df
+        # Final columns for withdrawals
+        return df[[
+            "amount", "currency", "date", "last_4cc",
+            "email", "first_name", "last_name", "processor_name"
+        ]]
 
     elif processor == "xbo":
         print("XBO withdrawals intentionally left unmatched (CRM side only)")

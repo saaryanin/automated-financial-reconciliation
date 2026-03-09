@@ -143,14 +143,14 @@ PROCESSOR_CONFIGS = {
         matching_logic="zotapay_paymentasia"
     ),
     "trustpayments": ProcessorConfig(
-        email_threshold=0.65,
-        name_match_threshold=0.75,
-        require_last4=False,
+        email_threshold=0.0,
+        name_match_threshold=0.0,
+        require_last4=True,
         require_email=False,
         enable_name_fallback=False,
-        enable_exact_match=False,
+        enable_exact_match=True,
         tolerance=0.1,
-        matching_logic="trustpayments"
+        matching_logic="trustpayments_last4_only"
     ),
     'barclays': ProcessorConfig(
         email_threshold=0.0,
@@ -974,7 +974,7 @@ class ReconciliationEngine:
             return self._match_zotapay_paymentasia_row(crm_row, proc_dict, last4_map, used,
                                                        self.get_processor_config(proc), crm_idx=crm_idx)
         if proc == "trustpayments":
-            return self._match_trustpayments_row(
+            return self._match_trustpayments_last4_only(
                 crm_row, proc_dict, last4_map, used,
                 self.get_processor_config("trustpayments"), crm_idx=crm_idx
             )
@@ -1974,6 +1974,106 @@ class ReconciliationEngine:
                 'proc_email': best['row_data'].get('proc_email', ''),
                 'proc_firstname': best['row_data'].get('proc_firstname', ''),
                 'proc_lastname': best['row_data'].get('proc_lastname', ''),
+                'proc_last4': best['row_data'].get('proc_last4'),
+                'proc_currency': best['row_data'].get('proc_currency'),
+                'proc_amount': best['row_data'].get('proc_amount'),
+                'proc_amount_crm_currency': round(best['proc_amount_crm_currency'], 4),
+                'proc_processor_name': best['row_data'].get('proc_processor_name'),
+                'email_similarity_avg': None,
+                'last4_match': True,
+                'name_fallback_used': False,
+                'exact_match_used': payment_status == 1,
+                'converted': best['rate'] != 1.0,
+                'proc_combo_len': 1,
+                'crm_combo_len': 1,
+                'match_status': 1,
+                'payment_status': payment_status,
+                'comment': comment,
+                'matched_proc_indices': [best['index']]
+            }
+            if crm_idx is not None:
+                match['crm_row_index'] = crm_idx
+            return match, {}
+        except Exception as e:
+            return None, {'failure_reason': str(e)}
+
+    def _match_trustpayments_last4_only(self, crm_row, proc_dict, last4_map, used, proc_config, crm_idx=None):
+        """TrustPayments withdrawals (new format) — match ONLY on last4 + amount. Ignores email/name/TP completely."""
+        crm_last4_raw = str(crm_row.get('crm_last4', '')).strip()
+        crm_last4 = normalize_string(crm_last4_raw, is_last4=True)
+        crm_cur = str(crm_row.get('crm_currency', '')).strip().upper()
+        crm_amt = abs(float(crm_row.get('crm_amount', 0)))
+        crm_proc_name = str(crm_row.get('crm_processor_name', '')).lower()
+
+        if not crm_last4 or crm_last4 in ("", "0", "0000", "nan"):
+            return None, {'failure_reason': 'Missing valid last4 in CRM'}
+
+        candidates = []
+        tol = max(0.1, proc_config.tolerance * crm_amt)
+
+        # Only TrustPayments rows
+        indices = [i for i in proc_dict if i not in used and
+                   proc_dict[i].get('proc_processor_name', '').lower() == crm_proc_name]
+
+        for i in indices:
+            row = proc_dict[i]
+            proc_last4_raw = str(row.get('proc_last4', '')).strip()
+            proc_last4 = normalize_string(proc_last4_raw, is_last4=True)
+
+            if proc_last4 != crm_last4:
+                continue
+
+            proc_amt_raw = row.get('proc_amount')
+            proc_cur = str(row.get('proc_currency', '')).strip().upper()
+            if proc_amt_raw is None or proc_cur is None:
+                continue
+
+            proc_amt_crm, rate = self.convert_amount(proc_amt_raw, proc_cur, crm_cur)
+            if proc_amt_crm is None:
+                continue
+
+            # === KEY CHANGE: amount is NO LONGER a blocking factor ===
+            # We ALWAYS match if last4 is the same, then calculate diff for comment
+            diff = abs(proc_amt_crm - crm_amt)
+            candidates.append({
+                'index': i,
+                'proc_amount_crm_currency': proc_amt_crm,
+                'rate': rate,
+                'row_data': row,
+                'amount_diff': diff
+            })
+
+        if not candidates:
+            return None, {'failure_reason': f'No matching last4 {crm_last4} found'}
+
+        # Pick the one with smallest amount difference (in case of duplicates)
+        candidates.sort(key=lambda x: x['amount_diff'])
+        best = candidates[0]
+
+        payment_status = 1 if best['amount_diff'] <= tol else 0
+        comment = ""
+        if payment_status == 0:
+            diff = best['proc_amount_crm_currency'] - crm_amt
+            if diff > 0:
+                comment = f"Overpaid by {round(diff, 2)} {crm_cur}"
+            else:
+                comment = f"Underpaid by {round(-diff, 2)} {crm_cur}"
+
+        try:
+            match = {
+                'crm_date': crm_row.get('crm_date'),
+                'crm_email': crm_row.get('crm_email', ''),
+                'crm_firstname': crm_row.get('crm_firstname', ''),
+                'crm_lastname': crm_row.get('crm_lastname', ''),
+                'crm_last4': crm_last4_raw,
+                'crm_currency': crm_cur,
+                'crm_amount': crm_amt,
+                'crm_processor_name': "trustpayments",
+                'regulation': crm_row.get('regulation', ''),
+                'proc_date': best['row_data'].get('proc_date'),
+                'proc_email': best['row_data'].get('proc_email', ''),
+                'proc_firstname': '',
+                'proc_lastname': '',
                 'proc_last4': best['row_data'].get('proc_last4'),
                 'proc_currency': best['row_data'].get('proc_currency'),
                 'proc_amount': best['row_data'].get('proc_amount'),

@@ -7,13 +7,14 @@ Script: files_renamer.py
 Description: This script scans the incoming raw files directory for processor and CRM files, identifies processors using regex patterns, extracts dates either from filenames or by inspecting file contents, renames files to a standardized format (e.g., processor_date.extension), and moves or copies them to appropriate regulation-specific directories (ROW or UK) for CRM or processors. It ensures CRM files are duplicated to both regulations, handles pre-renamed files, and allows for forced date overrides.
 
 Key Features:
-- Uses processor-specific regex patterns to match filenames, extract dates, transaction types (deposits/withdrawals), and identify processors like paypal, safecharge, barclays.
-- Fallback date extraction: If date not in filename, loads file with pandas and finds the maximum date from processor-specific columns (e.g., 'Transaction Date' for paypal), handling various date formats and headers.
+- Uses processor-specific regex patterns to match filenames, extract dates either from filenames or by inspecting file contents, transaction types (deposits/withdrawals), and identify processors like paypal, safecharge, barclays, barclaycard, and **new TrustPayments format**.
+- New TrustPayments support: completely replaced old "searchresults..." pattern with `processed-transactions-report-YYYYMMDDT...-UUID` (date extracted directly from filename – no old format kept).
+- Fallback date extraction: If date not in filename, loads file with pandas and finds the maximum date from processor-specific columns.
 - Regulation determination: Classifies as UK for specific processors (barclays, barclaycard, safechargeuk), defaulting to ROW; uses categorize_regulation for site-based logic.
-- File handling: Copies CRM files to both ROW and UK directories, moves processor files to the determined regulation directory, and removes originals only after successful operations.
+- File handling: Copies CRM files to both ROW and UK directories (temp/ROW and temp/UK structure), moves processor files to the determined regulation directory, and removes originals only after successful operations.
 - Supports already-renamed files by checking destination existence, skips duplicates, and logs all renames, moves, and errors.
 - Forced date override: Allows specifying a date to use for renaming when automatic extraction fails or for testing.
-- Edge cases: Handles multiple date formats in content (e.g., DD/MM/YYYY, YYYY-MM-DD), skips non-matching files, manages file extensions (xlsx, xls, csv), and warns on extraction failures.
+- Edge cases: Handles multiple date formats in content, skips non-matching files, manages file extensions (xlsx, xls, csv), and warns on extraction failures.
 
 Dependencies:
 - re (for regex pattern matching in filenames and content)
@@ -30,7 +31,7 @@ from datetime import datetime
 from shutil import move, copyfile
 import pandas as pd
 import logging
-from src.config import RAW_ATTACHED_FILES, setup_dirs_for_reg  # Removed CRM_DIR and PROCESSOR_DIR
+from src.config import RAW_ATTACHED_FILES, setup_dirs_for_reg
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -59,22 +60,22 @@ PROCESSOR_PATTERNS = {
         "pattern": r"(?i)transactionreport\d{8}( ?\(\d+\))?\.(csv|xlsx|xls)",
         "date_format": None,
         "type_group": None,
-        "date_column": "Date",  # Adjust based on actual file if needed
+        "date_column": "Date",
         "header_row": 0
     },
     "barclaycard": {
         "pattern": r"(?i)barclaycard.*(?i:\.csv|\.xlsx|\.xls)",
         "date_format": None,
         "type_group": None,
-        "date_column": "Transaction Date",  # Adjust based on actual file
+        "date_column": "Transaction Date",
         "header_row": 0
     },
-        "xbo": {
+    "xbo": {
         "pattern": r"(?i)transactions report \[\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4}\s*[‒-]\s*(\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4})\](?i:\.csv|\.xlsx|\.xls)",
         "date_format": None,
         "date_group": 1,
         "type_group": None,
-        "date_column": "processing_date",   # fallback if needed
+        "date_column": "processing_date",
         "header_row": 0
     },
     "bitpay": {
@@ -116,17 +117,19 @@ PROCESSOR_PATTERNS = {
     },
     "powercash": {
         "pattern": r"(report-[a-zA-Z0-9]+|transactionlog(\s*\(\d+\))?)(?i:\.csv|\.xlsx|\.xls)",
-        "date_format": "%d.%m.%Y",  # Specify input format for Date column
+        "date_format": "%d.%m.%Y",
         "type_group": None,
         "date_column": "Date",
         "header_row": 0
     },
+    # === NEW TRUSTPAYMENTS PATTERN (old "searchresults..." completely removed) ===
     "trustpayments": {
-        "pattern": r"searchresults(\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
-        "date_format": None,
+        "pattern": r"(?i)processed-transactions-report-(\d{8})T\d{6}-[0-9a-f-]+(?i:\.csv|\.xlsx|\.xls)",
+        "date_format": "%Y%m%d",
+        "date_group": 1,
         "type_group": None,
-        "date_column": "transactionstartedtimestamp",
-        "header_row": 0
+        "date_column": None,
+        "header_row": None
     },
     "skrill": {
         "pattern": r"transactions_\d+(?i:\.csv|\.xlsx|\.xls)",
@@ -156,11 +159,11 @@ PROCESSOR_PATTERNS = {
         "type_group": None,
         "date_column": None,
         "header_row": None,
-        "dest_dir": None  # Dynamic now
+        "dest_dir": None
     }
 }
 
-# Add renamed patterns (updated to set dest_dir=None; handled dynamically)
+# Add renamed patterns (unchanged – trustpayments_renamed stays for already-renamed files)
 PROCESSOR_PATTERNS.update({
     "bitpay_renamed": {
         "pattern": r"bitpay_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
@@ -322,6 +325,8 @@ def detect_processor_from_name(filename):
     filename_lower = filename.lower()
     if filename_lower.startswith("crm_"):
         return "crm"
+    if "processed-transactions-report" in filename_lower:  # NEW: catches the updated TrustPayments raw files
+        return "trustpayments"
     if "transactionlog" in filename_lower:
         return "powercash"
     if "transactionreport" in filename_lower:
@@ -330,7 +335,7 @@ def detect_processor_from_name(filename):
         return "xbo"
     processors = [
         "safecharge", "safechargeuk", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
-        "trustpayments", "paysafe", "skrill", "neteller", "shift4", "barclays", "barclaycard", "xbo"
+        "trustpayments", "skrill", "neteller", "shift4", "barclays", "barclaycard", "xbo"
     ]
     for processor in processors:
         if processor in filename_lower:
@@ -353,20 +358,19 @@ def extract_date_from_file(file_path: Path, date_column: str = None, header_row:
                 df = pd.read_excel(file_path, engine='openpyxl', header=header_row)
             except Exception as e:
                 logging.error(f"Initial read failed for {file_path} with openpyxl: {e}")
-                df = pd.read_excel(file_path, engine='xlrd', header=header_row)  # Requires xlrd
+                df = pd.read_excel(file_path, engine='xlrd', header=header_row)
         else:
             df = pd.read_csv(file_path, header=header_row)
         logging.info(f"Processing file: {file_path}")
         logging.info(f"Columns in {file_path}: {df.columns.tolist()}")
         if date_column in df.columns:
-            date_format = config.get("date_format") if config else None  # Use date_format from config
+            date_format = config.get("date_format") if config else None
             if date_format:
                 dates = pd.to_datetime(df[date_column], format=date_format, errors='coerce')
             else:
                 dates = pd.to_datetime(df[date_column], errors='coerce')
             max_date = dates.max()
             if pd.notna(max_date):
-                # Special handling for powercash to output YYYY-MM-DD
                 if processor == "powercash":
                     return max_date.strftime('%Y-%m-%d')
                 return max_date.strftime('%Y-%m-%d')
@@ -403,7 +407,7 @@ def get_regulation_from_processor(processor_name: str) -> str:
     processor_lower = processor_name.lower()
     if processor_lower in UK_ONLY_PROCESSORS:
         return "uk"
-    return "row"  # Default to ROW for shared processors
+    return "row"
 
 
 def rename_raw_file(file_path: Path, forced_date: str = None):
@@ -452,7 +456,6 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
             if forced_date:
                 date_str = forced_date
 
-            # If no date_str and not a move-only (like crm without rename), skip unless forced_date set it
             if not date_str and not config.get("is_renamed"):
                 logging.warning(f"No date available for {filename} with {processor_original}, skipping")
                 continue
@@ -465,9 +468,8 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
                 else:
                     new_name = f"{processor_original}_{date_str}{file_path.suffix.lower()}" if date_str else file_path.name
 
-            # Determine regulations
             if processor == "crm" or processor.endswith("_renamed") and "crm" in processor:
-                regulations = ['row', 'uk']  # Duplicate CRM to both
+                regulations = ['row', 'uk']
             else:
                 reg = get_regulation_from_processor(processor_original)
                 regulations = [reg]
@@ -492,7 +494,7 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
                 logging.info(f"{action} {filename} to {dest_path} for {reg.upper()}")
                 moved = True
             if moved and "crm" in processor and file_path.exists():
-                file_path.unlink()  # Remove original after successful copies
+                file_path.unlink()
                 logging.info(f"Removed original CRM file {filename} after copying to both regulations")
             if moved:
                 return True
@@ -508,7 +510,7 @@ def run_renamer(incoming_dir: Path = INCOMING_DIR, forced_date: str = None):
     """
     renamed_count = 0
     incoming_dir.mkdir(parents=True, exist_ok=True)
-    files_found = [str(f) for f in incoming_dir.glob("*.*")]  # Log full paths
+    files_found = [str(f) for f in incoming_dir.glob("*.*")]
     logging.info(f"Files found in {incoming_dir}: {files_found}")
     if not files_found:
         logging.info("No files found in the directory to process.")
@@ -526,7 +528,6 @@ def run_renamer(incoming_dir: Path = INCOMING_DIR, forced_date: str = None):
                 filename_lower = file.name.lower()
                 processor = detect_processor_from_name(filename_lower)
                 if processor == "crm":
-                    # Handle CRM fallback
                     match = re.match(r"(?i)crm_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)", filename_lower)
                     if match and match.group(1) != forced_date:
                         new_name = f"crm_{forced_date}{file.suffix.lower()}"
@@ -543,7 +544,6 @@ def run_renamer(incoming_dir: Path = INCOMING_DIR, forced_date: str = None):
                         file.unlink()
                         logging.info(f"Removed original CRM file {file.name} after fallback copying")
                 elif processor != "unknown":
-                    # Handle processor fallback
                     type_suffix = ""
                     if processor == "paymentasia":
                         if "payout" in filename_lower or "withdrawal" in filename_lower or "withdraw" in filename_lower:

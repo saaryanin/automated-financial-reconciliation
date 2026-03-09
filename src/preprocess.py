@@ -901,6 +901,13 @@ def extract_crm_transaction_id(comment: str, processor: str):
     """
     text = str(comment)
     processor = processor.lower()
+
+    # === XBO - completely separate case
+    if processor == "xbo":
+        match = re.search(r"PSP TransactionId:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", text)
+        return match.group(1) if match else None
+
+    # All other processors
     patterns = {
         "paypal": r"PSP TransactionId:([A-Z0-9]+)",
         "safecharge": r"PSP TransactionId:([12]\d{18})|More Comment:[^$]*\$(\d{19})|,\s*([12]\d{18})\s*,",
@@ -983,8 +990,18 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
     if regulation == 'uk':
         df["PSP name"] = df["PSP name"].replace({'safecharge': 'safechargeuk'})
     # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
-    neteller_mask = df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
-    df.loc[neteller_mask, "PSP name"] = "neteller"
+    if "Method of Payment" in df.columns:
+        neteller_mask = df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+        df.loc[neteller_mask, "PSP name"] = "neteller"
+
+    # === XBO normalization (only looks for XBO in Method of Payment or PSP name) ===
+    if "Method of Payment" in df.columns:
+        xbo_mask = df["Method of Payment"].astype(str).str.strip().str.upper() == "XBO"
+        df.loc[xbo_mask, "PSP name"] = "xbo"
+    if "PSP name" in df.columns:
+        xbo_name_mask = df["PSP name"].astype(str).str.strip().str.upper() == "XBO"
+        df.loc[xbo_name_mask, "PSP name"] = "xbo"
+
     df["tp"] = df["TP Account"] if "TP Account" in df.columns else ""
     if normalized_processor == 'bridgerpay':
         df['transaction_id'] = df.get('Internal Comment', pd.Series(index=df.index, dtype=str)).astype(str).str.strip()
@@ -1003,7 +1020,7 @@ def load_crm_file(filepath: str, processor_name: str, regulation: str, save_clea
     else:
         psp_mask = df["PSP name"] == normalized_processor
         if transaction_type == "withdrawal":
-            name_mask = df["Name"].str.lower() == "withdrawal"
+            name_mask = df["Name"].str.lower().isin(["withdrawal", "withdrawal cancelled"])  # ← Supports cancelled
             df = df[name_mask & psp_mask].reset_index(drop=True)
         else:
             df = df[(df["Name"].str.lower() == transaction_type) & psp_mask].reset_index(drop=True)
@@ -1089,11 +1106,20 @@ def process_crm_subset(df: pd.DataFrame, processor: str, regulation: str, transa
                                                                         na=False)
         psp_match = df["PSP name"].str.contains("zotapay_paymentasia", case=False, na=False)
         wire_match = df["PSP name"].str.contains("wire ?transfer", case=False, regex=True, na=False)
-        full_mask = method_match | psp_match | (wire_match & method_match)  # Adjusted to your last fix
+        full_mask = method_match | psp_match | (wire_match & method_match)
         df = df[full_mask].reset_index(drop=True)
     if df.empty:
         return None
     df["tp"] = df.get("TP Account", "")
+
+    # === XBO normalization (only looks for XBO in Method of Payment or PSP name) ===
+    if "Method of Payment" in df.columns:
+        xbo_mask = df["Method of Payment"].astype(str).str.strip().str.upper() == "XBO"
+        df.loc[xbo_mask, "PSP name"] = "xbo"
+    if "PSP name" in df.columns:
+        xbo_name_mask = df["PSP name"].astype(str).str.strip().str.upper() == "XBO"
+        df.loc[xbo_name_mask, "PSP name"] = "xbo"
+
     if normalized_processor == 'bridgerpay':
         df['transaction_id'] = df.get('Internal Comment', pd.Series(index=df.index, dtype=str)).astype(str).str.strip()
     else:

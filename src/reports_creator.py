@@ -133,11 +133,18 @@ def preprocess_for_regulation(
     # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
     if "Method of Payment" in crm_df.columns:
         neteller_mask = (
-                crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+            crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
         )
         crm_df.loc[neteller_mask, "PSP name"] = "neteller"
-    else:
-        print("Warning: 'Method of Payment' column missing in CRM - skipping Neteller override")
+
+    # === XBO normalization (only looks for XBO in Method of Payment or PSP name) ===
+    if "Method of Payment" in crm_df.columns:
+        xbo_mask = crm_df["Method of Payment"].astype(str).str.strip().str.upper() == "XBO"
+        crm_df.loc[xbo_mask, "PSP name"] = "xbo"
+    if "PSP name" in crm_df.columns:
+        xbo_name_mask = crm_df["PSP name"].astype(str).str.strip().str.upper() == "XBO"
+        crm_df.loc[xbo_name_mask, "PSP name"] = "xbo"
+
     name_mask = crm_df["Name"].str.lower() == transaction_type
     unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
     filtered_processors = [p for p in processors if p in unique_psps]
@@ -162,8 +169,6 @@ def preprocess_for_regulation(
         print(
             f"Warning: {len(invalid_rows)} CRM rows with missing 'Name' or 'PSP name' in {regulation.upper()} - dropping them."
         )
-        # Optionally save to a file for review:
-        # invalid_rows.to_excel(dirs['lists_dir'] / f"{regulation}_invalid_crm_rows.xlsx", index=False)
     crm_df = crm_df.dropna(subset=["Name", "PSP name"])
     crm_start = time.time()
     processed_crm_dfs = []

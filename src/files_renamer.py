@@ -69,6 +69,14 @@ PROCESSOR_PATTERNS = {
         "date_column": "Transaction Date",  # Adjust based on actual file
         "header_row": 0
     },
+        "xbo": {
+        "pattern": r"(?i)transactions report \[\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4}\s*[‒-]\s*(\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4})\](?i:\.csv|\.xlsx|\.xls)",
+        "date_format": None,
+        "date_group": 1,
+        "type_group": None,
+        "date_column": "processing_date",   # fallback if needed
+        "header_row": 0
+    },
     "bitpay": {
         "pattern": r"(?i)bitpay-export-[a-zA-Z]{3}-\d{1,2}-\d{1,2}-\d{4}-_to_(\d{1,2}-\d{1,2}-\d{4})(?:\s*\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
         "date_format": "%m-%d-%Y",
@@ -293,6 +301,16 @@ PROCESSOR_PATTERNS.update({
         "date_column": None,
         "header_row": None,
         "dest_dir": None
+    },
+    "xbo_renamed": {
+        "pattern": r"xbo_(\d{4}-\d{2}-\d{2})(?i:\.csv|\.xlsx|\.xls)",
+        "date_format": "%Y-%m-%d",
+        "is_renamed": True,
+        "processor": "xbo",
+        "type_group": None,
+        "date_column": None,
+        "header_row": None,
+        "dest_dir": None
     }
 })
 
@@ -308,9 +326,11 @@ def detect_processor_from_name(filename):
         return "powercash"
     if "transactionreport" in filename_lower:
         return "barclays"
+    if "transactions report" in filename_lower:
+        return "xbo"
     processors = [
         "safecharge", "safechargeuk", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
-        "trustpayments", "paysafe", "skrill", "neteller", "shift4", "barclays", "barclaycard"
+        "trustpayments", "paysafe", "skrill", "neteller", "shift4", "barclays", "barclaycard", "xbo"
     ]
     for processor in processors:
         if processor in filename_lower:
@@ -414,10 +434,14 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
                 date_group = config.get("date_group")
                 if date_group is not None and match and len(match.groups()) >= date_group:
                     date_raw = match.group(date_group)
-                    if config["date_format"]:
+                    if processor_original == "xbo" and date_raw:
+                        date_raw = date_raw.replace(' ̸ ', '/').replace(' ‒ ', '-').strip()
+                        date_obj = datetime.strptime(date_raw, '%m/%d/%Y')
+                        date_str = date_obj.strftime('%Y-%m-%d')
+                    elif config["date_format"]:
                         date_str = datetime.strptime(date_raw, config["date_format"]).strftime('%Y-%m-%d')
                     else:
-                        date_str = date_raw  # already in format
+                        date_str = date_raw
                 elif config["date_column"] and config["header_row"] is not None:
                     date_str = extract_date_from_file(
                         file_path, config["date_column"], config["header_row"], processor_original, config

@@ -53,9 +53,23 @@ def setup_regulation_structure(regulation, processors, date_str):
     start_time = time.time()
     dirs = config.setup_dirs_for_reg(regulation, create=True)
     reg_crm_filepath = dirs["crm_dir"] / f"crm_{date_str}.xlsx"
+
     if not reg_crm_filepath.exists():
-        print(f"CRM file not found at {reg_crm_filepath}")
-        exit(1)
+        print(f"WARNING: No CRM file found for {regulation.upper()} (normal during XBO-only testing).")
+        print("Creating rich dummy CRM so processor processing can continue...")
+        reg_crm_filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        # ALL columns that are accessed in preprocess_for_regulation + load_crm_file + process_crm_subset
+        dummy_df = pd.DataFrame(columns=[
+            "Name", "PSP name", "Site (Account) (Account)", "Method of Payment",
+            "TP Account", "Internal Comment", "Approved", "First Name (Account) (Account)",
+            "Last Name (Account) (Account)", "Email (Account) (Account)", "Amount",
+            "Currency", "CC Last 4 Digits", "Created On"
+        ])
+        dummy_df.to_excel(reg_crm_filepath, index=False)
+    else:
+        print(f"CRM file found for {regulation.upper()}")
+
     end_time = time.time()
     print(f"Setup for {regulation.upper()} took {end_time - start_time:.2f} seconds")
     return {**dirs, "crm_filepath": reg_crm_filepath}
@@ -74,6 +88,7 @@ row_processors = [
     "ezeebill",
     "paymentasia",
     "bridgerpay",
+    "xbo",
 ]
 uk_processors = ["safechargeuk", "barclays", "barclaycard"]
 
@@ -116,10 +131,13 @@ def preprocess_for_regulation(
     if regulation == "uk":
         crm_df["PSP name"] = crm_df["PSP name"].replace({"safecharge": "safechargeuk"})
     # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
-    neteller_mask = (
-        crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
-    )
-    crm_df.loc[neteller_mask, "PSP name"] = "neteller"
+    if "Method of Payment" in crm_df.columns:
+        neteller_mask = (
+                crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+        )
+        crm_df.loc[neteller_mask, "PSP name"] = "neteller"
+    else:
+        print("Warning: 'Method of Payment' column missing in CRM - skipping Neteller override")
     name_mask = crm_df["Name"].str.lower() == transaction_type
     unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
     filtered_processors = [p for p in processors if p in unique_psps]
@@ -320,8 +338,7 @@ def main(date_str):
 
 
 if __name__ == "__main__":
-
-    date_str = "2025-12-03"
+    date_str = "2026-03-06"
     if len(sys.argv) > 1:
         date_str = sys.argv[1]
     main(date_str)

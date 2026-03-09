@@ -69,6 +69,8 @@ PSP_NAME_MAP = {
     'barclay card': 'barclays',
     'barclays': 'barclays',
     'bridgerpay': 'bridgerpay',
+    'xbo': 'xbo',
+    'XBO': 'xbo',
     # Add any other known aliases as needed
 }
 
@@ -351,6 +353,25 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['last_4digits'] = ''  # Not available for deposits
         keep_cols = ["transaction_id", "date", "amount", "currency", "tp", "processor_name"]
         df = df[keep_cols]
+    elif processor == "xbo":
+        df = df[df["status"].astype(str).str.lower().str.strip() == "approved"].copy()
+        if df.empty:
+            return df
+        df["tp"] = df["merchantOrderId"].astype(str).str.split('-', n=1).str[0].str.strip()
+        df = df.rename(columns={
+            "processing_date": "date",
+            "transactionId": "transaction_id",
+            "firstName": "first_name",
+            "lastName": "last_name",
+        })
+        df["date"] = pd.to_datetime(df["date"], errors='coerce').dt.strftime('%d.%m.%Y %H:%M:%S')
+        df["amount"] = abs(pd.to_numeric(df["amount"], errors="coerce").fillna(0))
+        df["processor_name"] = "xbo"
+        df["last_4digits"] = ""
+        keep_cols = ["date", "transaction_id", "email", "tp", "amount", "currency",
+                     "first_name", "last_name", "processor_name", "last_4digits"]
+        df = df[[col for col in keep_cols if col in df.columns]]
+        return df
 
     # Common cleanup for all processors
     if 'transaction_id' in df:
@@ -841,6 +862,10 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         print(f"Final df shape after processing: {final_df.shape}")
         print(f"Sample processed rows: {final_df.head(2)}")
         return final_df
+
+    elif processor == "xbo":
+        print("XBO withdrawals intentionally left unmatched (CRM side only)")
+        return pd.DataFrame()
 
     elif processor in ["barclays", "barclaycard"]:
         df = df[df["Current Status"].str.lower() == "captured"]

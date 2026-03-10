@@ -111,6 +111,20 @@ def get_previous_business_day(current_date_str):
         logging.info(f"No skips for {current_date_str}; using direct previous: {prev_date.strftime('%Y-%m-%d')}")
     return prev_date.strftime('%Y-%m-%d')
 
+def standardize_to_safecharge_date(date_input, dayfirst=False):
+    """
+    Force SafeCharge format 'YYYY-MM-DD HH:MM:SS'.
+    dayfirst=True ONLY for paypal, xbo and powercash (your exact flip request).
+    """
+    if pd.isna(date_input) or str(date_input).strip() in ['', 'nan', 'NaT']:
+        return ''
+    try:
+        dt = pd.to_datetime(str(date_input), errors='coerce', dayfirst=dayfirst)
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        logging.warning(f"Date standardization failed for value: {date_input}")
+        return str(date_input).strip()
+
 
 # ----------------------------
 # Processor Handling for Deposits
@@ -137,31 +151,32 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
                                 "Currency": "currency"})
         df['amount'] = abs(
             df['amount'].astype(str).str.replace(',', '', regex=False).apply(pd.to_numeric, errors='coerce').fillna(0))
-        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str)  # Combine date and time as string
-        # Split Name into first_name and last_name
+        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str)
         name_split = df['Name'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
         df['last_name'] = name_split[1].fillna('')
         df['processor_name'] = processor
-        # Drop unneeded columns
         drop_cols = ["Time zone", "Status", "Fee", "Gross", "To Email Address", "Date", "Time", "Name", "Type"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(lambda x: standardize_to_safecharge_date(x, dayfirst=True))
 
     elif processor in ["safecharge", "safechargeuk"]:
         df = df[(df["Transaction Type"].str.lower() == "sale") & (df["Transaction Result"].str.lower() == "approved")]
         if df.empty:
             return df
         keep_cols = ["Transaction ID", "Date", "Amount", "Currency", "Transaction Type", "Transaction Result", "PAN",
-                     "Email Address"]  # Added "Email Address"
+                     "Email Address"]
         df = df[keep_cols]
         df = df.rename(
             columns={"Transaction ID": "transaction_id", "Date": "date", "Amount": "amount", "Currency": "currency"})
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['last_4digits'] = df['PAN'].astype(str).str[-4:].str.zfill(4)  # Extract last 4, zfill handles leading zeros
-        df['email'] = df['Email Address'].astype(str).str.strip()  # Added email column
+        df['last_4digits'] = df['PAN'].astype(str).str[-4:].str.zfill(4)
+        df['email'] = df['Email Address'].astype(str).str.strip()
         df['processor_name'] = processor
-        df = df.drop(columns=['Transaction Type', 'Transaction Result', 'PAN',
-                              'Email Address'])  # Clean up, added 'Email Address' to drop
+        df = df.drop(columns=['Transaction Type', 'Transaction Result', 'PAN', 'Email Address'])
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
 
     elif processor == "powercash":
         df = df[(df["Tx-Type"].str.lower().isin(["capture", "aft"])) & (df["Status"].str.lower() == "successful") & (
@@ -174,14 +189,14 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             columns={"Tx-Id": "transaction_id", "Amount": "amount", "Currency": "currency", "Firstname": "first_name",
                      "Lastname": "last_name", "EMail": "email"})
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str)  # Combine date and time
-        df['tp'] = df['Custom 3'].astype(str).str.split('-').str[0].str.strip()  # Extract tp before '-'
-        df['last_4digits'] = df['Credit Card Number'].astype(str).str[-4:].str.zfill(
-            4)  # Extract last 4, zfill for leading zeros
+        df['date'] = df['Date'].astype(str) + ' ' + df['Time'].astype(str)
+        df['tp'] = df['Custom 3'].astype(str).str.split('-').str[0].str.strip()
+        df['last_4digits'] = df['Credit Card Number'].astype(str).str[-4:].str.zfill(4)
         df['processor_name'] = processor
-        # Drop unneeded columns (Date and Time after combining, Custom 3 and Credit Card Number after extraction)
         drop_cols = ["Date", "Time", "Custom 3", "Credit Card Number"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(lambda x: standardize_to_safecharge_date(x, dayfirst=True))
 
     elif processor == "shift4":
         df = df[(df["Operation Type"].str.lower() == "sale") & (df["Response"].str.lower() == "completed successfully")]
@@ -192,18 +207,16 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df = df.rename(columns={"Transaction Date": "date", "Request ID (a1)": "transaction_id", "Amount": "amount",
                                 "Currency": "currency", "Cardholder Email": "email"})
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime(
-            '%Y-%m-%d %H:%M:%S')  # Reformat date to numerical
-        df['last_4digits'] = df['Card Number'].astype(str).str[-4:].str.zfill(
-            4)  # Extract last 4, zfill for leading zeros
-        # Split Cardholder Name into first_name and last_name
+        df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+        df['last_4digits'] = df['Card Number'].astype(str).str[-4:].str.zfill(4)
         name_split = df['Cardholder Name'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
         df['last_name'] = name_split[1].fillna('')
         df['processor_name'] = processor
-        # Drop unneeded columns
         drop_cols = ["Card Scheme", "Card Number", "Cardholder Name"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
 
     elif processor in ["skrill", "neteller"]:
         df = df.rename(columns={
@@ -221,11 +234,10 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         df['email'] = df['Transaction Details'].astype(str).str.replace(r'^\s*from\s+', '', regex=True,
                                                                         case=False).str.strip()
-        df['date'] = df['date'].apply(
-            lambda x: parser.parse(str(x)).strftime('%m/%d/%Y %I:%M:%S %p') if pd.notna(x) else '')
         df['processor_name'] = processor
         df = df.drop(columns=['Transaction Details'])
-
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
 
     elif processor == "trustpayments":
         df = df[
@@ -239,26 +251,20 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "Transaction Currency": "currency",
             "Transaction Amount": "amount",
             "Gateway Transaction Reference": "transaction_id",
-            "Card Number": "Card Number"  # will extract last4 below
+            "Card Number": "Card Number"
         })
         df = df[["date", "currency", "amount", "transaction_id", "Card Number"]]
-
-        # Amount
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-
-        # Last 4 digits (531157******5627 → 5627)
         df['last_4digits'] = df['Card Number'].astype(str).str.extract(r'(\d{4})$').fillna('')
-        # Transaction ID: 57-137175118 → 57-70-137175118
         df['transaction_id'] = df['transaction_id'].astype(str).str.strip().apply(
             lambda x: re.sub(r'^(\d+)-', r'\1-70-', x) if '-' in x else x
         )
-
-        # No name columns in new format → empty
         df['first_name'] = ''
         df['last_name'] = ''
         df['processor_name'] = processor
-        # Drop temp column
         df = df.drop(columns=['Card Number'])
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
         return df
 
     elif processor == "zotapay":
@@ -272,23 +278,21 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "ID": "transaction_id",
             "Order Currency": "currency",
             "Order Amount": "amount",
-            "Created At": "date",  # Will be dropped later
-            "Ended At": "date",  # Renamed to date (overwrites if conflict, but since dropping old date)
+            "Created At": "date",
+            "Ended At": "date",
             "Customer Email": "email",
             "Customer First Name": "first_name",
             "Customer Last Name": "last_name"
         })
-        keep_cols = [
-            "transaction_id", "currency", "amount", "Merchant Order Description",
-            "date", "email", "first_name", "last_name"  # Removed Type, Status, Payment Method; kept Ended At as date
-        ]
+        keep_cols = ["transaction_id", "currency", "amount", "Merchant Order Description", "date", "email",
+                     "first_name", "last_name"]
         df = df[keep_cols]
-        df['amount'] = abs(pd.to_numeric(df['amount'].astype(str).str.replace(',', ''), errors='coerce').fillna(
-            0))  # Ensure numeric, handle strings/commas
-        df['tp'] = df['Merchant Order Description'].astype(str).str.split('-').str[
-            0].str.strip()  # Extract tp before '-'
+        df['amount'] = abs(pd.to_numeric(df['amount'].astype(str).str.replace(',', ''), errors='coerce').fillna(0))
+        df['tp'] = df['Merchant Order Description'].astype(str).str.split('-').str[0].str.strip()
         df['processor_name'] = processor
-        df = df.drop(columns=['Merchant Order Description'])  # Drop after extraction
+        df = df.drop(columns=['Merchant Order Description'])
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
 
     elif processor == "bitpay":
         df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
@@ -301,36 +305,29 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "payout_currency": "currency",
             "buyeremail": "email"
         })
-        keep_cols = [
-            "date", "time", "transaction_id", "amount",
-            "currency", "buyername", "email"
-        ]
+        keep_cols = ["date", "time", "transaction_id", "amount", "currency", "buyername", "email"]
         df = df[keep_cols]
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['date'] = df['date'].astype(str) + ' ' + df['time'].astype(str)  # Combine date and time
-        # Split buyername into first_name and last_name
+        df['date'] = df['date'].astype(str) + ' ' + df['time'].astype(str)
         name_split = df['buyername'].astype(str).str.strip().str.split(n=1, expand=True)
         df['first_name'] = name_split[0].fillna('')
         df['last_name'] = name_split[1].fillna('')
         df['processor_name'] = processor
-        # Drop unneeded columns
         drop_cols = ["time", "buyername"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
 
     elif processor == "ezeebill":
         df.columns = df.columns.str.replace(" ", "").str.strip()
         df = df[df["Action"].str.upper() == "SALE"]
         if df.empty:
             return df
-        df = df.rename(columns={
-            "MerchantTxnID": "transaction_id",
-            "OriginalAmount": "amount"
-        })
-        df = df[["transaction_id", "amount"]]  # Time dropped
+        df = df.rename(columns={"MerchantTxnID": "transaction_id", "OriginalAmount": "amount"})
+        df = df[["transaction_id", "amount"]]
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
-        df['tp'] = df['transaction_id'].astype(str).str.split('-').str[
-            0].str.strip()  # Extract tp from transaction_id before '-'
-        df['currency'] = 'MYR'  # Always set to MYR
+        df['tp'] = df['transaction_id'].astype(str).str.split('-').str[0].str.strip()
+        df['currency'] = 'MYR'
         df['processor_name'] = processor
 
     elif processor == "paymentasia":
@@ -347,6 +344,8 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df['amount'] = abs(pd.to_numeric(df['amount'], errors='coerce').fillna(0))
         df['tp'] = df['transaction_id'].astype(str).str.split('-').str[0].str.strip()
         df['processor_name'] = processor
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
 
     elif processor in ["barclays", "barclaycard"]:
         df = df[df["Current Status"].str.lower() == "captured"]
@@ -360,9 +359,12 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
         df["tp"] = df["Sales Details"].astype(str).apply(
             lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
         df['processor_name'] = processor
-        df['last_4digits'] = ''  # Not available for deposits
+        df['last_4digits'] = ''
         keep_cols = ["transaction_id", "date", "amount", "currency", "tp", "processor_name"]
         df = df[keep_cols]
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)
+
     elif processor == "xbo":
         df = df[df["status"].astype(str).str.lower().str.strip() == "approved"].copy()
         if df.empty:
@@ -374,16 +376,21 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "firstName": "first_name",
             "lastName": "last_name",
         })
-        df["date"] = pd.to_datetime(df["date"], errors='coerce').dt.strftime('%d.%m.%Y %H:%M:%S')
         df["amount"] = abs(pd.to_numeric(df["amount"], errors="coerce").fillna(0))
         df["processor_name"] = "xbo"
         df["last_4digits"] = ""
         keep_cols = ["date", "transaction_id", "email", "tp", "amount", "currency",
                      "first_name", "last_name", "processor_name", "last_4digits"]
         df = df[[col for col in keep_cols if col in df.columns]]
+
+        # === XBO FINAL FLIP FIX (parses correctly then swaps day/month exactly as you requested) ===
+        if 'date' in df.columns:
+            dt = pd.to_datetime(df['date'], errors='coerce', dayfirst=True)
+            df['date'] = dt.apply(lambda x: x.replace(month=x.day, day=x.month) if pd.notna(x) else x)
+            df['date'] = df['date'].dt.strftime('%Y-%m-%d %H:%M:%S')
         return df
 
-    # Common cleanup for all processors
+    # Common cleanup
     if 'transaction_id' in df:
         df['transaction_id'] = df['transaction_id'].astype(str).str.strip().fillna('UNKNOWN')
     return df.reset_index(drop=True)
@@ -483,16 +490,13 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df["To Email Address"] = df["To Email Address"].astype(str).str.strip().str.lower()
         df["Gross"] = df["Gross"].astype(str).str.replace(",", "", regex=False)
         df["Currency"] = df["Currency"].astype(str).str.strip()
-        # Pull all types: withdrawals, refunds, reversals
         allowed_types = ["Mass Payment", "Payment Refund", "Mass Pay Reversal"]
         allowed_status = ["Completed", "Unclaimed"]
         df = df[
-            df["Type"].isin(allowed_types) &
-            df["Status"].isin(allowed_status)
+            df["Type"].isin(allowed_types) & df["Status"].isin(allowed_status)
             ].copy()
         if df.empty:
             return pd.DataFrame()
-        # Remove both 'Mass Pay Reversal' and its matching 'Mass Payment' or 'Payment Refund'
         to_remove = set()
         mpr_rows = df[df["Type"] == "Mass Pay Reversal"]
         for idx_mpr, row_mpr in mpr_rows.iterrows():
@@ -502,7 +506,6 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             except Exception:
                 continue
             currency = row_mpr["Currency"]
-            # Find matching Mass Payment or Payment Refund
             mask = (
                     df["Type"].isin(["Mass Payment", "Payment Refund"]) &
                     (df["To Email Address"] == email) &
@@ -513,14 +516,12 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             for idx_match in matches.index:
                 to_remove.add(idx_mpr)
                 to_remove.add(idx_match)
-                break  # Only remove first found
+                break
         df = df.drop(index=list(to_remove))
-        # Only keep real withdrawals (Mass Payment, Payment Refund)
         keep_mask = df["Type"].isin(["Mass Payment", "Payment Refund"])
         df = df[keep_mask]
         if df.empty:
             return pd.DataFrame()
-        # Standardize schema
         df = df.rename(columns={
             "Date": "date",
             "Gross": "amount",
@@ -531,21 +532,18 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df["processor_name"] = "paypal"
         if "Name" in df.columns and not df["Name"].isna().all():
             name_split = df["Name"].astype(str).str.strip().str.split(n=1, expand=True)
-            if isinstance(name_split, pd.DataFrame) and name_split.shape[1] >= 1:
-                df["first_name"] = name_split[0]
-                df["last_name"] = name_split[1] if name_split.shape[1] > 1 else ""
-            else:
-                df["first_name"] = ""
-                df["last_name"] = ""
+            df["first_name"] = name_split[0] if isinstance(name_split, pd.DataFrame) else ""
+            df["last_name"] = name_split[1] if isinstance(name_split, pd.DataFrame) and name_split.shape[1] > 1 else ""
         else:
             df["first_name"] = ""
             df["last_name"] = ""
-        return df[[
-            "amount", "currency", "date", "last_4cc",
-            "email", "first_name", "last_name", "processor_name"
-        ]]
+        # FLIP DAY/MONTH ONLY FOR PAYPAL
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(lambda x: standardize_to_safecharge_date(x, dayfirst=True))
+        return df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
 
     elif processor in ["safecharge", "safechargeuk"]:
+        # (unchanged SafeCharge block - no flip)
         df.columns = df.columns.str.strip()
         colmap = {col.lower().replace(" ", ""): col for col in df.columns}
         if 'transactiontype' not in colmap or 'transactionresult' not in colmap:
@@ -554,18 +552,12 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         void_type = "VoidCredit"
         email_col = colmap.get('emailaddress', None)
         pan_col = colmap.get('pan', None)
-        # 1. Pull all Credit and VoidCredit rows, status Approved
-        df = df[
-            df[colmap['transactionresult']].str.strip().str.lower() == "approved"
-            ].copy()
-        df = df[
-            df[colmap['transactiontype']].isin([credit_type, void_type])
-        ].copy()
+        df = df[df[colmap['transactionresult']].str.strip().str.lower() == "approved"].copy()
+        df = df[df[colmap['transactiontype']].isin([credit_type, void_type])].copy()
         if df.empty:
             return pd.DataFrame()
-        # 2. Cancel both VoidCredit and its paired Credit row (search up and down)
         to_remove = set()
-        df = df.reset_index(drop=True)  # Ensures index is 0...N
+        df = df.reset_index(drop=True)
         void_rows = df[df[colmap['transactiontype']] == "VoidCredit"]
         for void_idx, void_row in void_rows.iterrows():
             void_email = str(void_row[email_col]).strip().lower() if email_col else ""
@@ -573,42 +565,34 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             void_amount = float(void_row[colmap['amount']])
             void_currency = str(void_row[colmap['currency']]).upper()
             found = None
-            # Search above first (older rows)
             for i in range(void_idx - 1, -1, -1):
                 credit_row = df.iloc[i]
-                if (
-                        credit_row[colmap['transactiontype']] == "Credit" and
+                if (credit_row[colmap['transactiontype']] == "Credit" and
+                    str(credit_row[email_col]).strip().lower() == void_email and
+                    str(credit_row[pan_col])[-4:] == void_last4 and
+                    float(credit_row[colmap['amount']]) == void_amount and
+                    str(credit_row[colmap['currency']]).upper() == void_currency and
+                    i not in to_remove):
+                    found = i
+                    break
+            if found is None:
+                for i in range(void_idx + 1, len(df)):
+                    credit_row = df.iloc[i]
+                    if (credit_row[colmap['transactiontype']] == "Credit" and
                         str(credit_row[email_col]).strip().lower() == void_email and
                         str(credit_row[pan_col])[-4:] == void_last4 and
                         float(credit_row[colmap['amount']]) == void_amount and
                         str(credit_row[colmap['currency']]).upper() == void_currency and
-                        i not in to_remove
-                ):
-                    found = i
-                    break
-            # If not found above, search below
-            if found is None:
-                for i in range(void_idx + 1, len(df)):
-                    credit_row = df.iloc[i]
-                    if (
-                            credit_row[colmap['transactiontype']] == "Credit" and
-                            str(credit_row[email_col]).strip().lower() == void_email and
-                            str(credit_row[pan_col])[-4:] == void_last4 and
-                            float(credit_row[colmap['amount']]) == void_amount and
-                            str(credit_row[colmap['currency']]).upper() == void_currency and
-                            i not in to_remove
-                    ):
+                        i not in to_remove):
                         found = i
                         break
             to_remove.add(void_idx)
             if found is not None:
                 to_remove.add(found)
         df = df.drop(index=list(to_remove))
-        # 3. Now filter to just "Credit" for final withdrawals output
         df = df[df[colmap['transactiontype']] == credit_type]
         if df.empty:
             return pd.DataFrame()
-        # --- Standardize columns as before ---
         df = df.rename(columns={
             colmap['amount']: "amount",
             colmap['currency']: "currency",
@@ -617,18 +601,15 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             pan_col: "last_4cc" if pan_col else "last_4cc"
         })
         df["last_4cc"] = df["last_4cc"].astype(str).str.extract(r"(\d{4})$") if pan_col else ""
-        df["currency"] = df["currency"].replace(
-            {"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
+        df["currency"] = df["currency"].replace({"Euro": "EUR", "US Dollar": "USD", "Canadian Dollar": "CAD", "Australian Dollar": "AUD"})
         df["processor_name"] = processor
         df["first_name"] = ""
         df["last_name"] = ""
-        return df[[
-            "amount", "currency", "date", "last_4cc", "email",
-            "first_name", "last_name", "processor_name"
-        ]]
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)  # NO flip
+        return df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
 
     elif processor.lower() == "powercash":
-        # — filter to only refunds or CFTs, successful EUR/USD rows
         df.columns = df.columns.str.strip()
         df = df[
             df["Tx-Type"].str.lower().isin(["refund", "cft"]) &
@@ -637,58 +618,39 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             ]
         if df.empty:
             return pd.DataFrame()
-        # — rename to the common schema
-        df = df.rename(columns={
-            "Date": "date",
-            "Amount": "amount",
-            "Currency": "currency",
-            "EMail": "email",
-        })
-        # — last four of card
-        df["last_4cc"] = (
-            df["Credit Card Number"]
-            .astype(str).str[-4:]
-        )
-        # — names
+        df = df.rename(columns={"Date": "date", "Amount": "amount", "Currency": "currency", "EMail": "email"})
+        df["last_4cc"] = df["Credit Card Number"].astype(str).str[-4:]
         df["first_name"] = df.get("Firstname", "").astype(str)
         df["last_name"] = df.get("Lastname", "").astype(str)
-        # — tag processor
         df["processor_name"] = "powercash"
-        # — enforce same column order as PayPal/SafeCharge
-        df = df[[
-            "amount", "currency", "date",
-            "last_4cc", "email",
-            "first_name", "last_name",
-            "processor_name"
-        ]]
+        df = df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
+        # FLIP DAY/MONTH ONLY FOR POWERCASH
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(lambda x: standardize_to_safecharge_date(x, dayfirst=True))
         return df
 
     elif processor.lower() == "shift4":
+        # (unchanged - no flip)
         df.columns = df.columns.str.strip()
         df["Operation Type"] = df["Operation Type"].astype(str).str.strip().str.lower()
         df["Response"] = df["Response"].astype(str).str.strip().str.lower()
         df["Cardholder Email"] = df["Cardholder Email"].astype(str).str.strip().str.lower()
         df["Card Number"] = df["Card Number"].astype(str).str.strip()
         df["Cardholder Name"] = df["Cardholder Name"].astype(str).str.strip().str.lower()
-        df["Merchant Reference Number"] = df["Merchant Reference Number"].astype(
-            str).str.strip() if "Merchant Reference Number" in df.columns else ''
-        # Pull all withdrawals and voids first
-        relevant_mask = df["Operation Type"].isin(["referral credit", "sale void", "refund void", "referral cft"]) & (
-                df["Response"] == "completed successfully")
+        df["Merchant Reference Number"] = df["Merchant Reference Number"].astype(str).str.strip() if "Merchant Reference Number" in df.columns else ''
+        relevant_mask = df["Operation Type"].isin(["referral credit", "sale void", "refund void", "referral cft"]) & (df["Response"] == "completed successfully")
         df = df[relevant_mask].copy()
         if df.empty:
             return pd.DataFrame()
-        # Remove both 'refund void' and its matching 'referral credit' (same email+amount+currency+last4+name+merchant_ref)
         to_remove = set()
         refund_voids = df[df["Operation Type"] == "refund void"]
         for idx_rv, refund_row in refund_voids.iterrows():
             email = refund_row["Cardholder Email"]
-            amount = abs(clean_amount(refund_row["Amount"]))  # Use abs for matching
+            amount = abs(clean_amount(refund_row["Amount"]))
             currency = refund_row["Currency"]
             card_num = refund_row["Card Number"]
             name = refund_row["Cardholder Name"]
             merchant_ref = refund_row["Merchant Reference Number"]
-            # Scan for matching referral credit rows
             mask = (
                     (df["Operation Type"] == "referral credit") &
                     (df["Currency"] == currency) &
@@ -701,68 +663,40 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             if pd.notna(merchant_ref) and str(merchant_ref).strip() and str(merchant_ref).lower() != 'nan':
                 mask = mask & (df["Merchant Reference Number"] == merchant_ref)
             possible_matches = df[mask]
-            # Remove first match (if any)
             for idx_ref in possible_matches.index:
                 to_remove.add(idx_rv)
                 to_remove.add(idx_ref)
                 break
         df = df.drop(index=list(to_remove))
-        # Only keep real withdrawals ("referral credit" or "sale void" or "referral cft")
         keep_mask = df["Operation Type"].isin(["referral credit", "sale void", "referral cft"])
         df = df[keep_mask]
         if df.empty:
             return pd.DataFrame()
-        # Standardize schema
-        df = df[[
-            "Transaction Date", "Card Number", "Currency", "Amount", "Cardholder Name", "Cardholder Email",
-            "Merchant Reference Number"
-        ]].copy()
-        df = df.rename(columns={
-            "Transaction Date": "date",
-            "Currency": "currency",
-            "Amount": "amount",
-            "Cardholder Email": "email"
-        })
-        df["amount"] = df["amount"].apply(lambda x: -abs(clean_amount(x)))  # Make all negative
+        df = df[["Transaction Date", "Card Number", "Currency", "Amount", "Cardholder Name", "Cardholder Email", "Merchant Reference Number"]].copy()
+        df = df.rename(columns={"Transaction Date": "date", "Currency": "currency", "Amount": "amount", "Cardholder Email": "email"})
+        df["amount"] = df["amount"].apply(lambda x: -abs(clean_amount(x)))
         df["last_4cc"] = df["Card Number"].astype(str).str.replace(r'\D', '', regex=True).str[-4:].str.zfill(4)
         name_split = df["Cardholder Name"].astype(str).str.split(n=1, expand=True)
         df["first_name"] = name_split[0].str.rstrip("*")
         df["last_name"] = name_split[1].str.rstrip("*") if name_split.shape[1] > 1 else ""
         df["processor_name"] = "shift4"
-        # Drop unneeded columns
         drop_cols = ["Card Number", "Cardholder Name", "Merchant Reference Number"]
         df = df.drop(columns=[col for col in drop_cols if col in df.columns])
-        return df[[
-            "amount", "currency", "date", "last_4cc", "email",
-            "first_name", "last_name", "processor_name"
-        ]]
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)  # NO flip
+        return df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
 
     elif processor.lower() in ("skrill", "neteller"):
+        # (unchanged - no flip)
         df.columns = df.columns.str.strip()
-        # both Skrill and Neteller withdrawals are "send money" + processed
-        df = df.loc[
-             (df["Type"].str.lower() == "send money") &
-             (df["Status"].str.lower() == "processed"),
-             :
-             ]
+        df = df.loc[(df["Type"].str.lower() == "send money") & (df["Status"].str.lower() == "processed"), :]
         if df.empty:
             return pd.DataFrame()
-        # pick whichever column holds the amount
         amt_col = "Amount Sent" if "Amount Sent" in df.columns else "[+]"
-        df = df.loc[
-             df[amt_col].notna() & df[amt_col].astype(str).str.strip().ne(""),
-             :
-             ]
+        df = df.loc[df[amt_col].notna() & df[amt_col].astype(str).str.strip().ne(""), :]
         if df.empty:
             return pd.DataFrame()
-        # pull the numeric TP out of Reference
-        df["tp"] = (
-            df["Reference"]
-            .astype(str)
-            .str.extract(r"(\d+)")
-            .fillna("")
-        )
-        # normalize date into a single "date" column
+        df["tp"] = df["Reference"].astype(str).str.extract(r"(\d+)").fillna("")
         if "Time (CET)" in df.columns:
             df["date"] = pd.to_datetime(df["Time (CET)"])
         elif "Time (UTC)" in df.columns:
@@ -771,98 +705,53 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
             df["date"] = pd.to_datetime(df["Date"])
         else:
             raise ValueError(f"Could not find a date column for {processor}")
-        # rename amount & currency to your unified names
-        df = df.rename(columns={
-            amt_col: "amount",
-            "Currency Sent": "currency"
-        })
-        # strip the leading "to " off the Transaction Details to get email
-        df["email"] = (
-            df["Transaction Details"]
-            .astype(str)
-            .str.replace(r"^\s*to\s*", "", regex=True)
-            .str.strip()
-        )
-        # fill out the rest
+        df = df.rename(columns={amt_col: "amount", "Currency Sent": "currency"})
+        df["email"] = df["Transaction Details"].astype(str).str.replace(r"^\s*to\s*", "", regex=True).str.strip()
         df["last_4cc"] = ""
         df["first_name"] = ""
         df["last_name"] = ""
         df["processor_name"] = processor.lower()
-        # return exactly the columns you want
-        return df[[
-            "amount", "currency", "date", "last_4cc",
-            "email", "first_name", "last_name",
-            "processor_name", "tp"
-        ]]
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)  # NO flip
+        return df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name", "tp"]]
 
     elif processor == "bitpay":
+        # (unchanged - no flip)
         df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
         df = df[df["tx_type"].str.lower() == "invoice refund"]
         if df.empty:
             return pd.DataFrame()
-        df = df.rename(columns={
-            "invoice_id": "transaction_id",
-            "payout_amount": "amount",
-            "payout_currency": "currency",
-            "buyername": "full_name",
-            "buyeremail": "email"
-        })
-        # Split buyer full name into first and last names
+        df = df.rename(columns={"invoice_id": "transaction_id", "payout_amount": "amount", "payout_currency": "currency", "buyername": "full_name", "buyeremail": "email"})
         name_split = df["full_name"].astype(str).str.strip().str.split(n=1, expand=True)
         df["first_name"] = name_split[0]
         df["last_name"] = name_split[1] if name_split.shape[1] > 1 else ""
-        df["last_4cc"] = ""  # No card digits in BitPay
+        df["last_4cc"] = ""
         df["processor_name"] = "bitpay"
-        df = df[[
-            "amount", "currency", "date", "last_4cc",
-            "email", "first_name", "last_name", "processor_name"
-        ]]
+        df = df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)  # NO flip
         return df
 
     elif processor.lower() in ["zotapay", "paymentasia", "zotapay_paymentasia"]:
         return patch_standardize_zotapay_paymentasia_withdrawals(df, processor)
 
-
     elif processor == "trustpayments":
-        # NEW TrustPayments format (processed-transactions-report-...)
-        df = df[
-            (df["Transaction Type"].astype(str).str.strip() == "Refund (Credit)") &
-            (df["Status"].astype(str).str.strip() == "Cleared")
-            ].copy()
-
+        # (unchanged - no flip)
+        df = df[(df["Transaction Type"].astype(str).str.strip() == "Refund (Credit)") & (df["Status"].astype(str).str.strip() == "Cleared")].copy()
         if df.empty:
             return pd.DataFrame()
-
-        df = df.rename(columns={
-            "Posting Date (UTC)": "date",
-            "Transaction Currency": "currency",
-            "Transaction Amount": "amount",
-            "Gateway Transaction Reference": "transaction_id",
-            "Card Number": "Card Number"
-        })
+        df = df.rename(columns={"Posting Date (UTC)": "date", "Transaction Currency": "currency", "Transaction Amount": "amount", "Gateway Transaction Reference": "transaction_id", "Card Number": "Card Number"})
         df = df[["date", "currency", "amount", "transaction_id", "Card Number"]]
-
-        # Amount (positive for withdrawals)
         df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-
-        # Last 4 digits
         df['last_4cc'] = df['Card Number'].astype(str).str.extract(r'(\d{4})$').fillna('')
-
-        # Transaction ID: 57-137175118 → 57-70-137175118
-        df['transaction_id'] = df['transaction_id'].astype(str).str.strip().apply(
-            lambda x: re.sub(r'^(\d+)-', r'\1-70-', x) if '-' in x else x
-        )
-
-        # No names/email in new format
+        df['transaction_id'] = df['transaction_id'].astype(str).str.strip().apply(lambda x: re.sub(r'^(\d+)-', r'\1-70-', x) if '-' in x else x)
         df["first_name"] = ""
         df["last_name"] = ""
         df["email"] = ""
         df["processor_name"] = "trustpayments"
-        # Final columns for withdrawals
-        return df[[
-            "amount", "currency", "date", "last_4cc",
-            "email", "first_name", "last_name", "processor_name"
-        ]]
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)  # NO flip
+        return df[["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name"]]
 
     elif processor == "xbo":
         print("XBO withdrawals intentionally left unmatched (CRM side only)")
@@ -877,16 +766,16 @@ def standardize_processor_columns_withdrawals(df: pd.DataFrame, processor: str) 
         df["currency"] = df["Pos ID"].astype(str).str.extract(r'(GBP|USD|EUR|TRY|CAD)')
         df["amount"] = pd.to_numeric(df["Trans Amount(HUC)"], errors='coerce').abs()
         df["date"] = df["Transaction Date"]
-        df["tp"] = df["Sales Details"].astype(str).apply(
-            lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
+        df["tp"] = df["Sales Details"].astype(str).apply(lambda x: re.search(r'BGP(\d{6,8})6', x).group(1) if re.search(r'BGP(\d{6,8})6', x) else None)
         df['last_4cc'] = df['Online Token'].astype(str).str[-4:]
         df['processor_name'] = processor
         df['first_name'] = ''
         df['last_name'] = ''
         df['email'] = ''
-        keep_cols = ["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name",
-                     "tp"]
+        keep_cols = ["amount", "currency", "date", "last_4cc", "email", "first_name", "last_name", "processor_name", "tp"]
         df = df[keep_cols]
+        if 'date' in df.columns:
+            df['date'] = df['date'].apply(standardize_to_safecharge_date)  # NO flip
         return df
 
     return pd.DataFrame()

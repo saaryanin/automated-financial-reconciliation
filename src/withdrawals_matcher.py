@@ -2046,7 +2046,7 @@ class ReconciliationEngine:
         if not candidates:
             return None, {'failure_reason': f'No matching last4 {crm_last4} found'}
 
-        # Pick the one with smallest amount difference (in case of duplicates)
+        # Pick the one with the smallest amount difference (in case of duplicates)
         candidates.sort(key=lambda x: x['amount_diff'])
         best = candidates[0]
 

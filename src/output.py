@@ -255,12 +255,13 @@ def generate_unmatched_proc_deposits(date_str, lists_dir, regulation):
     )
     df['proc_amount'] = df['proc_amount'].apply(clean_value)
     df['proc_amount'] = pd.to_numeric(df['proc_amount'], errors='coerce')
-    # Filter unmatched processor deposits: match_status == 0 and crm_date is NaN (indicating processor unmatched)
+    # Filter unmatched processor deposits: match_status == 0 and crm_date is NaN
     unmatched_proc = df[(df['match_status'] == 0) & (df['crm_date'].isna())]
-    unmatched_proc = unmatched_proc.copy()  # Fix SettingWithCopyWarning
+    unmatched_proc = unmatched_proc.copy()
     if unmatched_proc.empty:
         print(f"No unmatched processor deposits found for {date_str}, skipping file creation.")
         return None
+
     # Clean processor columns
     columns_to_clean = [
         'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_tp', 'proc_amount', 'proc_currency',
@@ -269,24 +270,24 @@ def generate_unmatched_proc_deposits(date_str, lists_dir, regulation):
     for col in columns_to_clean:
         if col in unmatched_proc.columns:
             unmatched_proc.loc[:, col] = unmatched_proc[col].apply(clean_value)
-    # Correct ambiguous date parses for powercash/shift4
-    unmatched_proc['proc_date'] = unmatched_proc.apply(
-        lambda row: correct_proc_date(row['proc_date'], row['proc_processor_name']), axis=1
-    )
-    # Format proc_date
+    # Format proc_date (dates now come pre-fixed from matching files — no flipping)
     unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(lambda x: format_date(x, is_proc=True))
+
     # Ensure proc_transaction_id and proc_last4 are strings and pad
     unmatched_proc['proc_transaction_id'] = unmatched_proc['proc_transaction_id'].astype(str)
     pad_last4(unmatched_proc, 'proc_last4')
-    # Manually add crm_type as 'Deposit' since it doesn't exist for processor rows
+
+    # Manually add crm_type as 'Deposit'
     unmatched_proc['crm_type'] = 'Deposit'
-    # Select specified columns in order
+
+    # Select columns
     columns = [
         'crm_type', 'proc_date', 'proc_firstname', 'proc_lastname', 'proc_email', 'proc_amount', 'proc_currency',
         'proc_tp', 'proc_processor_name', 'proc_last4', 'proc_transaction_id'
     ]
     unmatched_proc = unmatched_proc[columns]
-    # Rename columns
+
+    # FULL rename_dict (this was the broken placeholder)
     rename_dict = {
         'crm_type': 'Type',
         'proc_date': 'Date',
@@ -301,6 +302,7 @@ def generate_unmatched_proc_deposits(date_str, lists_dir, regulation):
         'proc_transaction_id': 'Transaction ID'
     }
     unmatched_proc.rename(columns=rename_dict, inplace=True)
+
     # Sort by Date from newest to oldest
     unmatched_proc['Date'] = pd.to_datetime(unmatched_proc['Date'], errors='coerce')
     unmatched_proc = unmatched_proc.sort_values(by='Date', ascending=False)
@@ -387,31 +389,6 @@ def format_date(val, is_proc=False):
     if time_part:
         new_date_str += f" {time_part}"
     return new_date_str
-
-
-def correct_proc_date(date_val, processor_name):
-    """
-    Correct ambiguous date parses for specific processors (powercash/shift4).
-    - Swaps month/day if likely misparsed.
-    """
-    if pd.isna(date_val) or processor_name not in ['powercash', 'shift4']:
-        return date_val
-    date_str = str(date_val).strip()
-    if not re.match(r'\d{4}-\d{2}-\d{2}', date_str.split()[0]):
-        return date_str  # Not in expected YYYY-MM-DD format, skip
-    try:
-        parts = date_str.split()
-        date_part = parts[0]
-        time_part = ' '.join(parts[1:]) if len(parts) > 1 else ''
-        y, m, d = map(int, date_part.split('-'))
-        if 1 <= m <= 12 and 1 <= d <= 12 and m > d:
-            # Swap for likely misparsed DD/MM as MM/DD where first num > second
-            m, d = d, m
-        new_date_part = f"{y:04d}-{m:02d}-{d:02d}"
-        return f"{new_date_part} {time_part}"
-    except:
-        return date_str
-
 
 def process_comment(comment):
     """
@@ -729,10 +706,6 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
             is_email = 'email' in col.lower()  # Set is_email=True for email columns to convert NaN to ''
             unmatched_proc.loc[:, col] = unmatched_proc[col].apply(lambda x: clean_value(x, is_email=is_email))
     unmatched_proc['proc_amount'] = pd.to_numeric(unmatched_proc['proc_amount'], errors='coerce')
-    # Correct ambiguous date parses for powercash/shift4
-    unmatched_proc['proc_date'] = unmatched_proc.apply(
-        lambda row: correct_proc_date(row['proc_date'], row['proc_processor_name']), axis=1
-    )
     # Format proc_date
     unmatched_proc.loc[:, 'proc_date'] = unmatched_proc['proc_date'].apply(lambda x: format_date(x, is_proc=True))
     # Make amounts negative
@@ -1438,11 +1411,20 @@ def main(date_str):
                 if declined_path.exists():
                     print(f"Found {declined_path} - loading...")
                     declined_raw = pd.read_excel(declined_path)
-                    print(f"Loaded raw declined rows: {len(declined_raw)}")  # Debug: raw count
+                    print(f"Loaded raw declined rows: {len(declined_raw)}")
+
                     declined_temp = declined_raw.copy()
                     declined_temp['amount'] = pd.to_numeric(declined_temp['amount'], errors='coerce')
                     declined_temp['amount'] = declined_temp['amount'].apply(lambda x: -abs(x) if pd.notna(x) else x)
-                    declined_temp['date'] = declined_temp['date'].apply(lambda x: format_date(x, is_proc=True))
+
+                    # FIXED FOR BARCLAYS DECLINED (exactly as you requested)
+                    # Input: 2026-03-06 16:26:28  →  Output: 3/6/2026 4:26:28 PM
+                    # Keeps original time, no midnight, same format as all other PSP rows
+                    declined_temp['date'] = pd.to_datetime(declined_temp['date'], errors='coerce')
+                    declined_temp['date'] = declined_temp['date'].apply(
+                        lambda x: format_date(x, is_proc=True) if pd.notna(x) else x
+                    )
+
                     pad_last4(declined_temp, 'last_4cc')
                     declined_temp = declined_temp.rename(columns={
                         'date': 'Date',
@@ -1456,42 +1438,35 @@ def main(date_str):
                         'last_4cc': 'Last 4 Digits'
                     })
                     declined_temp['Type'] = 'Withdrawal'
-                    declined_temp['Processor Name'] = 'Barclays'  # Standardize name
+                    declined_temp['Processor Name'] = 'Barclays'
                     declined_temp['Comment'] = 'Withdrawal Declined'
                     declined_temp = declined_temp[[
                         'Type', 'Date', 'First Name', 'Last Name', 'Email',
                         'Amount', 'Currency', 'TP', 'Processor Name', 'Last 4 Digits', 'Comment'
                     ]]
                     declined_dfs.append(declined_temp)
-                    print(
-                        f"Appended processed declined for {folder}: {len(declined_temp)} rows")  # Debug: processed count
+                    print(f"Appended processed declined for {folder}: {len(declined_temp)} rows")
                 else:
                     print(f"No file at {declined_path}")
+
             if declined_dfs:
                 declined_df = pd.concat(declined_dfs, ignore_index=True)
                 declined_df['Date'] = pd.to_datetime(declined_df['Date'], errors='coerce')
                 declined_df = declined_df.sort_values(by='Date', ascending=False)
                 print(f"Loaded and prepared Barclays Declined WDs: {len(declined_df)} rows")
-                # Append to proc_wds_df
+
                 if proc_wds_df is not None and not proc_wds_df.empty:
                     proc_wds_df['Date'] = pd.to_datetime(proc_wds_df['Date'], errors='coerce')
                     proc_wds_df = proc_wds_df.sort_values(by='Date', ascending=False)
-                    print(f"Pre-append: proc_wds_df rows = {len(proc_wds_df)}")  # Debug: before concat
-                    print(proc_wds_df.tail(3))  # Debug: sample last normals
                 else:
-                    print("proc_wds_df is empty or None before append")  # Debug
-                    proc_wds_df = pd.DataFrame()  # Init empty if None
+                    proc_wds_df = pd.DataFrame()
                 proc_wds_df = pd.concat([proc_wds_df, declined_df], ignore_index=True)
-                print(f"Post-append: proc_wds_df rows = {len(proc_wds_df)}")  # Debug: after concat
-                print(proc_wds_df.tail(3))  # Debug: confirm declined appended
-                # Force declined last (even if dates overlap)
+
+                # Force declined rows to the very end
                 proc_wds_df['Date'] = pd.to_datetime(proc_wds_df['Date'], errors='coerce')
                 proc_wds_df['is_declined'] = np.where(proc_wds_df['Comment'] == 'Withdrawal Declined', 1, 0)
-                proc_wds_df = proc_wds_df.sort_values(by=['is_declined', 'Date'], ascending=[False,
-                                                                                             False])  # Declined last, then date desc within groups
+                proc_wds_df = proc_wds_df.sort_values(by=['is_declined', 'Date'], ascending=[False, False])
                 proc_wds_df = proc_wds_df.drop(columns=['is_declined'])
-                print(f"Final proc_wds_df after sort: {len(proc_wds_df)} rows")  # Debug: final count
-                print(proc_wds_df.tail(3))  # Debug: confirm declined now last
             else:
                 print("No Barclays declined withdrawals file found; skipping tab.")
         deps_df = generate_matched_deposits(

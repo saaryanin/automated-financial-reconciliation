@@ -12,9 +12,10 @@ Key Features:
 - Date management: Defaults to previous business day (skipping weekends), uses QCalendarWidget for selection with layout adjustments for 6-row months, positions popup relative to screen boundaries.
 - Rate inputs: Handles USD to EUR/GBP/MYR/CNY with placeholders, auto-updates reciprocal labels, calculates EUR/GBP from USD rates if available, includes reciprocals in saved data.
 - Processing initiation: Validates attachments and rates, clears regulation-specific directories (output, lists, processed crm/processors) for ROW and UK using setup_dirs_for_reg, copies rates CSV to both regulations' rates_dir, opens SecondWindow with selected date.
+- Startup cleanup: On every program launch, completely clears ALL files inside the four raw input folders (ROW/data/crm_reports, ROW/data/processor_reports, UK/data/crm_reports, UK/data/processor_reports) to prevent any data leaks from previous dates/runs.
+- Full xbo support (ROW regulation): filename format xbo_YYYY-MM-DD. Added to detection logic and row_processors list so the program works whether you attach the xbo file or not (fixes "processor_names must match length of file_paths" error when switching between dates with different file sets).
 - Reset functionality: Clears inputs, attachments, and raw directory files, resets UI.
-- Edge cases: Handles invalid dates with warnings, unrecognized files by resetting attachments, duplicate drops/selections with messages, stylesheet for disabled buttons and focus effects, logging for debug (e.g., drag events, window transitions).
-- Processor lists: Defines ROW-specific (e.g., paypal, safecharge) and UK-specific (e.g., safechargeuk, barclays, barclaycard) processors for directory clearing.
+- Edge cases: Handles invalid dates with warnings, unrecognized files by resetting attachments, duplicate drops/selections with messages, stylesheet for disabled buttons and focus effects, logging for debug.
 
 Dependencies:
 - os (for path operations)
@@ -114,6 +115,36 @@ class ReconciliationWindow(QWidget):
         self.moved_files = set()  # Track moved file names to avoid duplicates
         self.initUI()
 
+        # NEW: Clear ALL files in the four raw input folders on every program launch
+        # (prevents data leaks from previous dates and guarantees clean ROW/UK separation under temp/)
+        self._clear_raw_input_folders()
+
+    def _clear_raw_input_folders(self):
+        """Clear ALL files in the raw input folders (crm_reports + processor_reports)
+        for BOTH ROW and UK on every startup. This runs before any GUI interaction
+        or file attachment to ensure zero data leaks from previous runs/dates."""
+        print("=== STARTUP CLEANUP: Clearing raw input folders for ROW + UK ===")
+        for reg in ['row', 'uk']:
+            try:
+                dirs = setup_dirs_for_reg(reg, create=True)
+                for key in ['crm_dir', 'processor_dir']:
+                    folder = dirs.get(key)
+                    if folder and folder.exists():
+                        removed = 0
+                        for file in folder.glob("*"):
+                            if file.is_file() and file.name != ".gitkeep":
+                                try:
+                                    file.unlink()
+                                    removed += 1
+                                except Exception as e:
+                                    print(f"  Warning: Could not delete {file.name} in {reg.upper()}/{folder.name}: {e}")
+                        print(f"  ✓ Cleared {removed} files from {reg.upper()}/{folder.name}")
+                    else:
+                        print(f"  {reg.upper()}/{key} not found (will be created later)")
+            except Exception as e:
+                print(f"  Error during {reg.upper()} cleanup: {e}")
+        print("=== RAW INPUT FOLDERS FULLY CLEARED - READY FOR NEW RUN ===\n")
+
     def _detect_processor(self, filename):
         """Detect processor name from filename based on keywords."""
         filename_lower = filename.lower()
@@ -123,7 +154,8 @@ class ReconciliationWindow(QWidget):
             return "powercash"
         processors = [
             "safecharge", "safechargeuk", "bitpay", "ezeebill", "paypal", "zotapay", "paymentasia", "powercash",
-            "trustpayments", "paysafe", "skrill", "neteller", "shift4", "barclays", "barclaycard"
+            "trustpayments", "paysafe", "skrill", "neteller", "shift4", "barclays", "barclaycard",
+            "xbo"   # ← NEW: full xbo support (ROW)
         ]
         for processor in processors:
             if processor in filename_lower:
@@ -598,7 +630,8 @@ class ReconciliationWindow(QWidget):
         selected_date = QDate.fromString(self.date_lineedit.text(), "dd/MM/yyyy").toString("yyyy-MM-dd")
         row_processors = [
             'paypal', 'safecharge', 'powercash', 'shift4', 'skrill', 'neteller',
-            'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay'
+            'trustpayments', 'zotapay', 'bitpay', 'ezeebill', 'paymentasia', 'bridgerpay',
+            'xbo'   # ← NEW: xbo is now fully supported
         ]
         uk_processors = [
             'safechargeuk', 'barclays', 'barclaycard'
@@ -624,7 +657,6 @@ class ReconciliationWindow(QWidget):
         if usd_eur > 0 and usd_gbp > 0:
             eur_gbp = usd_gbp / usd_eur
             rates_data.append(['EUR', 'GBP', eur_gbp])
-            # The reciprocal GBP/EUR will be added in the existing logic if not present
 
         if rates_data:
             df = pd.DataFrame(rates_data, columns=['from_currency', 'to_currency', 'rate'])
@@ -768,8 +800,8 @@ class ReconciliationWindow(QWidget):
         print("Debug: SecondWindow shown")
         self.close()
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = ReconciliationWindow()
     window.show()

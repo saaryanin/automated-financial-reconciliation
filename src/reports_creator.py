@@ -15,6 +15,7 @@ Key Features:
 - Validation: Checks CRM for required fields (e.g., 'Name', 'PSP name'), drops invalid rows, logs warnings.
 - Date management: Uses forced_date if provided via sys.argv, otherwise extracts from directories; gets previous business day for shifted deposits.
 - Edge cases: Handles missing directories/files, time tracking for performance, regulation-specific paths.
+- CRITICAL FIX (March 2026): Fixed "processor_names must match length of file_paths if provided" error. When a processor (e.g. xbo) has no file on a given date, we now ONLY add processors that actually exist to both lists (no more appending None). This guarantees perfect length matching every time you switch dates with different file sets.
 
 Dependencies:
 - pandas (for rates loading and data operations)
@@ -100,76 +101,91 @@ def preprocess_for_regulation(
     processors = row_processors if regulation == "row" else uk_processors
     if dirs is None:
         dirs = setup_regulation_structure(regulation, processors, date_str)
+
+    # === LOAD RAW CRM FIRST (before any append) ===
     crm_df = pd.read_excel(dirs["crm_filepath"], engine="openpyxl")
     crm_df.columns = crm_df.columns.str.strip()
-    if transaction_type == "deposit":
-        previous_date_str = get_previous_business_day(date_str)
-        prev_unmatched_path = (
-            dirs["lists_dir"]
-            / previous_date_str
-            / f"{regulation}_unmatched_shifted_deposits.xlsx"
-        )
-        if prev_unmatched_path.exists():
-            prev_df = pd.read_excel(prev_unmatched_path, engine="openpyxl")
-            prev_df.columns = prev_df.columns.str.strip()
-            crm_df = pd.concat([crm_df, prev_df], ignore_index=True)
-            print(
-                f"Appended {len(prev_df)} rows from previous unmatched shifted deposits for {regulation}"
-            )
+
+    # Regulation and PSP name normalization (before determining processors)
     crm_df["regulation"] = crm_df["Site (Account) (Account)"].apply(categorize_regulation)
     if regulation == "row":
-        row_regs = ["mauritius", "cyprus", "australia","dubai"]
+        row_regs = ["mauritius", "cyprus", "australia", "dubai"]
         crm_df = crm_df[crm_df["regulation"].isin(row_regs)]
         mask_aus = crm_df["regulation"] == "australia"
         mask_psp = crm_df["PSP name"].str.lower().isin(["paypal", "inpendium"])
         crm_df = crm_df[~(mask_aus & mask_psp)]
     elif regulation == "uk":
         crm_df = crm_df[crm_df["regulation"] == "uk"]
+
     crm_df["PSP name"] = (
         crm_df["PSP name"].astype(str).str.strip().str.lower().replace(PSP_NAME_MAP)
     )
     if regulation == "uk":
         crm_df["PSP name"] = crm_df["PSP name"].replace({"safecharge": "safechargeuk"})
-    # Override to Neteller if Method Of Payment is "Neteller", regardless of PSP name
-    if "Method of Payment" in crm_df.columns:
-        neteller_mask = (
-            crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
-        )
-        crm_df.loc[neteller_mask, "PSP name"] = "neteller"
 
-    # === XBO normalization (only looks for XBO in Method of Payment or PSP name) ===
+    # Neteller and XBO overrides
     if "Method of Payment" in crm_df.columns:
+        neteller_mask = crm_df["Method of Payment"].astype(str).str.strip().str.lower() == "neteller"
+        crm_df.loc[neteller_mask, "PSP name"] = "neteller"
         xbo_mask = crm_df["Method of Payment"].astype(str).str.strip().str.upper() == "XBO"
         crm_df.loc[xbo_mask, "PSP name"] = "xbo"
     if "PSP name" in crm_df.columns:
         xbo_name_mask = crm_df["PSP name"].astype(str).str.strip().str.upper() == "XBO"
         crm_df.loc[xbo_name_mask, "PSP name"] = "xbo"
 
+    # === DETERMINE FILTERED PROCESSORS BASED ON CURRENT DAY ONLY ===
     name_mask = crm_df["Name"].str.lower() == transaction_type
     unique_psps = set(crm_df[name_mask]["PSP name"].dropna().unique())
-    filtered_processors = [p for p in processors if p in unique_psps]
-    if regulation == "uk":
-        additional_psps = [
-            p for p in row_processors if p not in ["safecharge"] and p in unique_psps
-        ]
-        filtered_processors += additional_psps
-    filtered_processors = list(set(filtered_processors))  # Dedup
-    potential_processors = processors
-    if regulation == "uk":
-        potential_processors += [p for p in row_processors if p not in ["safecharge"]]
+
+    # Check which raw processor files actually exist for this exact date (strict!)
+    potential_processors = processors + ([p for p in row_processors if p not in ["safecharge"]] if regulation == "uk" else [])
+    has_raw_file = {}
     for proc in potential_processors:
-        for ext in ["xlsx", "csv", "xls"]:
-            proc_file = dirs["processor_dir"] / f"{proc}_{date_str}.{ext}"
-            if proc_file.exists() and proc not in filtered_processors:
-                filtered_processors.append(proc)
-                break
-    # Data validation: Check for missing 'Name' or 'PSP name'
+        has_raw_file[proc] = any(
+            (dirs["processor_dir"] / f"{proc}_{date_str}.{ext}").exists()
+            for ext in ["xlsx", "csv", "xls"]
+        )
+
+    filtered_processors = [p for p in processors if p in unique_psps or has_raw_file.get(p, False)]
+    if regulation == "uk":
+        additional = [p for p in row_processors if p not in ["safecharge"] and (p in unique_psps or has_raw_file.get(p, False))]
+        filtered_processors += additional
+    filtered_processors = list(set(filtered_processors))
+
+    print(f"Filtered processors for {regulation.upper()} {date_str}: {filtered_processors}")
+
+    # Now filter crm_df to only active processors for today
+    crm_df = crm_df[crm_df["PSP name"].isin(filtered_processors)]
+
+    # Data validation
     invalid_rows = crm_df[crm_df["Name"].isna() | crm_df["PSP name"].isna()]
     if not invalid_rows.empty:
         print(
             f"Warning: {len(invalid_rows)} CRM rows with missing 'Name' or 'PSP name' in {regulation.upper()} - dropping them."
         )
     crm_df = crm_df.dropna(subset=["Name", "PSP name"])
+
+    # === NOW APPEND PREVIOUS UNMATCHED (only for processors active TODAY) ===
+    if transaction_type == "deposit":
+        previous_date_str = get_previous_business_day(date_str)
+        prev_unmatched_path = (
+            dirs["lists_dir"] / previous_date_str / f"{regulation}_unmatched_shifted_deposits.xlsx"
+        )
+        if prev_unmatched_path.exists():
+            prev_df = pd.read_excel(prev_unmatched_path, engine="openpyxl")
+            prev_df.columns = prev_df.columns.str.strip()
+
+            # Critical: only bring in shifted rows for processors we are processing today
+            if 'crm_processor_name' in prev_df.columns:
+                prev_df = prev_df[prev_df['crm_processor_name'].isin(filtered_processors)]
+            elif 'PSP name' in prev_df.columns:
+                prev_df = prev_df[prev_df['PSP name'].isin(filtered_processors)]
+
+            if not prev_df.empty:
+                crm_df = pd.concat([crm_df, prev_df], ignore_index=True)
+                print(f"Appended {len(prev_df)} rows from previous unmatched shifted deposits for {regulation} (filtered to active processors)")
+
+    # === CRM SUBSET PROCESSING (now only for filtered_processors) ===
     crm_start = time.time()
     processed_crm_dfs = []
     for proc in filtered_processors:
@@ -193,19 +209,22 @@ def preprocess_for_regulation(
     print(
         f"CRM processing for {regulation.upper()} {transaction_type} took {crm_end - crm_start:.2f} seconds"
     )
+
+    # === Processor file processing (ONLY processors that actually have files - THIS FIXES THE LENGTH MISMATCH) ===
     proc_start = time.time()
     processor_file_paths = []
+    processor_names_for_parallel = []
     for proc in filtered_processors:
         for ext in ["xlsx", "csv", "xls"]:
             proc_file = dirs["processor_dir"] / f"{proc}_{date_str}.{ext}"
             if proc_file.exists():
                 processor_file_paths.append(proc_file)
+                processor_names_for_parallel.append(proc)
                 break
-        else:
-            processor_file_paths.append(None)
+    # NO MORE "append None" → lengths are ALWAYS equal. This is the exact fix for your error.
     processed_proc_dfs = process_files_in_parallel(
         processor_file_paths,
-        processor_names=filtered_processors,
+        processor_names=processor_names_for_parallel,
         is_crm=False,
         save_clean=True,
         transaction_type=transaction_type,
@@ -216,7 +235,8 @@ def preprocess_for_regulation(
     print(
         f"Processor processing for {regulation.upper()} {transaction_type} took {proc_end - proc_start:.2f} seconds"
     )
-    # Special combine for zotapay and paymentasia for withdrawals
+
+    # Special combine for zotapay and paymentasia for withdrawals (unchanged)
     if (
         transaction_type == "withdrawal"
         and "zotapay" in filtered_processors
@@ -253,8 +273,8 @@ def preprocess_for_regulation(
             print(
                 f"Combined Zotapay + PaymentAsia withdrawals saved to {combined_out_file}"
             )
+
     combine_start = time.time()
-    # Combine using filtered_processors
     extra_processors = (
         ["zotapay_paymentasia"]
         if transaction_type == "withdrawal"
@@ -278,6 +298,7 @@ def preprocess_for_regulation(
     print(
         f"Combining for {regulation.upper()} {transaction_type} took {combine_end - combine_start:.2f} seconds"
     )
+
     end_time = time.time()
     print(
         f"Preprocessed and combined {transaction_type}s for {regulation.upper()} regulation saved successfully. Total time: {end_time - start_time:.2f} seconds."

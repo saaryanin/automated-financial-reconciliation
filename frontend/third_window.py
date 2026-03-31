@@ -906,10 +906,17 @@ class ThirdWindow(QWidget):
                     matching_df.at[crm_orig, col] = psp_row[col]
 
             crm_amount = matching_df.at[crm_orig, 'crm_amount']
-            proc_amount_crm_currency = matching_df.at[crm_orig, 'proc_amount_crm_currency']
             proc_amount = matching_df.at[crm_orig, 'proc_amount']
             proc_currency = matching_df.at[crm_orig, 'proc_currency']
             crm_currency = matching_df.at[crm_orig, 'crm_currency']
+
+            # Unmatched PSP rows have NaN proc_amount_crm_currency; fill for same-currency pairs
+            if (pd.isna(matching_df.at[crm_orig, 'proc_amount_crm_currency']) and
+                    pd.notna(proc_amount) and pd.notna(crm_currency) and pd.notna(proc_currency) and
+                    str(crm_currency).upper() == str(proc_currency).upper()):
+                matching_df.at[crm_orig, 'proc_amount_crm_currency'] = abs(proc_amount)
+
+            proc_amount_crm_currency = matching_df.at[crm_orig, 'proc_amount_crm_currency']
 
             if (pd.notna(crm_amount) and pd.notna(proc_amount_crm_currency) and
                     abs(abs(crm_amount) - abs(proc_amount_crm_currency)) > 0.01):

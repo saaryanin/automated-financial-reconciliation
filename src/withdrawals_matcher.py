@@ -320,6 +320,7 @@ class ReconciliationEngine:
         proc_amount = abs(proc_row.get('proc_amount'))
         proc_currency = proc_row.get('proc_currency')
         proc_email = safe_lower_strip(proc_row.get('proc_email'))
+        proc_email = re.sub(r"^\[\'|\'\]$|\[|\]|'|\"", "", proc_email).strip()
         proc_last4 = str(proc_row.get('proc_last4') or '').strip()
         proc_tp = str(proc_row.get('proc_tp') or '').strip()
         crm_amount = abs(crm_row.get('crm_amount'))
@@ -331,9 +332,10 @@ class ReconciliationEngine:
         proc_amount_conv, rate = self.convert_amount(proc_amount, proc_currency, crm_currency)
         if proc_amount_conv is None:
             return None
-        accept_abs_tol = 0.1
         accept_rel_tol = proc_config.tolerance * crm_amount * 2
-        accept_tol = max(accept_abs_tol, 500) if proc_currency == crm_currency else max(accept_rel_tol, 500)
+        # Same currency: never reject on amount — payment_status handles the diff with Underpaid/Overpaid comment.
+        # Different currencies: use relative tolerance (large exchange-rate swings can cause big nominal diffs).
+        accept_tol = float('inf') if proc_currency == crm_currency else max(accept_rel_tol, 500)
         diff = abs(proc_amount_conv - crm_amount)
         if diff > accept_tol:
             return None

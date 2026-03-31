@@ -1,23 +1,66 @@
-# Ignore venv and Python cache
+# Virtual Environments
+.venv/
 venv/
-__pycache__/
-*.pyc
-*.pyo
-*.log
+ENV/
+env/
 
-# Ignore data and output folders completely
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+# Usually these files are written by a python script from a template
+# before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.spec
+ReconciliationSystem.spec
+
+# PyCharm / JetBrains
+.idea/
+*.iml
+*.iws
+/out/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Data and output folders (good that you have this)
 data/
 output/
 
-# Ignore PyInstaller build artifacts
-build/
-dist/
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# Ignore all files inside temp/, but not the folders themselves or .gitkeep files
-temp/**
-!temp/
-!temp/**/
-!temp/**/.gitkeep
-
-# Ignore the word file of the Manual Guide
+# Manual Guide (both versions)
+Manual Guide.pdf
 Manual Guide.docx
+
+# Tests data (if you don't want to commit test CSV files)
+tests/*.csv

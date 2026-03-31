@@ -95,7 +95,7 @@ uk_processors = ["safechargeuk", "barclays", "barclaycard"]
 
 
 def preprocess_for_regulation(
-    regulation, transaction_type="deposit", dirs=None, date_str=None
+    regulation, transaction_type="deposit", dirs=None, date_str=None, raw_crm_df=None
 ):
     start_time = time.time()
     processors = row_processors if regulation == "row" else uk_processors
@@ -103,8 +103,11 @@ def preprocess_for_regulation(
         dirs = setup_regulation_structure(regulation, processors, date_str)
 
     # === LOAD RAW CRM FIRST (before any append) ===
-    crm_df = pd.read_excel(dirs["crm_filepath"], engine="openpyxl")
-    crm_df.columns = crm_df.columns.str.strip()
+    if raw_crm_df is not None:
+        crm_df = raw_crm_df.copy()
+    else:
+        crm_df = pd.read_excel(dirs["crm_filepath"], engine="openpyxl")
+        crm_df.columns = crm_df.columns.str.strip()
 
     # Regulation and PSP name normalization (before determining processors)
     crm_df["regulation"] = crm_df["Site (Account) (Account)"].apply(categorize_regulation)
@@ -334,8 +337,11 @@ def main(date_str):
     for reg in ["row", "uk"]:
         processors = row_processors if reg == "row" else uk_processors
         dirs = setup_regulation_structure(reg, processors, date_str)
-        preprocess_for_regulation(reg, "deposit", dirs=dirs, date_str=date_str)
-        preprocess_for_regulation(reg, "withdrawal", dirs=dirs, date_str=date_str)
+        # Load CRM file once and reuse for both deposit and withdrawal passes
+        raw_crm_df = pd.read_excel(dirs["crm_filepath"], engine="openpyxl")
+        raw_crm_df.columns = raw_crm_df.columns.str.strip()
+        preprocess_for_regulation(reg, "deposit", dirs=dirs, date_str=date_str, raw_crm_df=raw_crm_df)
+        preprocess_for_regulation(reg, "withdrawal", dirs=dirs, date_str=date_str, raw_crm_df=raw_crm_df)
     overall_end = time.time()
     print(f"Overall processing time: {overall_end - overall_start:.2f} seconds")
     match_deposits_for_date(date_str)

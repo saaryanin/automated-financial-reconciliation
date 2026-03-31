@@ -143,7 +143,7 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
             "Gross", "Fee", "Net", "From Email Address", "To Email Address", "Transaction ID"
         ]
         df = df[keep_cols]
-        allowed_types = ["Express Checkout Payment"]
+        allowed_types = ["Express Checkout Payment", "Mobile Payment"]
         df = df[(df["Status"] == "Completed") & (df["Type"].isin(allowed_types))]
         if df.empty:
             return df
@@ -383,10 +383,9 @@ def standardize_processor_columns_deposits(df: pd.DataFrame, processor: str) -> 
                      "first_name", "last_name", "processor_name", "last_4digits"]
         df = df[[col for col in keep_cols if col in df.columns]]
 
-        # === XBO FINAL FLIP FIX (parses correctly then swaps day/month exactly as you requested) ===
+        # XBO uses ISO 8601 format (e.g. 2026-03-30T23:38:17+00:00) — parse directly, no swap needed
         if 'date' in df.columns:
-            dt = pd.to_datetime(df['date'], errors='coerce', dayfirst=True)
-            df['date'] = dt.apply(lambda x: x.replace(month=x.day, day=x.month) if pd.notna(x) else x)
+            df['date'] = pd.to_datetime(df['date'], errors='coerce', utc=True).dt.tz_localize(None)
             df['date'] = df['date'].dt.strftime('%Y-%m-%d %H:%M:%S')
         return df
 
@@ -1493,6 +1492,11 @@ def combine_processed_files(
                 df_cancels = df_cancels[~(mask_aus & mask_psp)]
                 mask_can = df_cancels['regulation'] == 'canada'
                 df_cancels = df_cancels[~mask_can]
+                # Exclude all Inpendium cancellations regardless of regulation
+                inpendium_mask = df_cancels["PSP name"].astype(str).str.lower().str.strip() == 'inpendium'
+                if 'Internal Comment' in df_cancels.columns:
+                    inpendium_mask |= df_cancels['Internal Comment'].astype(str).str.lower().str.contains('inpendium', na=False)
+                df_cancels = df_cancels[~inpendium_mask]
                 if "Currency" in df_cancels.columns:
                     df_cancels["Currency"] = df_cancels["Currency"].replace({
                         "Euro": "EUR",

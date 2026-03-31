@@ -40,9 +40,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
 from src.shifts_handler import main as handle_shifts, get_cutoff_time
+from src.utils import get_previous_business_day
 from collections import OrderedDict
 import ast
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import src.config as config
@@ -258,6 +259,18 @@ def generate_unmatched_proc_deposits(date_str, lists_dir, regulation):
     # Filter unmatched processor deposits: match_status == 0 and crm_date is NaN
     unmatched_proc = df[(df['match_status'] == 0) & (df['crm_date'].isna())]
     unmatched_proc = unmatched_proc.copy()
+    # Only keep PSP rows whose proc_date falls within the reconciliation window.
+    # Window = (previous business day + 1 day) → date_str, so:
+    #   Monday run for Friday  → window is Friday only
+    #   Tuesday run for Monday → window is Saturday + Sunday + Monday
+    if not unmatched_proc.empty and 'proc_date' in unmatched_proc.columns:
+        prev_biz = pd.to_datetime(get_previous_business_day(date_str)).date()
+        window_start = prev_biz + timedelta(days=1)
+        window_end = pd.to_datetime(date_str).date()
+        parsed_proc_date = pd.to_datetime(unmatched_proc['proc_date'], errors='coerce', dayfirst=True)
+        unmatched_proc = unmatched_proc[
+            parsed_proc_date.dt.date.between(window_start, window_end) | parsed_proc_date.isna()
+        ]
     if unmatched_proc.empty:
         print(f"No unmatched processor deposits found for {date_str}, skipping file creation.")
         return None
@@ -674,6 +687,18 @@ def generate_unmatched_proc_withdrawals(date_str, lists_dir, output_dir, regulat
         df['comment'].str.contains("No matching CRM row found|Unmatched due to warning|\\[unmatched_warning\\]",
                                    na=False)
     )]
+    # Only keep PSP rows whose proc_date falls within the reconciliation window.
+    # Window = (previous business day + 1 day) → date_str, so:
+    #   Monday run for Friday  → window is Friday only
+    #   Tuesday run for Monday → window is Saturday + Sunday + Monday
+    if not unmatched_proc.empty and 'proc_date' in unmatched_proc.columns:
+        prev_biz = pd.to_datetime(get_previous_business_day(date_str)).date()
+        window_start = prev_biz + timedelta(days=1)
+        window_end = pd.to_datetime(date_str).date()
+        parsed_proc_date = pd.to_datetime(unmatched_proc['proc_date'], errors='coerce', dayfirst=True)
+        unmatched_proc = unmatched_proc[
+            parsed_proc_date.dt.date.between(window_start, window_end) | parsed_proc_date.isna()
+        ]
 
     print(f"DEBUG OUTPUT: Rows after match_status==0 and comment filter: {len(unmatched_proc)}")
     print(f"DEBUG OUTPUT: Number of rows with proc_email not NaN: {unmatched_proc['proc_email'].notna().sum()}")

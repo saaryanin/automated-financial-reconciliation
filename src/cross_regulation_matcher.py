@@ -142,14 +142,6 @@ def _cross_match_one_way(
     )
     processor_df = processor_df.dropna(subset=["proc_amount"])
     processor_df["proc_last4"] = processor_df["proc_last4"].apply(clean_last4)
-    print("After clean, proc_last4 unique: " + str(processor_df["proc_last4"].unique()))
-    print("Proc proc_last4 dtypes: " + str(processor_df["proc_last4"].dtype))
-    last4_map = processor_df.groupby("proc_last4").indices
-    print("Last4 map keys: " + str(list(last4_map.keys())))
-    print("Last4 map has '0824': " + str("0824" in last4_map))
-    print("Last4 map '0824' indices: " + str(last4_map.get("0824", [])))
-    print("Last4 map has '0476': " + str("0476" in last4_map))
-    print("Last4 map '0476' indices: " + str(last4_map.get("0476", [])))
 
     # Prepare crm_df
     crm_df = crm_pool.copy()
@@ -158,23 +150,9 @@ def _cross_match_one_way(
     crm_df = crm_df.drop_duplicates(
         subset=["crm_email", "crm_last4", "crm_amount", "crm_currency", "crm_date"]
     )
-    print(f"After dedup, CRM rows: {len(crm_df)}")
     crm_df["crm_last4"] = crm_df["crm_last4"].apply(clean_last4)
-    print("After clean, crm_last4 unique: " + str(crm_df["crm_last4"].unique()))
 
-    print(f"Cross direction: {crm_reg.upper()} CRM to {proc_reg.upper()} PROC")
-    print(
-        "Proc pool proc_processor_name unique:",
-        proc_pool["proc_processor_name"].unique(),
-    )
-    print("Proc pool proc_last4 unique:", proc_pool["proc_last4"].unique())
-    print("Proc pool proc_email unique:", proc_pool["proc_email"].unique())
-    print(
-        "CRM pool crm_processor_name unique:",
-        crm_pool["crm_processor_name"].unique(),
-    )
-    print("CRM pool crm_last4 unique:", crm_pool["crm_last4"].unique())
-    print("CRM pool crm_email unique:", crm_pool["crm_email"].unique())
+    print(f"Cross direction: {crm_reg.upper()} CRM ({len(crm_df)} rows) to {proc_reg.upper()} PROC ({len(processor_df)} rows)")
 
     # The engine expects the same column names it works with internally
     engine = ReconciliationEngine(
@@ -208,15 +186,8 @@ def _cross_match_one_way(
         add_unmatched_crm=False,
     )
 
-    print(f"Raw matches count: {len(raw_matches)}")
-    print(
-        f"Raw matches with match_status=1: {len([m for m in raw_matches if m['match_status'] == 1])}"
-    )
-    for m in raw_matches:
-        if m["match_status"] == 1:
-            print(
-                f"Matched CRM email: {m['crm_email']}, PROC email: {m['proc_email']}, last4_match: {m['last4_match']}, email_sim: {m['email_similarity_avg']}"
-            )
+    matched_count = len([m for m in raw_matches if m['match_status'] == 1])
+    print(f"Raw matches: {len(raw_matches)} total, {matched_count} confirmed")
 
     # Keep only the *real* matches, restore original proc_processor_name if renamed
     cross_matches = []

@@ -177,6 +177,9 @@ HOLIDAYS_CACHE_FILE = Path(
     "data/uk_holidays_cache.json"
 )  # Adjust to full path if needed, e.g., DATA_DIR / 'uk_holidays_cache.json'
 
+# Module-level cache so disk is only read once per process
+_holidays_cache = None
+
 
 def fetch_uk_holidays_from_api(division="england-and-wales"):
     """Fetch UK bank holidays from GOV.UK API and return dates for the specified division."""
@@ -196,7 +199,10 @@ def fetch_uk_holidays_from_api(division="england-and-wales"):
 
 
 def load_uk_holidays(use_cache=True):
-    """Load UK holidays: from cache if exists/use_cache=True, else fetch from API and cache."""
+    """Load UK holidays: from in-memory cache first, then disk cache, then API."""
+    global _holidays_cache
+    if _holidays_cache is not None:
+        return _holidays_cache
     if use_cache and HOLIDAYS_CACHE_FILE.exists():
         with open(HOLIDAYS_CACHE_FILE, "r") as f:
             data = json.load(f)
@@ -204,7 +210,8 @@ def load_uk_holidays(use_cache=True):
             cache_date = datetime.fromisoformat(data.get("last_fetched", "1900-01-01"))
             if (datetime.now() - cache_date).days < 365:
                 logging.info("Loaded UK holidays from cache")
-                return data["holidays"]
+                _holidays_cache = data["holidays"]
+                return _holidays_cache
     logging.info("Fetching fresh UK holidays from API")
     holidays = fetch_uk_holidays_from_api()
     if holidays:
@@ -213,32 +220,38 @@ def load_uk_holidays(use_cache=True):
         with open(HOLIDAYS_CACHE_FILE, "w") as f:
             json.dump(cache_data, f)
         logging.info(f"Cached UK holidays to {HOLIDAYS_CACHE_FILE}")
-    return holidays
+    _holidays_cache = holidays
+    return _holidays_cache
+
+
+_SITE_TO_REG = {
+    "fortrade.by": "belarus",
+    "gcmasia by": "belarus",
+    "kapitalrs by": "belarus",
+    "kapitalrs au": "australia",
+    "fortrade.au": "australia",
+    "gcmasia asic": "australia",
+    "fortrade.eu": "mauritius",
+    "gcmforex": "mauritius",
+    "gcmasia fsc": "mauritius",
+    "fortrade fsc": "mauritius",
+    "kapitalrs fsc": "mauritius",
+    "fortrade dfsa": "dubai",
+    "fortrade dsfa": "dubai",
+    "fortrade.ca": "canada",
+    "fortrade.cy": "cyprus",
+    "fortrade.com": "uk",
+    "kapitalrs": "uk",
+}
+
+_KNOWN_REGS = {"uk", "row", "mauritius", "cyprus", "australia", "belarus", "canada", "unknown", "dubai"}
 
 
 def categorize_regulation(site):
     site = str(site).lower().strip()
-
-    # Accept already-categorized values
-    known_regs = ["uk", "row", "mauritius", "cyprus", "australia", "belarus", "canada", "unknown", "dubai"]
-    if site in known_regs:
+    if site in _KNOWN_REGS:
         return site
-
-    if site in ["fortrade.by", "gcmasia by", "kapitalrs by"]:
-        return "belarus"
-    elif site in ["kapitalrs au", "fortrade.au", "gcmasia asic"]:
-        return "australia"
-    elif site in ["fortrade.eu", "gcmforex", "gcmasia fsc", "fortrade fsc", "kapitalrs fsc"]:
-        return "mauritius"
-    elif site in ["fortrade dfsa", "fortrade dsfa", "fortrade DSFA"]:   # ← UPDATED
-        return "dubai"
-    elif site == "fortrade.ca":
-        return "canada"
-    elif site == "fortrade.cy":
-        return "cyprus"
-    elif site in ["fortrade.com", "kapitalrs"]:
-        return "uk"
-    return "unknown"
+    return _SITE_TO_REG.get(site, "unknown")
 
 
 def extract_date_from_filename(filepath: str) -> str:

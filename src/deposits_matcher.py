@@ -86,6 +86,10 @@ def match_deposits_for_date(date_str: str):
         row_proc["proc_transaction_id"] = (
             row_proc["proc_transaction_id"].astype(str).str.strip()
         )
+    # Initialize so ROW block can safely reference these regardless of whether UK block ran
+    matched_cross_uk = pd.DataFrame()
+    matched_local_uk = pd.DataFrame()
+
     if uk_crm.empty or (uk_proc.empty and row_proc.empty):
         print(f"Skipping UK matching: Missing combined files for {date_str}")
         uk_df = pd.DataFrame()
@@ -191,7 +195,7 @@ def match_deposits_for_date(date_str: str):
         # Get IDs matched to UK from ROW proc (for exclusion in ROW local)
         matched_cross_uk_proc_ids = (
             matched_cross_uk["proc_transaction_id"].unique()
-            if "matched_cross_uk" in locals() and not matched_cross_uk.empty
+            if not matched_cross_uk.empty
             else []
         )
         # Available ROW proc (exclude those matched to UK CRM)
@@ -221,7 +225,7 @@ def match_deposits_for_date(date_str: str):
         # Available UK proc (exclude those matched to UK CRM local)
         matched_uk_proc_ids_local = (
             matched_local_uk["proc_transaction_id"].unique()
-            if "matched_local_uk" in locals()
+            if not matched_local_uk.empty
             else []
         )
         available_uk_proc = uk_proc[

@@ -71,7 +71,7 @@ PROCESSOR_PATTERNS = {
         "header_row": 0
     },
     "xbo": {
-        "pattern": r"(?i)transactions report \[\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4}\s*[‒-]\s*(\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4})\](?i:\.csv|\.xlsx|\.xls)",
+        "pattern": r"(?i)transactions report \[\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4}\s*[‒-]\s*(\d{2}\s*[̸/]\s*\d{2}\s*[̸/]\s*\d{4})\]\s*(?:\(\d+\))?(?i:\.csv|\.xlsx|\.xls)",
         "date_format": None,
         "date_group": 1,
         "type_group": None,

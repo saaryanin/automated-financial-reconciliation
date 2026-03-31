@@ -7,7 +7,7 @@ Script: shifts_handler.py
 Description: This script processes unmatched shifted deposits that occur after a specified cutoff time for both ROW and UK regulations on a given date. It loads deposit matching files, filters for post-cutoff deposits, calculates the sum of matched amounts by currency using crm_amount, extracts and saves unmatched shifted rows in their raw CRM format by pulling from the original CRM files via transaction_ids, and updates the matching files by removing those shifted rows.
 
 Key Features:
-- Calculates the BST/GMT-aware cutoff time (9 PM BST or 10 PM GMT) based on the date to identify shifted deposits.
+- Calculates the US Eastern Time-aware cutoff time (9 PM EDT or 10 PM EST) based on the date.
 - Loads deposits_matching.xlsx for each regulation, converts crm_date to datetime for accurate filtering of post-cutoff unmatched deposits (match_status==0).
 - Computes sums of crm_amount for matched shifted deposits (match_status==1) grouped by crm_currency, providing a dictionary of matched sums per regulation and currency.
 - Extracts original unmatched shifted rows from raw CRM files using transaction_ids, with processor-specific extraction for IDs like skrill_id or neteller_id; saves these rows without additional computed columns to unmatched_shifted_deposits.xlsx.
@@ -31,6 +31,7 @@ from dateutil.relativedelta import relativedelta
 from src.config import setup_dirs_for_reg, BASE_DIR  # Import BASE_DIR for CRM_DIR
 from src.preprocess import extract_crm_transaction_id  # Adjusted import based on your file name
 from src.utils import categorize_regulation
+from zoneinfo import ZoneInfo
 
 # Define shared CRM_DIR
 CRM_DIR = BASE_DIR / "data" / "crm_reports"
@@ -39,21 +40,17 @@ CRM_DIR = BASE_DIR / "data" / "crm_reports"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def is_bst(date):
-    """Determine if the given date is in BST (British Summer Time)."""
-    bst_start = date.replace(month=3, day=31) - relativedelta(
-        days=date.replace(month=3, day=31).weekday()
-    )
-    bst_end = date.replace(month=10, day=31) - relativedelta(
-        days=date.replace(month=10, day=31).weekday()
-    )
-    return bst_start <= date <= bst_end
+def is_us_dst(date):
+    """Determine if the given date is in US Daylight Saving Time (EDT)."""
+    # Create a naive date at noon and attach US Eastern Time
+    dt = datetime(date.year, date.month, date.day, 12, tzinfo=ZoneInfo("America/New_York"))
+    return bool(dt.dst())  # True = summer time (EDT), False = winter time (EST)
 
 
 def get_cutoff_time(date_str):
-    """Get the cutoff time for the given date."""
+    """Get the cutoff time for the given date — now follows US DST (21:00 EDT / 22:00 EST)."""
     date = datetime.strptime(date_str, "%Y-%m-%d")
-    cutoff_hour = 21 if is_bst(date) else 22  # 9 PM BST or 10 PM GMT
+    cutoff_hour = 21 if is_us_dst(date) else 22  # 9 PM summer / 10 PM winter
     cutoff = date.replace(hour=cutoff_hour, minute=0, second=0, microsecond=0)
     return cutoff
 

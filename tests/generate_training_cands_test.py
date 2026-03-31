@@ -1,0 +1,308 @@
+from config import CRM_DIR, PROCESSOR_DIR, DATA_DIR
+from pathlib import Path
+import pandas as pd
+from src.preprocess_test import (
+    process_files_in_parallel,
+    PROCESSED_CRM_DIR, PROCESSED_PROCESSOR_DIR,
+    combine_processed_files
+)
+from src.withdrawals_matcher_test import ReconciliationEngine
+from src.utils import (
+    logging, setup_logger, load_excel_if_exists, safe_concat, create_cancelled_row, drop_cols
+)
+import csv
+import random
+import string
+from datetime import datetime, timedelta
+import argparse
+
+# --- Command-line flags ---
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--include_cancellations",
+    action="store_true",
+    help="Append cancellation rows into the final training CSV"
+)
+parser.add_argument(
+    "--generate_synthetic",
+    action="store_true",
+    help="Also generate synthetic negative-training dataset"
+)
+args = parser.parse_args()
+
+logger = setup_logger('TrainingGenerator', logging.INFO)
+
+date = "2025-07-17"
+processors = [
+    "safecharge", "paypal", "powercash", "shift4",
+    "skrill", "neteller", "bitpay", "zotapay", "paymentasia",
+    "trustpayments"
+]
+processor_filetypes = {
+    "safecharge": ".xlsx",
+    "paypal": ".csv",
+    "powercash": ".csv",
+    "shift4": ".csv",
+    "skrill": ".csv",
+    "neteller": ".csv",
+    "bitpay": ".csv",
+    "zotapay": ".csv",
+    "paymentasia": ".csv",
+    "trustpayments": ".csv"
+}
+
+# --- Preprocess files ---
+for proc in processors:
+    crm_file = CRM_DIR / f"crm_{date}.xlsx"
+    proc_ext = processor_filetypes.get(proc, ".csv")
+    processor_file = PROCESSOR_DIR / f"{proc}_{date}{proc_ext}"
+
+    logger.info(f"Preprocessing CRM file for {proc}...")
+    process_files_in_parallel([crm_file], processor_name=proc, is_crm=True, save_clean=True, transaction_type="withdrawal")
+
+    if processor_file.exists():
+        logger.info(f"Preprocessing processor file for {proc}...")
+        process_files_in_parallel([processor_file], processor_name=proc, is_crm=False, save_clean=True, transaction_type="withdrawal")
+    else:
+        logger.warning(f"Processor file for {proc} not found.")
+
+# --- Combine Zotapay and PaymentAsia files ---
+zotapay_file = PROCESSED_PROCESSOR_DIR / "zotapay" / date / "zotapay_withdrawals.xlsx"
+paymentasia_file = PROCESSED_PROCESSOR_DIR / "paymentasia" / date / "paymentasia_withdrawals.xlsx"
+combined_out_dir = PROCESSED_PROCESSOR_DIR / "zotapay_paymentasia" / date
+combined_out_file = combined_out_dir / "zotapay_paymentasia_withdrawals.xlsx"
+
+zota_df = load_excel_if_exists(zotapay_file)
+pa_df = load_excel_if_exists(paymentasia_file)
+zota_pa_dfs = [zota_df, pa_df]
+if safe_concat(zota_pa_dfs).shape[0]:
+    combined_df = safe_concat(zota_pa_dfs, ignore_index=True)
+    combined_out_dir.mkdir(parents=True, exist_ok=True)
+    combined_df.to_excel(combined_out_file, index=False)
+    print(f"✅ Combined Zotapay + PaymentAsia withdrawals saved to {combined_out_file}")
+else:
+    print("⚠️ No Zotapay or PaymentAsia files found to combine.")
+
+# --- Load exchange rates ---
+rates_path = DATA_DIR / "rates" / f"rates_{date}.csv"
+if rates_path.exists():
+    rates_df = pd.read_csv(rates_path)
+    rates_df['from_currency'] = rates_df['from_currency'].str.strip()
+    rates_df['to_currency'] = rates_df['to_currency'].str.strip()
+    exchange_rate_map = {
+        (row['from_currency'], row['to_currency']): row['rate']
+        for _, row in rates_df.iterrows()
+    }
+else:
+    exchange_rate_map = {}
+
+# --- Combine all processed files ---
+combine_processed_files(
+    date=date,
+    processors=processors+['zotapay_paymentasia'],
+    processed_crm_dir=PROCESSED_CRM_DIR,
+    processed_proc_dir=PROCESSED_PROCESSOR_DIR,
+    transaction_type="withdrawal",
+    exchange_rate_map=exchange_rate_map
+)
+
+# --- Load combined data for matching ---
+combined_crm_path = PROCESSED_CRM_DIR / "combined" / date / "combined_crm_withdrawals.xlsx"
+combined_proc_path = PROCESSED_PROCESSOR_DIR / "combined" / date / "combined_processor_withdrawals.xlsx"
+
+crm_df = load_excel_if_exists(combined_crm_path)
+processor_df = load_excel_if_exists(combined_proc_path)
+
+if crm_df is None or processor_df is None:
+    logger.error("No valid combined CRM or processor files found. Exiting.")
+    exit(1)
+
+# --- Reconciliation ---
+engine = ReconciliationEngine(
+    exchange_rate_map, config={
+        'enable_cross_processor': True,
+        'enable_logic_flag': False
+    }
+)
+crm_df_non_cancelled = crm_df[crm_df['crm_type'].str.lower() != 'withdrawal cancelled']
+
+matches = engine.match_withdrawals(crm_df_non_cancelled, processor_df)
+report = engine.generate_report()
+print("\n" + "="*80)
+print(report)
+print("="*80 + "\n")
+
+# --- Prepare output dataframe ---
+output_path = DATA_DIR / "training_dataset" / f"training_dataset_{date}.csv"
+output_path.parent.mkdir(parents=True, exist_ok=True)
+
+matches_df = pd.DataFrame(matches)
+
+desired_columns = [
+    'crm_date','crm_email','crm_firstname','crm_lastname','crm_tp','crm_last4','crm_currency','crm_amount','crm_processor_name',
+    'proc_date','proc_email','proc_tp','proc_firstname','proc_lastname','proc_last4','proc_currency','proc_amount','proc_amount_crm_currency','proc_processor_name',
+    'email_similarity_avg','last4_match','name_fallback_used','exact_match_used','match_status','payment_status','logic_is_correct','comment'
+]
+
+matches_df = matches_df[[c for c in desired_columns if c in matches_df.columns]]
+
+# --- Append cancellations if requested ---
+cancelled = engine.make_cancelled_rows(crm_df)
+if cancelled:
+    matches_df = safe_concat([matches_df, pd.DataFrame(cancelled)], ignore_index=True)
+
+
+matches_df = drop_cols(matches_df, ['matched_proc_indices'])
+
+# --- Write main output ---
+matches_df.to_csv(output_path, index=False)
+
+# --- Diagnostics JSON ---
+if engine.diagnostics:
+    diag_path = output_path.with_name(f"diagnostics_{date}.json")
+    pd.DataFrame(engine.diagnostics).to_json(diag_path, orient='records', indent=2)
+    logger.info(f"Saved diagnostics to {diag_path}")
+
+logger.info(f"✅ Saved {len(matches_df)} rows to {output_path}")
+logger.info(f"Metrics: {engine.metrics}")
+
+# # --- Configuration ---
+# NUM_ROWS = 1000
+# OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "training_dataset" / "false_training_datasets"
+# OUT_DIR.mkdir(parents=True, exist_ok=True)
+# OUTPUT_PATH = OUT_DIR / "synthetic_candidates.csv"
+#
+# # Pools
+# FIRST_NAMES = ['Alice','Bob','Carol','Dave','Eve','Frank','Grace','Heidi']
+# LAST_NAMES = ['Smith','Johnson','Williams','Brown','Jones','Miller','Davis','Garcia']
+# PROCESSORS = ['safecharge','paypal','powercash','shift4','skrill','neteller','bitpay','zotapay_paymentasia','trustpayments']
+# CURRENCIES = ['USD','EUR','GBP','CAD','AUD','JPY','CHF','CNY']
+#
+# def random_email(fn, ln):
+#     user = f"{fn.lower()}.{ln.lower()}{random.randint(1,99)}"
+#     domain = random.choice(['example.com','mail.com','test.org','demo.net'])
+#     return f"{user}@{domain}"
+#
+# def random_last4():
+#     return ''.join(random.choices(string.digits, k=4))
+#
+# def random_date():
+#     start = datetime.now() - timedelta(days=30)
+#     dt = start + timedelta(seconds=random.randint(0, 30*24*3600))
+#     return dt.strftime('%Y-%m-%d')
+#
+# # Schema fields
+# FIELDNAMES = [
+#     'crm_date','crm_email','crm_firstname','crm_lastname','crm_tp','crm_last4','crm_currency','crm_amount','crm_processor_name',
+#     'proc_date','proc_email','proc_tp','proc_firstname','proc_lastname','proc_last4','proc_currency','proc_amount','proc_amount_crm_currency','proc_processor_name',
+#     'email_similarity_avg','last4_match','name_fallback_used','exact_match_used','match_status','payment_status','logic_is_correct','comment'
+# ]
+#
+# with open(OUTPUT_PATH, 'w', newline='', encoding='utf-8') as csvfile:
+#     writer = csv.DictWriter(csvfile, fieldnames=FIELDNAMES)
+#     writer.writeheader()
+#
+#     for _ in range(NUM_ROWS):
+#         # pick row type
+#         row_type = random.choices(
+#             ['matched','crm_unmatched','proc_unmatched'],
+#             weights=[0.6, 0.2, 0.2],
+#             k=1
+#         )[0]
+#
+#         # generate common fields
+#         fn = random.choice(FIRST_NAMES)
+#         ln = random.choice(LAST_NAMES)
+#         crm_date = random_date()
+#         proc_date = random_date()
+#         crm_email = random_email(fn, ln)
+#         proc_fn = random.choice(FIRST_NAMES)
+#         proc_ln = random.choice(LAST_NAMES)
+#         proc_email = random_email(proc_fn, proc_ln)
+#         crm_tp = f"TP{random.randint(100000,999999)}"
+#         proc_tp_list = [f"TP{random.randint(100000,999999)}"]
+#         crm_amt = round(random.uniform(10, 1000), 2)
+#         proc_amt = round(crm_amt + random.choice([-1,1]) * random.uniform(0, 200), 2)
+#         crm_cur = random.choice(CURRENCIES)
+#         proc_cur = random.choice(CURRENCIES)
+#         last4 = random_last4()
+#         processor = random.choice(PROCESSORS)
+#
+#         # default row dict
+#         row = {field: None for field in FIELDNAMES}
+#
+#         if row_type == 'matched':
+#             # fill both crm and proc
+#             row.update({
+#                 'crm_date': crm_date,
+#                 'crm_email': crm_email,
+#                 'crm_firstname': fn,
+#                 'crm_lastname': ln,
+#                 'crm_tp': crm_tp,
+#                 'crm_last4': last4,
+#                 'crm_currency': crm_cur,
+#                 'crm_amount': crm_amt,
+#                 'crm_processor_name': processor,
+#                 'proc_date': proc_date,
+#                 'proc_email': proc_email,
+#                 'proc_tp': proc_tp_list,
+#                 'proc_firstname': proc_fn,
+#                 'proc_lastname': proc_ln,
+#                 'proc_last4': random_last4(),
+#                 'proc_currency': proc_cur,
+#                 'proc_amount': proc_amt,
+#                 'proc_amount_crm_currency': round(proc_amt * random.uniform(0.8, 1.2), 2),
+#                 'proc_processor_name': processor,
+#             })
+#             # random similarity
+#             row['email_similarity_avg'] = round(random.uniform(0.0,1.0), 4)
+#             # flags for matched
+#             row['last4_match'] = random.choice([True, False])
+#             row['name_fallback_used'] = random.choice([True, False])
+#             row['exact_match_used'] = random.choice([True, False])
+#             row['match_status'] = random.choice([0,1])
+#             row['payment_status'] = random.choice([0,1])
+#             row['logic_is_correct'] = (row['match_status']==1 and row['payment_status']==1)
+#             row['comment'] = 'Synthetic matched example'
+#
+#         elif row_type == 'crm_unmatched':
+#             # crm-only, no processor
+#             row.update({
+#                 'crm_date': crm_date,
+#                 'crm_email': crm_email,
+#                 'crm_firstname': fn,
+#                 'crm_lastname': ln,
+#                 'crm_tp': crm_tp,
+#                 'crm_last4': last4,
+#                 'crm_currency': crm_cur,
+#                 'crm_amount': crm_amt,
+#                 'crm_processor_name': processor,
+#             })
+#             row['proc_tp'] = []
+#             row['match_status'] = 0
+#             row['payment_status'] = random.choice([0,1])
+#             row['logic_is_correct'] = False
+#             row['comment'] = 'Synthetic CRM unmatched example'
+#
+#         else:  # proc_unmatched
+#             # processor-only, no CRM
+#             row.update({
+#                 'proc_date': proc_date,
+#                 'proc_email': proc_email,
+#                 'proc_tp': proc_tp_list,
+#                 'proc_firstname': proc_fn,
+#                 'proc_lastname': proc_ln,
+#                 'proc_last4': random_last4(),
+#                 'proc_currency': proc_cur,
+#                 'proc_amount': proc_amt,
+#                 'proc_amount_crm_currency': round(proc_amt * random.uniform(0.8,1.2), 2),
+#                 'proc_processor_name': processor,
+#             })
+#             row['match_status'] = 0
+#             row['payment_status'] = random.choice([0,1])
+#             row['logic_is_correct'] = False
+#             row['comment'] = 'Synthetic proc unmatched example'
+#
+#         writer.writerow(row)
+#
+# print(f"✅ Synthetic training candidates saved to {OUTPUT_PATH} ({NUM_ROWS} rows)")

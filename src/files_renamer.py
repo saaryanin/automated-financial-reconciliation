@@ -99,6 +99,9 @@ PROCESSOR_PATTERNS = {
         "date_group": 1,
         "type_group": None,
         "date_column": "Date",
+        # PayPal's in-file "Date" column is DD/MM/YYYY (e.g. 18/11/2026), unlike the YYYY-MM-DD date
+        # in "Download-2026-11-18T....csv" filenames. Used when the file is plain "Download.CSV".
+        "content_date_format": "%d/%m/%Y",
         "header_row": 0
     },
     "zotapay": {
@@ -364,7 +367,8 @@ def extract_date_from_file(file_path: Path, date_column: str = None, header_row:
         logging.info(f"Processing file: {file_path}")
         logging.info(f"Columns in {file_path}: {df.columns.tolist()}")
         if date_column in df.columns:
-            date_format = config.get("date_format") if config else None
+            # Prefer the in-file date format when it differs from the filename's date format
+            date_format = (config.get("content_date_format") or config.get("date_format")) if config else None
             if date_format:
                 dates = pd.to_datetime(df[date_column], format=date_format, errors='coerce')
             else:
@@ -436,7 +440,9 @@ def rename_raw_file(file_path: Path, forced_date: str = None):
                 date_str = datetime.strptime(date_raw, config["date_format"]).strftime('%Y-%m-%d')
             else:
                 date_group = config.get("date_group")
-                if date_group is not None and match and len(match.groups()) >= date_group:
+                # The date group can be optional (e.g. PayPal "Download.CSV" vs "Download-2026-11-18T...csv"),
+                # so only use it when it actually captured something; otherwise fall back to the file content.
+                if date_group is not None and match and len(match.groups()) >= date_group and match.group(date_group):
                     date_raw = match.group(date_group)
                     if processor_original == "xbo" and date_raw:
                         date_raw = date_raw.replace(' ̸ ', '/').replace(' ‒ ', '-').strip()

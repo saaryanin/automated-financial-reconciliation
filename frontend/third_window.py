@@ -215,8 +215,10 @@ class ThirdWindow(QWidget):
         self.differ_orig_indices = []
 
         if data_dict.get('no_warnings', False) or self.warnings_df.empty:
+            self.no_warnings = True
             QTimer.singleShot(0, self.on_next)
             return
+        self.no_warnings = False
 
         # Clean and format warnings data
         self._clean_warnings_df()
@@ -708,6 +710,14 @@ class ThirdWindow(QWidget):
     def on_next(self):
         """Process user selections, update matching file, and open next window."""
         print("Starting on_next")
+
+        # If data hasn't loaded yet or there were no warnings, skip matching update
+        if not hasattr(self, 'orig_indices') or getattr(self, 'no_warnings', False):
+            self._open_next_window()
+            self.hide()
+            QTimer.singleShot(0, self.close)
+            return
+
         # Collect remaining (unselected) original indices
         remaining_indices = self._collect_remaining_indices()
 

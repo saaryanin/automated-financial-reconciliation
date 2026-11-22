@@ -2371,6 +2371,7 @@ def match_withdrawals_for_date(date_str: str, exchange_rate_map: dict):
         'email_similarity_avg', 'last4_match', 'name_fallback_used', 'exact_match_used', 'match_status',
         'payment_status', 'warning', 'comment'
     ]
+    matched_row_proc_ids_from_uk = set()
     if uk_crm.empty or uk_proc.empty:
         print(f"Skipping UK withdrawals matching: Missing combined files for {date_str}")
         uk_matches_df = pd.DataFrame()
